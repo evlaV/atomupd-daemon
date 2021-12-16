@@ -1,0 +1,5 @@
+/*
+ * Copyright 2021 Collabora Ltd.
+ * SPDX-License-Identifier: MIT
+ */
+#mesondefine VERSION

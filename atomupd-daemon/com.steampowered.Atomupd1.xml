@@ -1,0 +1,76 @@
+<!DOCTYPE node PUBLIC
+"-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+
+
+<!--
+  Copyright © 2021 Collabora Ltd.
+  SPDX-License-Identifier: MIT
+
+  Permission is hereby granted, free of charge, to any person obtaining
+  a copy of this software and associated documentation files (the
+  "Software"), to deal in the Software without restriction, including
+  without limitation the rights to use, copy, modify, merge, publish,
+  distribute, sublicense, and/or sell copies of the Software, and to
+  permit persons to whom the Software is furnished to do so, subject to
+  the following conditions:
+
+  The above copyright notice and this permission notice shall be included
+  in all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+  CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+  TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+  SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+-->
+
+<node name="/" xmlns:doc="http://www.freedesktop.org/dbus/1.0/doc.dtd">
+  <!--
+      com.steampowered.Atomupd1:
+      @short_description: Interface to control an atomic update
+  -->
+  <interface name='com.steampowered.Atomupd1'>
+
+    <property name="Version" type="u" access="read"/>
+
+    <property name="IsUpdateInProgress" type="b" access="read"/>
+
+    <method name="IsUpdateAvailable">
+      <arg type='s' name='Branch' direction='in'/>
+      <arg type='b' name='Available' direction='out'/>
+      <arg type='s' name='Version' direction='out'/>
+      <arg type='s' name='Changelog' direction='out'/>
+    </method>
+
+    <method name="EstimateUpdateSize">
+      <arg type='t' name='UpdateSize' direction='out'/>
+    </method>
+
+    <method name="PauseUpdate">
+    </method>
+
+    <method name="ResumeUpdate">
+    </method>
+
+    <method name="StartPreparingUpdate">
+    </method>
+
+    <method name="StartUpdate">
+    </method>
+
+    <signal name="PreparationProgress">
+      <arg type='b' name='Completed'/>
+      <arg type='u' name='ProgressPercentage'/>
+    </signal>
+
+    <signal name="UpdateProgress">
+      <arg type='b' name='Completed'/>
+      <arg type='u' name='ProgressPercentage'/>
+    </signal>
+
+  </interface>
+
+</node>
