@@ -4,7 +4,7 @@
 
 
 <!--
-  Copyright © 2021 Collabora Ltd.
+  Copyright © 2021-2022 Collabora Ltd.
   SPDX-License-Identifier: MIT
 
   Permission is hereby granted, free of charge, to any person obtaining
@@ -32,44 +32,234 @@
       com.steampowered.Atomupd1:
       @short_description: Interface to control an atomic update
   -->
-  <interface name='com.steampowered.Atomupd1'>
+  <interface name="com.steampowered.Atomupd1">
 
+    <!--
+        Version:
+
+        The version of this interface implemented by this object.
+        This file documents version 1 of the interface.
+    -->
     <property name="Version" type="u" access="read"/>
 
-    <property name="IsUpdateInProgress" type="b" access="read"/>
+    <!--
+        ProgressPercentage:
 
-    <method name="IsUpdateAvailable">
-      <arg type='s' name='Branch' direction='in'/>
-      <arg type='b' name='Available' direction='out'/>
-      <arg type='s' name='Version' direction='out'/>
-      <arg type='s' name='Changelog' direction='out'/>
+        Percentage of how much of the update process has been completed.
+    -->
+    <property name="ProgressPercentage" type="d" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+
+    <!--
+        EstimatedCompletionTime:
+
+        A Unix timestamp with seconds precision, that indicates when the update
+        process is expected to complete.
+        0 if no estimate is available.
+    -->
+    <property name="EstimatedCompletionTime" type="t" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+
+    <!--
+        UpdateStatus:
+
+        An UpdateStatus enum, representing the status of the update.
+        The possible values are:
+        0 = IDLE, the update has not been launched yet
+        1 = IN_PROGRESS, the update is currently being applied
+        2 = PAUSED, the update has been paused
+        3 = SUCCESSFUL, the update process successfully completed
+        4 = FAILED, an error occurred during the update
+        5 = CANCELLED, a special case of FAILED where the update attempt has been cancelled
+    -->
+    <property name="UpdateStatus" type="u" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+
+    <!--
+        UpdateVersion:
+
+        String representing the version ID of the update that has been chosen
+        when `StartUpdate` method was executed.
+        It is the empty string if `StartUpdate` has not been called yet.
+    -->
+    <property name="UpdateVersion" type="s" access="read"/>
+
+    <!--
+        Branch:
+
+        String that represents the chosen update branch.
+        This value is updated everytime `CheckForUpdates` gets called.
+        Typical values include `stable` and `beta`.
+        It is the default `stable` string if either `CheckForUpdates` has not
+        been called yet, or if it was called without specifying a branch.
+    -->
+    <property name="Branch" type="s" access="read"/>
+
+    <!--
+        FailureCode:
+
+        A D-Bus error name like `org.freedesktop.DBus.Failed`, or the empty string
+        if the status of UpdateStatus is not FAILED.
+    -->
+    <property name="FailureCode" type="s" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+
+    <!--
+        FailureMessage:
+
+        A human-readable error message, or the empty string if the status of
+        UpdateStatus is not FAILED.
+    -->
+    <property name="FailureMessage" type="s" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+
+    <!--
+        VersionsAvailable:
+
+        Map of available update IDs (i.e. version number) to their keys and
+        values. It is an empty map if either there aren't any available
+        updates or if `CheckForUpdates` has not been called yet.
+
+        The values of this map are vardicts that include the following keys:
+        <variablelist>
+          <varlistentry>
+            <term>branch s</term>
+            <listitem><para>
+              Represents the branch of this update. Possible values include
+              `stable` and `beta`.
+            </para></listitem>
+          </varlistentry>
+          <varlistentry>
+            <term>estimated_size t</term>
+            <listitem><para>
+              Estimated download size, in Bytes, to perform the update.
+            </para></listitem>
+          </varlistentry>
+          <varlistentry>
+            <term>update_type u</term>
+            <listitem><para>
+              An enum representing the update type.
+              Possible values are:
+              <simplelist>
+                <member>0: MINOR_UPDATE</member>
+                <member>1: MAJOR_UPDATE</member>
+              </simplelist>
+            </para></listitem>
+          </varlistentry>
+        </variablelist>
+    -->
+    <property name="VersionsAvailable" type="a{sa{sv}}" access="read"/>
+
+    <!--
+        VersionsAvailableLater:
+
+        Map of available update IDs (i.e. version number) to their keys and
+        values. These updates can't be directly installed because they require
+        a base system version that is newer than the current one.
+        It is an empty map if either there aren't any available
+        later updates or if `CheckForUpdates` has not been called yet.
+
+        The values of this map are the same as for `VersionsAvailable`,
+        plus additional vardicts with the following keys:
+        <variablelist>
+          <varlistentry>
+            <term>requires s</term>
+            <listitem><para>
+              Version ID that must be installed before this update.
+            </para></listitem>
+          </varlistentry>
+        </variablelist>
+
+        Please note that here the key `estimated_size` represents the estimated
+        download size, under the assumption that the update will be performed
+        with a system running the version specified in the `requires` key.
+    -->
+    <property name="VersionsAvailableLater" type="a{sa{sv}}" access="read"/>
+
+    <!--
+        CurrentVersion:
+
+        String representing the system version that is currently in use.
+    -->
+    <property name="CurrentVersion" type="s" access="read"/>
+
+    <!--
+        CheckForUpdates:
+        @options: Vardict with configuration options
+        @versions_available: Map of available update IDs to their keys and values
+        @versions_available_later: Map of available update IDs, to their keys and
+          values, that require a newer system version
+
+        Supported keys in the @options vardict include:
+        <variablelist>
+          <varlistentry>
+            <term>branch s</term>
+            <listitem><para>
+              Desired update branch. Possible values include `stable` and `beta`.
+            </para></listitem>
+          </varlistentry>
+        </variablelist>
+
+        If @options doesn't include the key `branch`, the default `stable`
+        branch will be used.
+
+        At least one update is available, for the current system version, when
+        @versions_available is not the empty map.
+
+        For more information about the content of @versions_available and
+        @versions_available_later, please refer to the description of the
+        properties `VersionsAvailable` and `VersionsAvailableLater` respectively.
+    -->
+    <method name="CheckForUpdates">
+      <arg type="a{sv}" name="options" direction="in"/>
+      <arg type="a{sa{sv}}" name="versions_available" direction="out"/>
+      <arg type="a{sa{sv}}" name="versions_available_later" direction="out"/>
     </method>
 
-    <method name="EstimateUpdateSize">
-      <arg type='t' name='UpdateSize' direction='out'/>
+    <!--
+        StartUpdate:
+        @id: Chosen update ID (i.e. version number) that needs be installed
+
+        Start to apply the @id update.
+        This method is expected to be called after `CheckForUpdates`, with an
+        @id taken from the returned `versions_available`.
+
+        If the provided @id is not a valid update, either because not available
+        or because it requires a newer system version, this method will fail.
+    -->
+    <method name="StartUpdate">
+      <arg type="s" name="id" direction="in"/>
     </method>
 
+    <!--
+        PauseUpdate:
+
+        Pauses the update that is currently in progress, if any.
+    -->
     <method name="PauseUpdate">
     </method>
 
+    <!--
+        ResumeUpdate:
+
+        Resumes a previously paused update. If UpdateStatus is not set to
+        UPDATE_PAUSED, this method is expected to fail.
+    -->
     <method name="ResumeUpdate">
     </method>
 
-    <method name="StartPreparingUpdate">
+    <!--
+        CancelUpdate:
+
+        Cancel the update that is currently in progress, if any.
+    -->
+    <method name="CancelUpdate">
     </method>
-
-    <method name="StartUpdate">
-    </method>
-
-    <signal name="PreparationProgress">
-      <arg type='b' name='Completed'/>
-      <arg type='u' name='ProgressPercentage'/>
-    </signal>
-
-    <signal name="UpdateProgress">
-      <arg type='b' name='Completed'/>
-      <arg type='u' name='ProgressPercentage'/>
-    </signal>
 
   </interface>
 
