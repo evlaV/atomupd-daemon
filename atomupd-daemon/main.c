@@ -95,7 +95,6 @@ main (int argc,
   GBusNameOwnerFlags flags;
   g_autoptr(GError) local_error = NULL;
   g_autoptr(GOptionContext) option_context = NULL;
-  GError **error = &local_error;
   guint name_owner_id = 0;
   int ret = 1;
 
@@ -136,7 +135,7 @@ main (int argc,
                                   NULL,
                                   NULL);
 
-  g_debug ("Starting the main loop");
+  g_debug ("Starting the main loop, owner id %u", name_owner_id);
 
   g_main_loop_run (main_loop);
 
