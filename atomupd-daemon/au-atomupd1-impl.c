@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021 Collabora Ltd.
+ * Copyright © 2021-2022 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -23,31 +23,51 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
-
-#include <stdio.h>
 #include <unistd.h>
 
 #include <glib.h>
-#include <glib-object.h>
+#include <glib/gstdio.h>
+#include <glib-unix.h>
 #include <gio/gio.h>
 
-#include "atomupd1.h"
+#include "au-atomupd1-impl.h"
 
-typedef struct _AtomupdDaemon AtomupdDaemon;
-typedef struct _AtomupdDaemonClass AtomupdDaemonClass;
-
-#define TYPE_ATOMUPD_DAEMON (atomupd_daemon_get_type ())
-#define ATOMUPD_DAEMON(obj) (G_TYPE_CHECK_INSTANCE_CAST ((obj), TYPE_ATOMUPD_DAEMON, AtomupdDaemon))
-#define ATOMUPD_DAEMON_CLASS(cls) (G_TYPE_CHECK_CLASS_CAST ((cls), TYPE_ATOMUPD_DAEMON, AtomupdDaemonClass))
-#define IS_ATOMUPD_DAEMON(obj) (G_TYPE_CHECK_INSTANCE_TYPE ((obj), TYPE_ATOMUPD_DAEMON))
-#define IS_ATOMUPD_DAEMON_CLASS(cls) (G_TYPE_CHECK_CLASS_TYPE ((cls), TYPE_ATOMUPD_DAEMON))
-#define ATOMUPD_DAEMON_GET_CLASS(obj) (G_TYPE_INSTANCE_GET_CLASS((obj), TYPE_ATOMUPD_DAEMON, AtomupdDaemonClass)
-GType atomupd_daemon_get_type (void);
-
-struct _AtomupdDaemon
+struct _AuAtomupd1Impl
 {
-
+  AuAtomupd1Skeleton parent_instance;
 };
 
-AtomupdDaemon *atomupd_daemon_new (GDBusConnection *connection);
+static void
+init_atomupd1_iface (AuAtomupd1Iface *iface)
+{
+}
+
+G_DEFINE_TYPE_WITH_CODE (AuAtomupd1Impl, au_atomupd1_impl, AU_TYPE_ATOMUPD1_SKELETON,
+                         G_IMPLEMENT_INTERFACE (AU_TYPE_ATOMUPD1, init_atomupd1_iface))
+
+static void
+au_atomupd1_impl_finalize (GObject *object)
+{
+  G_OBJECT_CLASS (au_atomupd1_impl_parent_class)->finalize (object);
+}
+
+static void
+au_atomupd1_impl_class_init (AuAtomupd1ImplClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+  object_class->finalize = au_atomupd1_impl_finalize;
+}
+
+static void
+au_atomupd1_impl_init (AuAtomupd1Impl *self)
+{
+}
+
+AuAtomupd1 *
+au_atomupd1_impl_new (void)
+{
+  AuAtomupd1 *atomupd = g_object_new (AU_TYPE_ATOMUPD1_IMPL, NULL);
+
+  return atomupd;
+}

@@ -22,10 +22,10 @@
 # SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 atomupd1 = gnome.gdbus_codegen(
-  'atomupd1',
+  'au-atomupd1',
   sources : 'com.steampowered.Atomupd1.xml',
   interface_prefix : 'com.steampowered.',
-  namespace : 'Ad',
+  namespace : 'Au',
 )
 
 conf_data = configuration_data()
@@ -59,7 +59,7 @@ install_data(
 executable(
   'atomupd-daemon',
   sources: [
-    'atomupd-daemon.c',
+    'au-atomupd1-impl.c',
     'main.c',
     atomupd1,
   ],

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021 Collabora Ltd.
+ * Copyright © 2021-2022 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -23,45 +23,19 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#pragma once
+
+#include <stdio.h>
+#include <unistd.h>
+
 #include <glib.h>
-#include <glib-unix.h>
+#include <glib-object.h>
 #include <gio/gio.h>
 
-#include "atomupd-daemon.h"
+#include "au-atomupd1.h"
 
-static AdAtomupd1 *launcher;
+#define AU_TYPE_ATOMUPD1_IMPL (au_atomupd1_impl_get_type ())
 
-struct _AtomupdDaemonClass
-{
-  GObjectClass parent;
-};
+G_DECLARE_FINAL_TYPE (AuAtomupd1Impl, au_atomupd1_impl, AU, ATOMUPD1_IMPL, AuAtomupd1Skeleton)
 
-G_DEFINE_TYPE (AtomupdDaemon, atomupd_daemon, G_TYPE_OBJECT);
-
-void
-atomupd_daemon_init (AtomupdDaemon *self)
-{
-
-}
-
-static void
-atomupd_daemon_class_init (AtomupdDaemonClass *cls)
-{
-  // GObjectClass *object_class = G_OBJECT_CLASS (cls);
-}
-
-AtomupdDaemon *
-atomupd_daemon_new (GDBusConnection *connection)
-{
-  g_return_val_if_fail (G_IS_DBUS_CONNECTION (connection), NULL);
-
-  launcher = ad_atomupd1_skeleton_new ();
-
-  if (!g_dbus_interface_skeleton_export (G_DBUS_INTERFACE_SKELETON (launcher),
-                                         connection,
-                                         "/com/steampowered/Atomupd1",
-                                         NULL))
-    return NULL;
-
-  return NULL;
-}
+AuAtomupd1 *au_atomupd1_impl_new (void);

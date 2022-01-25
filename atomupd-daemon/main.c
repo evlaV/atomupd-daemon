@@ -29,22 +29,12 @@
 #include <glib-unix.h>
 #include <gio/gio.h>
 
-#include "atomupd-daemon.h"
+#include "au-atomupd1-impl.h"
 
 static GMainLoop *main_loop = NULL;
-static AtomupdDaemon *daemon = NULL;
 
 static void
-on_bus_acquired (GDBusConnection *connection,
-                 const gchar *name,
-                 gpointer user_data)
-{
-  daemon = atomupd_daemon_new (connection);
-  g_debug ("Connected to the system bus");
-}
-
-static void
-on_name_acquired (GDBusConnection *connection,
+name_acquired_cb (GDBusConnection *connection,
                   const gchar *name,
                   gpointer user_data)
 {
@@ -52,7 +42,7 @@ on_name_acquired (GDBusConnection *connection,
 }
 
 static void
-on_name_lost (GDBusConnection *connection,
+name_lost_cb (GDBusConnection *connection,
               const gchar *name,
               gpointer user_data)
 {
@@ -76,8 +66,7 @@ static GOptionEntry options[] =
 {
   { "replace", '\0',
     G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_replace,
-    "Replace a previous instance with the same bus name. "
-    "Ignored if --bus-name is not used.",
+    "Replace a previous instance with the same bus name.",
     NULL },
   { "verbose", '\0',
     G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_verbose,
@@ -95,16 +84,18 @@ main (int argc,
   GBusNameOwnerFlags flags;
   g_autoptr(GError) local_error = NULL;
   g_autoptr(GOptionContext) option_context = NULL;
-  guint name_owner_id = 0;
-  int ret = 1;
+  g_autoptr(GDBusConnection) bus = NULL;
+  g_autoptr(AuAtomupd1) atomupd = NULL;
+  const gchar *atomupd1_path = "/com/steampowered/Atomupd1";
+  const gchar *atomupd1_bus_name = "com.steampowered.Atomupd1";
+  GError **error = &local_error;
 
   option_context = g_option_context_new ("");
   g_option_context_add_main_entries (option_context, options, NULL);
 
   if (!g_option_context_parse (option_context, &argc, &argv, &local_error))
     {
-      ret = EX_USAGE;
-      goto out;
+      return EX_USAGE;
     }
 
   if (opt_version)
@@ -113,8 +104,7 @@ main (int argc,
                " Package: atomupd-daemon\n"
                " Version: %s\n",
                g_get_prgname (), VERSION);
-      ret = 0;
-      goto out;
+      return EXIT_SUCCESS;
     }
 
   main_loop = g_main_loop_new (NULL, FALSE);
@@ -125,19 +115,35 @@ main (int argc,
   if (opt_replace)
     flags |= G_BUS_NAME_OWNER_FLAGS_REPLACE;
 
-  name_owner_id = g_bus_own_name (G_BUS_TYPE_SYSTEM,
-                                  "com.steampowered.Atomupd1",
-                                  flags,
-                                  on_bus_acquired,
-                                  on_name_acquired,
-                                  on_name_lost,
-                                  NULL,
-                                  NULL);
+  atomupd = au_atomupd1_impl_new ();
+  bus = g_bus_get_sync (G_BUS_TYPE_SYSTEM, NULL, &local_error);
 
-  g_debug ("Starting the main loop, owner id %u", name_owner_id);
+  if (bus == NULL)
+    {
+      g_warning ("An error occurred while connecting to the system bus: %s",
+                 local_error->message);
+      return EXIT_FAILURE;
+    }
+
+  if (!g_dbus_interface_skeleton_export (G_DBUS_INTERFACE_SKELETON (atomupd),
+                                         bus, atomupd1_path, error))
+    {
+      g_warning ("An error occurred while registering the D-Bus object '%s': %s",
+                 atomupd1_path, local_error->message);
+      return EXIT_FAILURE;
+    }
+
+  g_bus_own_name_on_connection (bus,
+                                atomupd1_bus_name,
+                                flags,
+                                name_acquired_cb,
+                                name_lost_cb,
+                                NULL,
+                                NULL);
+
+  g_debug ("Starting the main loop");
 
   g_main_loop_run (main_loop);
 
-out:
-  return ret;
+  return EXIT_SUCCESS;
 }
