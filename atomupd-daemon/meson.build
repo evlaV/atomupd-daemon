@@ -28,6 +28,11 @@ atomupd1 = gnome.gdbus_codegen(
   namespace : 'Ad',
 )
 
+install_data(
+  'com.steampowered.Atomupd1.conf',
+  install_dir : join_paths(get_option('datadir'), 'dbus-1/system.d')
+)
+
 executable(
   'atomupd-daemon',
   sources: [

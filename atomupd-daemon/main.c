@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021 Collabora Ltd.
+ * Copyright © 2021-2022 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -125,8 +125,7 @@ main (int argc,
   if (opt_replace)
     flags |= G_BUS_NAME_OWNER_FLAGS_REPLACE;
 
-  // TODO we probably want "system" and not "session" here
-  name_owner_id = g_bus_own_name (G_BUS_TYPE_SESSION,
+  name_owner_id = g_bus_own_name (G_BUS_TYPE_SYSTEM,
                                   "com.steampowered.Atomupd1",
                                   flags,
                                   on_bus_acquired,
