@@ -28,6 +28,29 @@ atomupd1 = gnome.gdbus_codegen(
   namespace : 'Ad',
 )
 
+conf_data = configuration_data()
+conf_data.set('libexecdir', get_option('libexecdir'))
+
+systemdsystemunitdir = get_option('systemdsystemunitdir')
+if systemdsystemunitdir == ''
+  systemd_dep = dependency('systemd')
+  systemdsystemunitdir = systemd_dep.get_pkgconfig_variable('systemdsystemunitdir')
+endif
+
+configure_file(
+  input : 'com.steampowered.Atomupd1.service.in',
+  output : 'com.steampowered.Atomupd1.service',
+  configuration : conf_data,
+  install_dir : join_paths(get_option('datadir'), 'dbus-1/system-services')
+)
+
+configure_file(
+  input : 'atomupd.service.in',
+  output : 'atomupd.service',
+  configuration : conf_data,
+  install_dir : systemdsystemunitdir,
+)
+
 install_data(
   'com.steampowered.Atomupd1.conf',
   install_dir : join_paths(get_option('datadir'), 'dbus-1/system.d')
@@ -46,4 +69,5 @@ executable(
     gio_unix,
   ],
   install : true,
+  install_dir : get_option('libexecdir'),
 )
