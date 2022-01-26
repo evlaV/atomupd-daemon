@@ -37,14 +37,28 @@ stages:
       - _build/meson-logs/*.txt
     when: always
 
-build:devel:
+build:gcc:
   extends: .build
   variables:
     COMPILER: "gcc"
     LUNDEF: "true"
     SANITIZER: "none"
 
+build:gcc_asan:
+  extends: .build
+  variables:
+    COMPILER: "gcc"
+    LUNDEF: "false"
+    SANITIZER: "address,undefined"
+
 build:clang:
+  extends: .build
+  variables:
+    COMPILER: "clang"
+    LUNDEF: "true"
+    SANITIZER: "none"
+
+build:clang_asan:
   extends: .build
   variables:
     COMPILER: "clang"
