@@ -1,6 +1,5 @@
 variables:
   STEAM_CI_DEPENDENCIES: >-
-    base-devel
     clang
     meson
     ninja
@@ -13,7 +12,7 @@ build:devel:
   tags:
     - docker
     - linux
-  image: archlinux:latest
+  image: archlinux:base-devel
   script:
     - |
       set -eux
@@ -39,7 +38,7 @@ build:clang:
   tags:
     - docker
     - linux
-  image: archlinux:latest
+  image: archlinux:base-devel
   script:
     - |
       set -eux
