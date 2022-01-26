@@ -1,65 +1,66 @@
 variables:
-    STEAM_CI_DEPENDENCIES: >-
-        base-devel
-        clang
-        meson
-        ninja
+  STEAM_CI_DEPENDENCIES: >-
+    clang
+    meson
+    ninja
 
 stages:
-    - build
+  - build
 
-build:devel:
-    stage: build
-    tags:
-        - docker
-        - linux
-    image: archlinux:latest
-    script:
-        - |
-            set -eux
+.build:
+  stage: build
+  tags:
+    - docker
+    - linux
+  image: archlinux:base-devel
+  script:
+    - |
+      set -eux
 
-            pacman -Syu --needed --noconfirm --noprogressbar \
-            ${STEAM_CI_DEPENDENCIES}
+      pacman -Syu --needed --noconfirm --noprogressbar \
+      ${STEAM_CI_DEPENDENCIES}
 
-            mkdir -p _build
-            meson \
-                --werror \
-                _build/devel
-            ninja -C _build/devel
-            ninja -C _build/devel install
-            meson test --verbose -C _build/devel
+      export CC=${COMPILER}
+      export CXX=${COMPILER}++
 
-    artifacts:
-        paths:
-            - _build/devel/meson-logs/*.txt
-        when: always
+      meson \
+        --werror \
+        -Db_lundef=${LUNDEF} \
+        -Db_sanitize=${SANITIZER} \
+        _build
+      ninja -C _build
+      ninja -C _build install
+      meson test --verbose -C _build
+
+  artifacts:
+    paths:
+      - _build/meson-logs/*.txt
+    when: always
+
+build:gcc:
+  extends: .build
+  variables:
+    COMPILER: "gcc"
+    LUNDEF: "true"
+    SANITIZER: "none"
+
+build:gcc_asan:
+  extends: .build
+  variables:
+    COMPILER: "gcc"
+    LUNDEF: "false"
+    SANITIZER: "address,undefined"
 
 build:clang:
-    stage: build
-    tags:
-        - docker
-        - linux
-    image: archlinux:latest
-    script:
-        - |
-            set -eux
+  extends: .build
+  variables:
+    COMPILER: "clang"
+    LUNDEF: "true"
+    SANITIZER: "none"
 
-            pacman -Syu --needed --noconfirm --noprogressbar \
-            ${STEAM_CI_DEPENDENCIES}
-
-            export CC=clang
-            export CXX=clang++
-
-            meson \
-                -Db_lundef=false \
-                -Db_sanitize=address,undefined \
-                --werror \
-                _build/clang-asan
-            ninja -C _build/clang-asan
-            ninja -C _build/clang-asan install
-            meson test --verbose -C _build/clang-asan
-
-    artifacts:
-        paths:
-            - _build/clang-asan/meson-logs/*.txt
-        when: always
+build:clang_asan:
+  extends: .build
+  variables:
+    COMPILER: "clang"
+    LUNDEF: "false"
+    SANITIZER: "address,undefined"
