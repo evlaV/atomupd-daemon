@@ -38,7 +38,7 @@ name_acquired_cb (GDBusConnection *connection,
                   const gchar *name,
                   gpointer user_data)
 {
-  g_debug ("Acquired the name %s on the system message bus", name);
+  g_debug ("Acquired the name %s on the message bus", name);
 }
 
 static void
@@ -46,7 +46,7 @@ name_lost_cb (GDBusConnection *connection,
               const gchar *name,
               gpointer user_data)
 {
-  g_debug ("Lost the name %s on the system message bus", name);
+  g_debug ("Lost the name %s on the message bus", name);
   g_main_loop_quit (main_loop);
 }
 
@@ -59,6 +59,7 @@ on_sigint (gpointer user_data)
 }
 
 static gboolean opt_replace = FALSE;
+static gboolean opt_session = FALSE;
 static gboolean opt_verbose = FALSE;
 static gboolean opt_version = FALSE;
 
@@ -67,6 +68,10 @@ static GOptionEntry options[] =
   { "replace", '\0',
     G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_replace,
     "Replace a previous instance with the same bus name.",
+    NULL },
+  { "session", '\0',
+    G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &opt_session,
+    "Use the session bus instead of the system bus",
     NULL },
   { "verbose", '\0',
     G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_verbose,
@@ -116,11 +121,13 @@ main (int argc,
     flags |= G_BUS_NAME_OWNER_FLAGS_REPLACE;
 
   atomupd = au_atomupd1_impl_new ();
-  bus = g_bus_get_sync (G_BUS_TYPE_SYSTEM, NULL, &local_error);
+  bus = g_bus_get_sync (opt_session ? G_BUS_TYPE_SESSION : G_BUS_TYPE_SYSTEM,
+                        NULL,
+                        &local_error);
 
   if (bus == NULL)
     {
-      g_warning ("An error occurred while connecting to the system bus: %s",
+      g_warning ("An error occurred while connecting to the bus: %s",
                  local_error->message);
       return EXIT_FAILURE;
     }
