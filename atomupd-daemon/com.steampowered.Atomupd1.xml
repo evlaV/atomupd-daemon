@@ -88,15 +88,16 @@
     <property name="UpdateVersion" type="s" access="read"/>
 
     <!--
-        Branch:
+        Variant:
 
-        String that represents the chosen update branch.
+        String that represents the chosen update variant.
         This value is updated everytime `CheckForUpdates` gets called.
-        Typical values include `stable` and `beta`.
-        It is the default `stable` string if either `CheckForUpdates` has not
-        been called yet, or if it was called without specifying a branch.
+        Typical values include `steamdeck` and `steamdeck-beta`.
+        It defaults to the variant value from the steamos-atomupd manifest JSON
+        if either `CheckForUpdates` has not been called yet, or if it was
+        called without specifying a variant.
     -->
-    <property name="Branch" type="s" access="read"/>
+    <property name="Variant" type="s" access="read"/>
 
     <!--
         FailureCode:
@@ -128,10 +129,10 @@
         The values of this map are vardicts that include the following keys:
         <variablelist>
           <varlistentry>
-            <term>branch s</term>
+            <term>variant s</term>
             <listitem><para>
-              Represents the branch of this update. Possible values include
-              `stable` and `beta`.
+              Represents the variant of this update. Possible values include
+              `steamdeck` and `steamdeck-beta`.
             </para></listitem>
           </varlistentry>
           <varlistentry>
@@ -198,15 +199,16 @@
         Supported keys in the @options vardict include:
         <variablelist>
           <varlistentry>
-            <term>branch s</term>
+            <term>variant s</term>
             <listitem><para>
-              Desired update branch. Possible values include `stable` and `beta`.
+              Desired update variant. Possible values include `steamdeck` and
+              `steamdeck-beta`.
             </para></listitem>
           </varlistentry>
         </variablelist>
 
-        If @options doesn't include the key `branch`, the default `stable`
-        branch will be used.
+        If @options doesn't include the key `variant`, its value will be taken
+        from the steamos-atomupd manifest JSON file.
 
         At least one update is available, for the current system version, when
         @versions_available is not the empty map.
