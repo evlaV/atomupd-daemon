@@ -41,7 +41,43 @@ struct _AuAtomupd1Impl
 
   gchar *config_path;
   gchar *manifest_path;
+  GFile *updates_json_file;
 };
+
+typedef struct
+{
+  AuAtomupd1 *object;
+  GDBusMethodInvocation *invocation;
+  gint standard_output;
+} QueryData;
+
+static void
+_query_data_free (QueryData *self)
+{
+  if (self->invocation != NULL)
+      g_dbus_method_invocation_return_error (g_steal_pointer (&self->invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "Request was freed without being handled");
+
+  g_clear_object (&self->object);
+
+  if (self->standard_output > -1)
+    g_close (self->standard_output, NULL);
+
+  g_slice_free (QueryData, self);
+}
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (QueryData, _query_data_free)
+
+static QueryData *
+au_query_data_new (void)
+{
+  QueryData *data = g_slice_new0 (QueryData);
+  data->standard_output = -1;
+
+  return data;
+}
 
 /*
  * _au_get_manifest_path_from_config:
@@ -105,19 +141,417 @@ _au_get_default_variant (const gchar *manifest,
   return g_strdup (variant);
 }
 
+/*
+ * @images: (not nullable): The parsed image details will be added in this
+ *  GVariant builder
+ * @json_object: (not nullable): A JSON object representing a single image update
+ * @type:
+ * @requires: (nullable): Indicates the required build id in order to apply this
+ *  image update. If set to %NULL, it is assumed that this image could be applied
+ *  without any restrictions
+ * @error: Used to raise an error on failure
+ *
+ * Returns the parsed image build id or %NULL, if an error occurred.
+ */
+static const gchar *
+_au_parse_image (GVariantBuilder *images,
+                 JsonObject *candidate_obj,
+                 AuUpdateType type,
+                 const gchar *requires,
+                 GError **error)
+{
+  JsonObject *img_obj = NULL;  /* borrowed */
+  JsonNode *img_node = NULL;  /* borrowed */
+  const gchar *id = NULL;
+  const gchar *variant = NULL;
+  gint64 size;
+  GVariantBuilder builder;
+
+  g_return_val_if_fail (images != NULL, NULL);
+  g_return_val_if_fail (candidate_obj != NULL, NULL);
+  g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+  g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
+
+  img_node = json_object_get_member (candidate_obj, "image");
+  img_obj = json_node_get_object (img_node);
+
+  size = json_object_get_int_member_with_default (img_obj, "estimated_size", 0);
+  id = json_object_get_string_member_with_default (img_obj, "buildid", NULL);
+  variant = json_object_get_string_member_with_default (img_obj, "variant", NULL);
+  if (id == NULL || variant == NULL)
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "The \"image\" JSON object doesn't have the expected members");
+      return NULL;
+    }
+
+  g_variant_builder_add (&builder, "{sv}", "variant",
+                          g_variant_new_string (variant));
+  g_variant_builder_add (&builder, "{sv}", "estimated_size",
+                          g_variant_new_uint64 (size));
+  g_variant_builder_add (&builder, "{sv}", "update_type",
+                          g_variant_new_uint32 (type));
+  if (requires != NULL)
+    g_variant_builder_add (&builder, "{sv}", "requires",
+                           g_variant_new_string (requires));
+
+  g_variant_builder_add (images,
+                         "{sa{sv}}",
+                         id,
+                         &builder);
+  return id;
+}
+
+/*
+ * @json_object: (not nullable): A JSON object representing the available updates
+ * @type:
+ * @available_builder: (not nullable): The available updates will be added to this
+ *  GVariant builder
+ * @available_later_builder: (not nullable): The available updates, that require a
+ *  newer system version, will be added to this GVariant builder
+ * @error: Used to raise an error on failure
+ *
+ * Returns: %TRUE on success (even if nothing was appended to either of the
+ *  GVariant builders)
+ */
+static gboolean
+_au_get_json_array_candidates (JsonObject *json_object,
+                               AuUpdateType type,
+                               GVariantBuilder *available_builder,
+                               GVariantBuilder *available_later_builder,
+                               GError **error)
+{
+  const gchar *type_string = NULL;
+  const gchar *requires = NULL;
+  JsonObject *sub_obj = NULL;  /* borrowed */
+  JsonNode *sub_node = NULL;  /* borrowed */
+  JsonArray *array = NULL;  /* borrowed */
+  guint array_size;
+  gsize i;
+
+  g_return_val_if_fail (json_object != NULL, FALSE);
+  g_return_val_if_fail (available_builder != NULL, FALSE);
+  g_return_val_if_fail (available_later_builder != NULL, FALSE);
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  switch (type)
+    {
+      case AU_UPDATE_TYPE_MINOR:
+        type_string = "minor";
+        break;
+
+      case AU_UPDATE_TYPE_MAJOR:
+        type_string = "major";
+        break;
+
+      default:
+        g_return_val_if_reached (FALSE);
+    }
+
+  if (!json_object_has_member (json_object, type_string))
+    return TRUE;
+
+  sub_node = json_object_get_member (json_object, type_string);
+  sub_obj = json_node_get_object (sub_node);
+
+  if (!json_object_has_member (sub_obj, "candidates"))
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "The JSON doesn't have the expected \"candidates\" member");
+      return FALSE;
+    }
+
+  /* Note that despite its name, the `candidates` member does not
+   * actually list multiple possible updates that can be applied
+   * immediately. Instead, it lists a single update that can be
+   * applied immediately, followed by 0 or more updates that can
+   * only be applied after passing through earlier checkpoints. */
+  array = json_object_get_array_member (sub_obj, "candidates");
+
+  array_size = json_array_get_length (array);
+
+  for (i = 0; i < array_size; i++)
+    {
+      requires = _au_parse_image (i == 0 ? available_builder : available_later_builder,
+                                  json_array_get_object_element (array, i),
+                                  type,
+                                  requires,
+                                  error);
+      if (requires == NULL)
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
+/*
+ * @json_node: (not nullable): The JsonNode of the steamos-atomupd-client output
+ * @available: (out) (not optional): Map of available updates that can be installed
+ * @available_later: (out) (not optional): Map of available updates that require
+ *  a newer system version
+ * @error: Used to raise an error on failure
+ */
+static gboolean
+_au_parse_candidates (JsonNode *json_node,
+                      GVariant **available,
+                      GVariant **available_later,
+                      GError **error)
+{
+  g_auto(GVariantBuilder) available_builder = G_VARIANT_BUILDER_INIT (G_VARIANT_TYPE ("a{sa{sv}}"));
+  g_auto(GVariantBuilder) available_later_builder = G_VARIANT_BUILDER_INIT (G_VARIANT_TYPE ("a{sa{sv}}"));
+  JsonObject *json_object = NULL;  /* borrowed */
+
+  g_return_val_if_fail (json_node != NULL, FALSE);
+  g_return_val_if_fail (available != NULL, FALSE);
+  g_return_val_if_fail (*available == NULL, FALSE);
+  g_return_val_if_fail (available_later != NULL, FALSE);
+  g_return_val_if_fail (*available_later == NULL, FALSE);
+
+  json_object = json_node_get_object (json_node);
+
+  if (!_au_get_json_array_candidates (json_object, AU_UPDATE_TYPE_MINOR, &available_builder,
+                                      &available_later_builder, error))
+    return FALSE;
+
+  if (!_au_get_json_array_candidates (json_object, AU_UPDATE_TYPE_MAJOR, &available_builder,
+                                      &available_later_builder, error))
+    return FALSE;
+
+  *available = g_variant_ref_sink (g_variant_builder_end (&available_builder));
+  *available_later = g_variant_ref_sink (g_variant_builder_end (&available_later_builder));
+
+  return TRUE;
+}
+
+static void
+on_query_completed (GPid pid,
+                    gint wait_status,
+                    gpointer user_data)
+{
+  QueryData *data = user_data;
+  g_autoptr(GIOChannel) stdout_channel = NULL;
+  g_autoptr(GVariant) available = NULL;
+  g_autoptr(GVariant) available_later = NULL;
+  g_autoptr(GFileIOStream) stream = NULL;
+  g_autoptr(JsonNode) json_node = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *output = NULL;
+  gsize out_length;
+  AuAtomupd1Impl *self = (AuAtomupd1Impl *)data->object;
+
+  if (!g_spawn_check_wait_status (wait_status, &error))
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "An error occurred calling the 'steamos-atomupd-client' helper: %s",
+                                             error->message);
+      return;
+    }
+
+  stdout_channel = g_io_channel_unix_new (data->standard_output);
+  if (g_io_channel_read_to_end (stdout_channel, &output, &out_length, &error) != G_IO_STATUS_NORMAL)
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "An error occurred reading the output of 'steamos-atomupd-client' helper: %s",
+                                             error->message);
+      return;
+    }
+
+  if (out_length == 0 || output[0] == '\0')
+    {
+      /* In theory when no updates are available we should receive an empty
+       * JSON object (i.e. {}). Is it okay to assume no updates or should we
+       * throw an error here? */
+      available = g_variant_new ("a{sa{sv}}", NULL);
+      available_later = g_variant_new ("a{sa{sv}}", NULL);
+      goto success;
+    }
+
+  if (out_length != strlen (output))
+    {
+      /* This might happen if there is the terminating null byte '\0' followed
+       * by some other data */
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "Helper output is not valid JSON: contains \\0");
+      return;
+    }
+
+  json_node = json_from_string (output, &error);
+  if (json_node == NULL)
+    {
+      if (error == NULL)
+        {
+          /* The helper returned an empty JSON, there are no available updates */
+          available = g_variant_new ("a{sa{sv}}", NULL);
+          available_later = g_variant_new ("a{sa{sv}}", NULL);
+          goto success;
+        }
+      else
+        {
+          g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+                                                 G_DBUS_ERROR,
+                                                 G_DBUS_ERROR_FAILED,
+                                                 "The helper output is not a valid JSON: %s",
+                                                 error->message);
+          return;
+        }
+    }
+
+  if (!_au_parse_candidates (json_node, &available, &available_later, &error))
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "An error occurred while parsing the helper output JSON: %s",
+                                             error->message);
+      return;
+    }
+
+  /* Store the update info in a file */
+  if (self->updates_json_file != NULL)
+    {
+      g_file_delete (self->updates_json_file, NULL, NULL);
+      g_clear_object (&self->updates_json_file);
+    }
+
+  self->updates_json_file = g_file_new_tmp ("atomupd-updates-XXXXXX.json", &stream, &error);
+
+  if (self->updates_json_file == NULL)
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "An error occurred while storing the helper output JSON: %s",
+                                             error->message);
+      return;
+    }
+  if (!g_file_replace_contents (self->updates_json_file, output, out_length, NULL, FALSE,
+                                G_FILE_CREATE_NONE, NULL, NULL, &error))
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "An error occurred while storing the helper output JSON: %s",
+                                             error->message);
+      return;
+    }
+
+success:
+  au_atomupd1_set_versions_available (data->object, available);
+  au_atomupd1_set_versions_available_later (data->object, available_later);
+  au_atomupd1_complete_check_for_updates (data->object,
+                                          g_steal_pointer (&data->invocation),
+                                          available,
+                                          available_later);
+}
+
 static gboolean
 au_atomupd1_impl_handle_check_for_updates (AuAtomupd1 *object,
                                            GDBusMethodInvocation *invocation,
                                            GVariant *arg_options)
 {
-  g_warning ("TODO: check for update is just a stub!");
+  g_autofree gchar *variant = NULL;
+  const gchar *key = NULL;
+  GVariant *value = NULL;
+  GVariantIter iter;
+  GPid child_pid;
+  g_autoptr(QueryData) data = au_query_data_new ();
+  g_autoptr(GPtrArray) argv = NULL;
+  g_autoptr(GError) error = NULL;
+  AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
 
-  au_atomupd1_complete_check_for_updates (object,
-                                          g_steal_pointer (&invocation),
-                                          g_variant_new ("a{sa{sv}}", NULL),
-                                          g_variant_new ("a{sa{sv}}", NULL));
+  g_return_val_if_fail (self->config_path != NULL, FALSE);
+  g_return_val_if_fail (self->manifest_path != NULL, FALSE);
 
-  return TRUE;
+  g_variant_iter_init (&iter, arg_options);
+
+  while (g_variant_iter_loop (&iter, "{sv}", &key, &value))
+    {
+      if (g_strcmp0 (key, "variant") == 0)
+        {
+          if (g_variant_is_of_type (value, G_VARIANT_TYPE_STRING))
+            {
+              variant = g_strdup (g_variant_get_string (value, NULL));
+              continue;
+            }
+        }
+      else
+        {
+          g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                                 G_DBUS_ERROR,
+                                                 G_DBUS_ERROR_FAILED,
+                                                 "The argument '%s' is not a valid option",
+                                                 key);
+          return G_DBUS_METHOD_INVOCATION_HANDLED;
+        }
+
+      g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "The option argument '%s' has an unexpected value type",
+                                             key);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+    }
+
+  if (variant == NULL)
+    {
+      variant = _au_get_default_variant (self->manifest_path, &error);
+      if (variant == NULL)
+        {
+          g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                                 G_DBUS_ERROR,
+                                                 G_DBUS_ERROR_FAILED,
+                                                 "An error occurred while parsing the manifest: %s",
+                                                 error->message);
+          return G_DBUS_METHOD_INVOCATION_HANDLED;
+        }
+    }
+
+  au_atomupd1_set_variant (object, variant);
+
+  argv = g_ptr_array_new_with_free_func (g_free);
+  g_ptr_array_add (argv, g_strdup ("steamos-atomupd-client"));
+  g_ptr_array_add (argv, g_strdup ("--config"));
+  g_ptr_array_add (argv, g_strdup (self->config_path));
+  g_ptr_array_add (argv, g_strdup ("--manifest-file"));
+  g_ptr_array_add (argv, g_strdup (self->manifest_path));
+  g_ptr_array_add (argv, g_strdup ("--variant"));
+  g_ptr_array_add (argv, g_steal_pointer (&variant));
+  g_ptr_array_add (argv, g_strdup ("--query-only"));
+  g_ptr_array_add (argv, g_strdup ("--estimate-download-size"));
+  g_ptr_array_add (argv, NULL);
+
+  if (!g_spawn_async_with_pipes (NULL,    /* working directory */
+                                 (gchar **) argv->pdata,
+                                 NULL,    /* envp */
+                                 G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
+                                 NULL,    /* child setup */
+                                 NULL,    /* user data */
+                                 &child_pid,
+                                 NULL,    /* standard input */
+                                 &data->standard_output,
+                                 NULL,    /* standard error */
+                                 &error))
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "An error occurred calling the 'steamos-atomupd-client' helper: %s",
+                                             error->message);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+    }
+
+  data->invocation = g_steal_pointer (&invocation);
+  data->object = g_object_ref (object);
+  g_child_watch_add (child_pid, on_query_completed, g_steal_pointer (&data));
+
+  return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
 static gboolean
@@ -220,6 +654,12 @@ au_atomupd1_impl_finalize (GObject *object)
 
   g_free (self->config_path);
   g_free (self->manifest_path);
+
+  if (self->updates_json_file != NULL)
+    {
+      g_file_delete (self->updates_json_file, NULL, NULL);
+      g_clear_object (&self->updates_json_file);
+    }
 
   G_OBJECT_CLASS (au_atomupd1_impl_parent_class)->finalize (object);
 }
