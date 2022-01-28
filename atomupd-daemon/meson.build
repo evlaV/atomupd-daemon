@@ -67,6 +67,7 @@ executable(
     glib,
     gio,
     gio_unix,
+    json_glib,
   ],
   install : true,
   install_dir : get_option('libexecdir'),

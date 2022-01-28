@@ -58,6 +58,8 @@ on_sigint (gpointer user_data)
   return FALSE;
 }
 
+static gchar *opt_config = NULL;
+static gchar *opt_manifest = NULL;
 static gboolean opt_replace = FALSE;
 static gboolean opt_session = FALSE;
 static gboolean opt_verbose = FALSE;
@@ -65,6 +67,12 @@ static gboolean opt_version = FALSE;
 
 static GOptionEntry options[] =
 {
+  { "config", '\0',
+    G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_config,
+    "Use this configuration file", "PATH" },
+  { "manifest-file", '\0',
+    G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_manifest,
+    "Use this manifest file", "PATH" },
   { "replace", '\0',
     G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_replace,
     "Replace a previous instance with the same bus name.",
@@ -120,10 +128,17 @@ main (int argc,
   if (opt_replace)
     flags |= G_BUS_NAME_OWNER_FLAGS_REPLACE;
 
-  atomupd = au_atomupd1_impl_new ();
+  atomupd = au_atomupd1_impl_new (opt_config, opt_manifest, error);
+  if (atomupd == NULL)
+    {
+      g_warning ("An error occurred while initializing the daemon: %s",
+                 local_error->message);
+      return EXIT_FAILURE;
+    }
+
   bus = g_bus_get_sync (opt_session ? G_BUS_TYPE_SESSION : G_BUS_TYPE_SYSTEM,
                         NULL,
-                        &local_error);
+                        error);
 
   if (bus == NULL)
     {
@@ -151,6 +166,9 @@ main (int argc,
   g_debug ("Starting the main loop");
 
   g_main_loop_run (main_loop);
+
+  g_free (opt_config);
+  g_free (opt_manifest);
 
   return EXIT_SUCCESS;
 }

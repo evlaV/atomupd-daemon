@@ -33,10 +33,77 @@
 #include "utils.h"
 #include "au-atomupd1-impl.h"
 
+#include <json-glib/json-glib.h>
+
 struct _AuAtomupd1Impl
 {
   AuAtomupd1Skeleton parent_instance;
+
+  gchar *config_path;
+  gchar *manifest_path;
 };
+
+/*
+ * _au_get_manifest_path_from_config:
+ * @config: (not nullable): Path to the configuration file
+ *
+ * Returns: (type filename) (transfer full): The configured path to the manifest,
+ *  or %NULL if the configuration doesn't have the "Manifest" field.
+ */
+static gchar *
+_au_get_manifest_path_from_config (const gchar *config)
+{
+  g_autoptr(GKeyFile) client_config = g_key_file_new ();
+
+  g_return_val_if_fail (config != NULL, NULL);
+
+  if (!g_key_file_load_from_file (client_config, config, G_KEY_FILE_NONE, NULL))
+    return NULL;
+
+  return g_key_file_get_string (client_config, "Host", "Manifest", NULL);
+}
+
+/*
+ * _au_get_default_variant:
+ * @manifest: (not nullable): Path to the JSON manifest file
+ * @error: Used to raise an error on failure
+ *
+ * Returns: (type filename) (transfer full): The variant value taken from the
+ *  manifest file.
+ */
+static gchar *
+_au_get_default_variant (const gchar *manifest,
+                         GError **error)
+{
+  const gchar *variant = NULL;
+  JsonNode *json_node = NULL;  /* borrowed */
+  JsonObject *json_object = NULL;  /* borrowed */
+  g_autoptr(JsonParser) parser = NULL;
+
+  g_return_val_if_fail (manifest != NULL, NULL);
+
+  parser = json_parser_new ();
+  if (!json_parser_load_from_file (parser, manifest, error))
+    return NULL;
+
+  json_node = json_parser_get_root (parser);
+  if (json_node == NULL)
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "failed to parse the manifest JSON \"%s\"", manifest);
+      return NULL;
+    }
+
+  json_object = json_node_get_object (json_node);
+  variant = json_object_get_string_member_with_default (json_object, "variant", NULL);
+
+  if (variant == NULL)
+    g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                 "the parsed manifest JSON \"%s\" doesn't have the expected \"variant\" key",
+                 manifest);
+
+  return g_strdup (variant);
+}
 
 static gboolean
 au_atomupd1_impl_handle_check_for_updates (AuAtomupd1 *object,
@@ -149,6 +216,11 @@ G_DEFINE_TYPE_WITH_CODE (AuAtomupd1Impl, au_atomupd1_impl, AU_TYPE_ATOMUPD1_SKEL
 static void
 au_atomupd1_impl_finalize (GObject *object)
 {
+  AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
+
+  g_free (self->config_path);
+  g_free (self->manifest_path);
+
   G_OBJECT_CLASS (au_atomupd1_impl_parent_class)->finalize (object);
 }
 
@@ -165,13 +237,52 @@ au_atomupd1_impl_init (AuAtomupd1Impl *self)
 {
 }
 
+/**
+ * au_atomupd1_impl_new:
+ * @config_preference: (transfer none) (nullable): Path to the configuration
+ *  file. If %NULL, the default configuration path will be used instead.
+ * @manifest_preference: (transfer none) (nullable): Path to the JSON manifest
+ *  file. If %NULL, the path will be either the one in the configuration file,
+ *  if any, or the default manifest path.
+ * @error: Used to raise an error on failure
+ *
+ * Returns: (transfer full): a new AuAtomupd1
+ */
 AuAtomupd1 *
-au_atomupd1_impl_new (void)
+au_atomupd1_impl_new (const gchar *config_preference,
+                      const gchar *manifest_preference,
+                      GError **error)
 {
-  AuAtomupd1 *atomupd = g_object_new (AU_TYPE_ATOMUPD1_IMPL, NULL);
+  g_autofree gchar *variant = NULL;
+  g_autofree gchar *manifest_from_config = NULL;
+  AuAtomupd1Impl *atomupd = g_object_new (AU_TYPE_ATOMUPD1_IMPL, NULL);
+
+  if (config_preference != NULL)
+    atomupd->config_path = g_strdup (config_preference);
+  else
+    atomupd->config_path = g_strdup (AU_DEFAULT_CONFIG);
+
+  if (manifest_preference != NULL)
+    {
+      atomupd->manifest_path = g_strdup (manifest_preference);
+    }
+  else
+    {
+      manifest_from_config = _au_get_manifest_path_from_config (atomupd->config_path);
+      if (manifest_from_config != NULL)
+        atomupd->manifest_path = g_steal_pointer (&manifest_from_config);
+      else
+        atomupd->manifest_path = g_strdup (AU_DEFAULT_MANIFEST);
+    }
+
+  variant = _au_get_default_variant (atomupd->manifest_path, error);
+  if (variant == NULL)
+    return NULL;
+
+  au_atomupd1_set_variant ((AuAtomupd1 *)atomupd, variant);
 
   /* We currently only have the version 1 of this interface */
-  au_atomupd1_set_version (atomupd, 1);
+  au_atomupd1_set_version ((AuAtomupd1 *)atomupd, 1);
 
-  return atomupd;
+  return (AuAtomupd1 *)atomupd;
 }

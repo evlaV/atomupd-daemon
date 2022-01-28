@@ -59,3 +59,6 @@ typedef enum
   AU_UPDATE_TYPE_MINOR = 0,
   AU_UPDATE_TYPE_MAJOR = 1,
 } AuUpdateType;
+
+static const gchar *AU_DEFAULT_CONFIG = "/etc/steamos-atomupd/client.conf";
+static const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
