@@ -29,6 +29,7 @@
 #include <glib/gstdio.h>
 #include <glib-unix.h>
 #include <gio/gio.h>
+#include <gio/gunixinputstream.h>
 
 #include "utils.h"
 #include "au-atomupd1-impl.h"
@@ -42,6 +43,8 @@ struct _AuAtomupd1Impl
   gchar *config_path;
   gchar *manifest_path;
   GFile *updates_json_file;
+  GFile *updates_json_copy;
+  GDataInputStream *start_update_stdout_stream;
 };
 
 typedef struct
@@ -554,6 +557,20 @@ au_atomupd1_impl_handle_check_for_updates (AuAtomupd1 *object,
   return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
+static void
+_au_atomupd1_set_update_status_and_error (AuAtomupd1 *object,
+                                          guint status,
+                                          const gchar *error_code,
+                                          const gchar *error_message)
+{
+  g_return_if_fail (object != NULL);
+
+  au_atomupd1_set_update_status (object, status);
+  au_atomupd1_set_failure_code (object, error_code);
+  au_atomupd1_set_failure_message (object, error_message);
+  g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (object));
+}
+
 static gboolean
 au_atomupd1_impl_handle_cancel_update (AuAtomupd1 *object,
                                        GDBusMethodInvocation *invocation)
@@ -598,18 +615,267 @@ au_atomupd1_impl_handle_pause_update (AuAtomupd1 *object,
   return TRUE;
 }
 
+static void
+_au_client_stdout_update_cb (GObject *object_stream,
+                             GAsyncResult *result,
+                             gpointer user_data)
+{
+  GDataInputStream *stream = (GDataInputStream *)object_stream;
+  g_autoptr(AuAtomupd1) object = user_data;
+  AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (object);
+  size_t len;
+  const gchar *cursor = NULL;
+  gchar *endptr = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *line = NULL;
+  g_auto(GStrv) parts = NULL;
+  g_autoptr(GDateTime) time_estimation = g_date_time_new_now_utc ();
+
+  if (self->start_update_stdout_stream != stream)
+    return;
+
+  /* steamos-atomupd-client will periodically print updates regarding the
+   * upgrade process. These updates are formatted as "XX.XX% DdHhMMmSSs".
+   * The estimated remaining time may be missing if we are either using Casync
+   * or if it is currently unknown.
+   * Examples of valid values include: "15.85% 08m44s", "0.00%", "4.31% 00m56s",
+   * "47.00% 1h12m05s" and "100%". */
+
+  line = g_data_input_stream_read_line_finish (stream, result, NULL, &error);
+
+  if (error != NULL)
+    {
+      g_debug ("Unable to read the update progress: %s", error->message);
+      return;
+    }
+
+  /* If there is nothing more to read, just return */
+  if (line == NULL)
+    return;
+
+  parts = g_strsplit (g_strstrip (line), " ", 2);
+
+  len = strlen (parts[0]);
+  if (len < 2 || parts[0][len - 1] != '%')
+    {
+      g_debug ("Unable to parse the completed percentage: %s", parts[0]);
+      return;
+    }
+
+  /* Remove the percentage sign */
+  parts[0][len - 1] = '\0';
+
+  /* The percentage here is not locale dependent, we don't have to worry
+   * about comma vs period for the decimals. */
+  au_atomupd1_set_progress_percentage (object, g_ascii_strtod (parts[0], NULL));
+
+  g_data_input_stream_read_line_async (stream, G_PRIORITY_DEFAULT, NULL,
+                                       _au_client_stdout_update_cb,
+                                       g_object_ref (object));
+
+  if (parts[1] == NULL)
+    {
+      au_atomupd1_set_estimated_completion_time (object, 0);
+      g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (object));
+      return;
+    }
+
+  cursor = parts[1];
+  while (*cursor != '\0')
+    {
+      guint64 value;
+
+      endptr = NULL;
+      value = g_ascii_strtoull (cursor, &endptr, 10);
+
+      if (endptr == NULL || cursor == (const char *) endptr)
+        {
+          g_debug ("Unable to parse the expected remaining time: %s", parts[1]);
+          au_atomupd1_set_estimated_completion_time (object, 0);
+          g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (object));
+          return;
+        }
+
+      cursor = endptr + 1;
+
+      switch (endptr[0])
+        {
+          case 'd':
+            time_estimation = g_date_time_add_days (time_estimation, value);
+            break;
+
+          case 'h':
+            time_estimation = g_date_time_add_hours (time_estimation, value);
+            break;
+
+          case 'm':
+            time_estimation = g_date_time_add_minutes (time_estimation, value);
+            break;
+
+          case 's':
+            time_estimation = g_date_time_add_seconds (time_estimation, value);
+            break;
+
+          default:
+            g_debug ("Unable to parse the expected remaining time: %s", parts[1]);
+            au_atomupd1_set_estimated_completion_time (object, 0);
+            g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (object));
+            return;
+        }
+    }
+
+  au_atomupd1_set_estimated_completion_time (object,
+                                             g_date_time_to_unix (time_estimation));
+  g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (object));
+}
+
+static void
+au_start_update_clear (AuAtomupd1Impl *self)
+{
+  g_clear_object (&self->start_update_stdout_stream);
+}
+
+static void
+child_watch_cb (GPid pid,
+                gint wait_status,
+                gpointer user_data)
+{
+  g_autoptr(AuAtomupd1) object = user_data;
+  g_autoptr(GError) error = NULL;
+
+  if (g_spawn_check_wait_status (wait_status, &error))
+    {
+      g_debug ("The update has been successfully applied");
+      _au_atomupd1_set_update_status_and_error (object, AU_UPDATE_STATUS_SUCCESSFUL, NULL, NULL);
+    }
+  else
+    {
+      g_debug ("'steamos-atomupd-client' helper returned an error: %s", error->message);
+      _au_atomupd1_set_update_status_and_error (object, AU_UPDATE_STATUS_FAILED,
+                                                "org.freedesktop.DBus.Error",
+                                                error->message);
+    }
+
+  au_start_update_clear ((AuAtomupd1Impl *)object);
+}
+
 static gboolean
 au_atomupd1_impl_handle_start_update (AuAtomupd1 *object,
                                       GDBusMethodInvocation *invocation,
                                       const gchar *arg_id)
 {
-  g_warning ("TODO: start update is just a stub!");
+  AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
+  g_autoptr(GPtrArray) argv = NULL;
+  g_autoptr(GFileIOStream) stream = NULL;
+  g_autoptr(GInputStream) unix_stream = NULL;
+  g_autoptr(GError) error = NULL;
+  AuUpdateStatus current_status;
+  GPid client_pid;
+  gint client_stdout;
 
-  // au_atomupd1_set_update_status (object, AU_UPDATE_STATUS_IN_PROGRESS);
+  current_status = au_atomupd1_get_update_status (object);
+  if (current_status == AU_UPDATE_STATUS_IN_PROGRESS
+      || current_status == AU_UPDATE_STATUS_PAUSED)
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "Failed to start a new update because one "
+                                             "is already in progress");
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+    }
+
+  if (self->updates_json_file == NULL)
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "It is not possible to start an update "
+                                             "before calling \"CheckForUpdates\"");
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+    }
+
+  au_atomupd1_set_update_version (object, arg_id);
+
+  /* Create a copy of the json file because we will pass that to the
+   * 'steamos-atomupd-client' helper and, if in the meantime we check again
+   * for updates, we may replace that file with a newer version. */
+
+  if (self->updates_json_copy != NULL)
+    {
+      g_file_delete (self->updates_json_copy, NULL, NULL);
+      g_clear_object (&self->updates_json_copy);
+    }
+
+  self->updates_json_copy = g_file_new_tmp ("steamos-atomupd-XXXXXX.json", &stream, &error);
+  if (self->updates_json_copy == NULL)
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "Failed to create a copy of the JSON update file %s",
+                                             error->message);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+    }
+  if (!g_file_copy (self->updates_json_file, self->updates_json_copy, G_FILE_COPY_OVERWRITE,
+                    NULL, NULL, NULL, &error))
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "Failed to create a copy of the JSON update file %s",
+                                             error->message);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+    }
+
+  argv = g_ptr_array_new_with_free_func (g_free);
+  g_ptr_array_add (argv, g_strdup ("steamos-atomupd-client"));
+  g_ptr_array_add (argv, g_strdup ("--config"));
+  g_ptr_array_add (argv, g_strdup (self->config_path));
+  g_ptr_array_add (argv, g_strdup ("--update-file"));
+  g_ptr_array_add (argv, g_file_get_path (self->updates_json_copy));
+  g_ptr_array_add (argv, g_strdup ("--update-version"));
+  g_ptr_array_add (argv, g_strdup (arg_id));
+  g_ptr_array_add (argv, NULL);
+
+  if (!g_spawn_async_with_pipes (NULL,    /* working directory */
+                                 (gchar **) argv->pdata,
+                                 NULL,    /* envp */
+                                 G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
+                                 NULL,    /* child setup */
+                                 NULL,    /* user data */
+                                 &client_pid,
+                                 NULL,    /* standard input */
+                                 &client_stdout,
+                                 NULL,    /* standard error */
+                                 &error))
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "Failed to launch the \"steamos-atomupd-client\" helper: %s",
+                                             error->message);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+    }
+
+  au_start_update_clear (self);
+  unix_stream = g_unix_input_stream_new (client_stdout, TRUE);
+  self->start_update_stdout_stream = g_data_input_stream_new (unix_stream);
+
+  g_data_input_stream_read_line_async (self->start_update_stdout_stream,
+                                       G_PRIORITY_DEFAULT, NULL,
+                                       _au_client_stdout_update_cb,
+                                       g_object_ref (object));
+
+  g_child_watch_add (client_pid, (GChildWatchFunc) child_watch_cb,
+                     g_object_ref (object));
+
+  _au_atomupd1_set_update_status_and_error (object, AU_UPDATE_STATUS_IN_PROGRESS,
+                                            NULL, NULL);
 
   au_atomupd1_complete_start_update (object, g_steal_pointer (&invocation));
 
-  return TRUE;
+  return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
 static gboolean
@@ -660,6 +926,14 @@ au_atomupd1_impl_finalize (GObject *object)
       g_file_delete (self->updates_json_file, NULL, NULL);
       g_clear_object (&self->updates_json_file);
     }
+
+  if (self->updates_json_copy != NULL)
+    {
+      g_file_delete (self->updates_json_copy, NULL, NULL);
+      g_clear_object (&self->updates_json_copy);
+    }
+
+  au_start_update_clear (self);
 
   G_OBJECT_CLASS (au_atomupd1_impl_parent_class)->finalize (object);
 }
