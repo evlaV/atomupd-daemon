@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=com.steampowered.Atomupd1
+Exec=@libexecdir@/atomupd-daemon
+User=root
+SystemdService=atomupd.service

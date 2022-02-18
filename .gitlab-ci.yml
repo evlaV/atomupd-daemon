@@ -1,6 +1,7 @@
 variables:
   STEAM_CI_DEPENDENCIES: >-
     clang
+    json-glib
     meson
     ninja
 

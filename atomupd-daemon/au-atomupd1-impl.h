@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021 Collabora Ltd.
+ * Copyright © 2021-2022 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -32,22 +32,12 @@
 #include <glib-object.h>
 #include <gio/gio.h>
 
-#include "atomupd1.h"
+#include "au-atomupd1.h"
 
-typedef struct _AtomupdDaemon AtomupdDaemon;
-typedef struct _AtomupdDaemonClass AtomupdDaemonClass;
+#define AU_TYPE_ATOMUPD1_IMPL (au_atomupd1_impl_get_type ())
 
-#define TYPE_ATOMUPD_DAEMON (atomupd_daemon_get_type ())
-#define ATOMUPD_DAEMON(obj) (G_TYPE_CHECK_INSTANCE_CAST ((obj), TYPE_ATOMUPD_DAEMON, AtomupdDaemon))
-#define ATOMUPD_DAEMON_CLASS(cls) (G_TYPE_CHECK_CLASS_CAST ((cls), TYPE_ATOMUPD_DAEMON, AtomupdDaemonClass))
-#define IS_ATOMUPD_DAEMON(obj) (G_TYPE_CHECK_INSTANCE_TYPE ((obj), TYPE_ATOMUPD_DAEMON))
-#define IS_ATOMUPD_DAEMON_CLASS(cls) (G_TYPE_CHECK_CLASS_TYPE ((cls), TYPE_ATOMUPD_DAEMON))
-#define ATOMUPD_DAEMON_GET_CLASS(obj) (G_TYPE_INSTANCE_GET_CLASS((obj), TYPE_ATOMUPD_DAEMON, AtomupdDaemonClass)
-GType atomupd_daemon_get_type (void);
+G_DECLARE_FINAL_TYPE (AuAtomupd1Impl, au_atomupd1_impl, AU, ATOMUPD1_IMPL, AuAtomupd1Skeleton)
 
-struct _AtomupdDaemon
-{
-
-};
-
-AtomupdDaemon *atomupd_daemon_new (GDBusConnection *connection);
+AuAtomupd1 *au_atomupd1_impl_new (const gchar *config,
+                                  const gchar *manifest,
+                                  GError **error);

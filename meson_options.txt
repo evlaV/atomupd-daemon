@@ -1,0 +1,9 @@
+# Copyright © 2022 Collabora Ltd.
+# SPDX-License-Identifier: MIT
+
+option(
+  'systemdsystemunitdir',
+  type : 'string',
+  value : '',
+  description : 'Directory for systemd unit files',
+)

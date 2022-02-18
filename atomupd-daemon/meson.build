@@ -22,16 +22,44 @@
 # SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 atomupd1 = gnome.gdbus_codegen(
-  'atomupd1',
+  'au-atomupd1',
   sources : 'com.steampowered.Atomupd1.xml',
   interface_prefix : 'com.steampowered.',
-  namespace : 'Ad',
+  namespace : 'Au',
+)
+
+conf_data = configuration_data()
+conf_data.set('libexecdir', get_option('libexecdir'))
+
+systemdsystemunitdir = get_option('systemdsystemunitdir')
+if systemdsystemunitdir == ''
+  systemd_dep = dependency('systemd')
+  systemdsystemunitdir = systemd_dep.get_pkgconfig_variable('systemdsystemunitdir')
+endif
+
+configure_file(
+  input : 'com.steampowered.Atomupd1.service.in',
+  output : 'com.steampowered.Atomupd1.service',
+  configuration : conf_data,
+  install_dir : join_paths(get_option('datadir'), 'dbus-1/system-services')
+)
+
+configure_file(
+  input : 'atomupd.service.in',
+  output : 'atomupd.service',
+  configuration : conf_data,
+  install_dir : systemdsystemunitdir,
+)
+
+install_data(
+  'com.steampowered.Atomupd1.conf',
+  install_dir : join_paths(get_option('datadir'), 'dbus-1/system.d')
 )
 
 executable(
   'atomupd-daemon',
   sources: [
-    'atomupd-daemon.c',
+    'au-atomupd1-impl.c',
     'main.c',
     atomupd1,
   ],
@@ -39,6 +67,8 @@ executable(
     glib,
     gio,
     gio_unix,
+    json_glib,
   ],
   install : true,
+  install_dir : get_option('libexecdir'),
 )
