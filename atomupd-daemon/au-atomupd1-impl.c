@@ -590,6 +590,67 @@ _au_atomupd1_set_update_status_and_error (AuAtomupd1 *object,
   g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (object));
 }
 
+/*
+ * Returns: The RAUC service PID or -1 if an error occurred.
+ */
+static gint64
+_au_get_rauc_service_pid (GError **error)
+{
+  g_autofree gchar *output = NULL;
+  gchar *endptr = NULL;
+  gint wait_status = 0;
+  gint64 rauc_pid;
+
+  const gchar *systemctl_argv[] = {
+    "systemctl",
+    "show",
+    "--property",
+    "MainPID",
+    "rauc",
+    NULL,
+  };
+
+  g_return_val_if_fail (error == NULL || *error == NULL, -1);
+
+  if (!g_spawn_sync (NULL,  /* working directory */
+                     (gchar **) systemctl_argv,
+                     NULL,  /* envp */
+                     G_SPAWN_SEARCH_PATH,
+                     NULL,  /* child setup */
+                     NULL,  /* user data */
+                     &output,
+                     NULL,  /* stderr */
+                     &wait_status,
+                     error))
+    {
+      return -1;
+    }
+
+  if (!g_spawn_check_wait_status (wait_status, error))
+    return -1;
+
+  if (!g_str_has_prefix (output, "MainPID="))
+    {
+      g_debug ("Systemctl output is '%s' instead of the expected 'MainPID=X'", output);
+      if (error != NULL)
+        *error = g_error_new (G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                              "An error occurred while trying to gather the RAUC PID");
+
+      return -1;
+    }
+
+  rauc_pid = g_ascii_strtoll (output + strlen("MainPID="), &endptr, 10);
+  if (endptr == NULL || output + strlen("MainPID=") == (const char *) endptr)
+    {
+      g_debug ("Unable to parse Systemctl output: %s", output);
+      *error = g_error_new (G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                            "An error occurred while trying to gather the RAUC PID");
+      return -1;
+    }
+
+  return rauc_pid;
+}
+
 static void
 _au_ensure_pid_is_killed (GPid pid)
 {
@@ -644,9 +705,6 @@ _au_cancel_async (GTask *task,
 			            gpointer data,
                   GCancellable *cancellable)
 {
-  g_autofree gchar *output = NULL;
-  gchar *endptr = NULL;
-  gint wait_status = 0;
   gint64 rauc_pid;
   g_autoptr(GError) error = NULL;
   GPid pid = GPOINTER_TO_INT (data);
@@ -659,50 +717,11 @@ _au_cancel_async (GTask *task,
 
   /* At the moment a RAUC operation can't be cancelled using its D-Bus API.
    * For this reason we get its PID number and send a SIGTERM/SIGKILL to it. */
-  const gchar *systemctl_argv[] = {
-    "systemctl",
-    "show",
-    "--property",
-    "MainPID",
-    "rauc",
-    NULL,
-  };
+  rauc_pid = _au_get_rauc_service_pid (&error);
 
-  if (!g_spawn_sync (NULL,  /* working directory */
-                     (gchar **) systemctl_argv,
-                     NULL,  /* envp */
-                     G_SPAWN_SEARCH_PATH,
-                     NULL,  /* child setup */
-                     NULL,  /* user data */
-                     &output,
-                     NULL,  /* stderr */
-                     &wait_status,
-                     &error))
+  if (rauc_pid < 0)
     {
       g_task_return_error (task, g_steal_pointer (&error));
-      return;
-    }
-
-  if (!g_spawn_check_wait_status (wait_status, &error))
-    {
-      g_task_return_error (task, g_steal_pointer (&error));
-      return;
-    }
-
-  if (!g_str_has_prefix (output, "MainPID="))
-    {
-      g_debug ("Systemctl output is '%s' instead of the expected 'MainPID=X'", output);
-      g_task_return_new_error (task, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-                               "An error occurred while trying to gather the RAUC PID");
-      return;
-    }
-
-  rauc_pid = g_ascii_strtoll (output + strlen("MainPID="), &endptr, 10);
-  if (endptr == NULL || output + strlen("MainPID=") == (const char *) endptr)
-    {
-      g_debug ("Unable to parse Systemctl output: %s", output);
-      g_task_return_new_error (task, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-                               "An error occurred while trying to gather the RAUC PID");
       return;
     }
 
