@@ -51,11 +51,16 @@ typedef struct
 {
   AuAtomupd1 *object;
   GDBusMethodInvocation *invocation;
+} RequestData;
+
+typedef struct
+{
+  RequestData *req;
   gint standard_output;
 } QueryData;
 
 static void
-_query_data_free (QueryData *self)
+_request_data_free (RequestData *self)
 {
   if (self->invocation != NULL)
       g_dbus_method_invocation_return_error (g_steal_pointer (&self->invocation),
@@ -65,12 +70,21 @@ _query_data_free (QueryData *self)
 
   g_clear_object (&self->object);
 
+  g_slice_free (RequestData, self);
+}
+
+static void
+_query_data_free (QueryData *self)
+{
+  _request_data_free (self->req);
+
   if (self->standard_output > -1)
     g_close (self->standard_output, NULL);
 
   g_slice_free (QueryData, self);
 }
 
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (RequestData, _request_data_free)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (QueryData, _query_data_free)
 
 static QueryData *
@@ -78,6 +92,8 @@ au_query_data_new (void)
 {
   QueryData *data = g_slice_new0 (QueryData);
   data->standard_output = -1;
+
+  data->req = g_slice_new0 (RequestData);
 
   return data;
 }
@@ -341,11 +357,11 @@ on_query_completed (GPid pid,
   g_autoptr(GError) error = NULL;
   g_autofree gchar *output = NULL;
   gsize out_length;
-  AuAtomupd1Impl *self = (AuAtomupd1Impl *)data->object;
+  AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (data->req->object);
 
   if (!g_spawn_check_wait_status (wait_status, &error))
     {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "An error occurred calling the 'steamos-atomupd-client' helper: %s",
@@ -356,7 +372,7 @@ on_query_completed (GPid pid,
   stdout_channel = g_io_channel_unix_new (data->standard_output);
   if (g_io_channel_read_to_end (stdout_channel, &output, &out_length, &error) != G_IO_STATUS_NORMAL)
     {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "An error occurred reading the output of 'steamos-atomupd-client' helper: %s",
@@ -378,7 +394,7 @@ on_query_completed (GPid pid,
     {
       /* This might happen if there is the terminating null byte '\0' followed
        * by some other data */
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "Helper output is not valid JSON: contains \\0");
@@ -397,7 +413,7 @@ on_query_completed (GPid pid,
         }
       else
         {
-          g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+          g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                                  G_DBUS_ERROR,
                                                  G_DBUS_ERROR_FAILED,
                                                  "The helper output is not a valid JSON: %s",
@@ -408,7 +424,7 @@ on_query_completed (GPid pid,
 
   if (!_au_parse_candidates (json_node, &available, &available_later, &error))
     {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "An error occurred while parsing the helper output JSON: %s",
@@ -427,7 +443,7 @@ on_query_completed (GPid pid,
 
   if (self->updates_json_file == NULL)
     {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "An error occurred while storing the helper output JSON: %s",
@@ -437,7 +453,7 @@ on_query_completed (GPid pid,
   if (!g_file_replace_contents (self->updates_json_file, output, out_length, NULL, FALSE,
                                 G_FILE_CREATE_NONE, NULL, NULL, &error))
     {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "An error occurred while storing the helper output JSON: %s",
@@ -446,10 +462,10 @@ on_query_completed (GPid pid,
     }
 
 success:
-  au_atomupd1_set_versions_available (data->object, available);
-  au_atomupd1_set_versions_available_later (data->object, available_later);
-  au_atomupd1_complete_check_for_updates (data->object,
-                                          g_steal_pointer (&data->invocation),
+  au_atomupd1_set_versions_available (data->req->object, available);
+  au_atomupd1_set_versions_available_later (data->req->object, available_later);
+  au_atomupd1_complete_check_for_updates (data->req->object,
+                                          g_steal_pointer (&data->req->invocation),
                                           available,
                                           available_later);
 }
@@ -467,7 +483,7 @@ au_atomupd1_impl_handle_check_for_updates (AuAtomupd1 *object,
   g_autoptr(QueryData) data = au_query_data_new ();
   g_autoptr(GPtrArray) argv = NULL;
   g_autoptr(GError) error = NULL;
-  AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
+  AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (object);
 
   g_return_val_if_fail (self->config_path != NULL, FALSE);
   g_return_val_if_fail (self->manifest_path != NULL, FALSE);
@@ -550,8 +566,8 @@ au_atomupd1_impl_handle_check_for_updates (AuAtomupd1 *object,
       return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-  data->invocation = g_steal_pointer (&invocation);
-  data->object = g_object_ref (object);
+  data->req->invocation = g_steal_pointer (&invocation);
+  data->req->object = g_object_ref (object);
   g_child_watch_add (child_pid, on_query_completed, g_steal_pointer (&data));
 
   return G_DBUS_METHOD_INVOCATION_HANDLED;
@@ -583,14 +599,14 @@ au_atomupd1_impl_handle_cancel_update (AuAtomupd1 *object,
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "There isn't an update in progress that can be cancelled");
-      return TRUE;
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
   // au_atomupd1_set_update_status (object, AU_UPDATE_STATUS_CANCELLED);
 
   au_atomupd1_complete_cancel_update (object, g_steal_pointer (&invocation));
 
-  return TRUE;
+  return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
 static gboolean
