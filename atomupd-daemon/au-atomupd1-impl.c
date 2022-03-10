@@ -162,6 +162,20 @@ _au_get_default_variant (const gchar *manifest,
 {
   return _au_get_string_from_manifest (manifest, "variant", error);
 }
+
+/*
+ * _au_get_current_system_version:
+ * @manifest: (not nullable): Path to the JSON manifest file
+ * @error: Used to raise an error on failure
+ *
+ * Returns: (type filename) (transfer full): The system version buildid, taken
+ *  from the manifest file.
+ */
+static gchar *
+_au_get_current_system_version (const gchar *manifest,
+                                GError **error)
+{
+  return _au_get_string_from_manifest (manifest, "buildid", error);
 }
 
 /*
@@ -988,6 +1002,7 @@ au_atomupd1_impl_new (const gchar *config_preference,
                       GError **error)
 {
   g_autofree gchar *variant = NULL;
+  g_autofree gchar *system_version = NULL;
   g_autofree gchar *manifest_from_config = NULL;
   AuAtomupd1Impl *atomupd = g_object_new (AU_TYPE_ATOMUPD1_IMPL, NULL);
 
@@ -1014,6 +1029,12 @@ au_atomupd1_impl_new (const gchar *config_preference,
     return NULL;
 
   au_atomupd1_set_variant ((AuAtomupd1 *)atomupd, variant);
+
+  system_version = _au_get_current_system_version (atomupd->manifest_path, error);
+  if (system_version == NULL)
+    return NULL;
+
+  au_atomupd1_set_current_version ((AuAtomupd1 *)atomupd, system_version);
 
   /* We currently only have the version 1 of this interface */
   au_atomupd1_set_version ((AuAtomupd1 *)atomupd, 1);
