@@ -103,23 +103,27 @@ _au_get_manifest_path_from_config (const gchar *config)
 }
 
 /*
- * _au_get_default_variant:
+ * _au_get_string_from_manifest:
  * @manifest: (not nullable): Path to the JSON manifest file
+ * @key: (not nullable): Key whose value will be returned
  * @error: Used to raise an error on failure
  *
- * Returns: (type filename) (transfer full): The variant value taken from the
+ * Returns: (type filename) (transfer full): The value of @key, taken from the
  *  manifest file.
  */
 static gchar *
-_au_get_default_variant (const gchar *manifest,
-                         GError **error)
+_au_get_string_from_manifest (const gchar *manifest,
+                              const gchar *key,
+                              GError **error)
 {
-  const gchar *variant = NULL;
+  const gchar *value = NULL;
   JsonNode *json_node = NULL;  /* borrowed */
   JsonObject *json_object = NULL;  /* borrowed */
   g_autoptr(JsonParser) parser = NULL;
 
   g_return_val_if_fail (manifest != NULL, NULL);
+  g_return_val_if_fail (key != NULL, NULL);
+  g_return_val_if_fail (error == NULL || *error == NULL, NULL);
 
   parser = json_parser_new ();
   if (!json_parser_load_from_file (parser, manifest, error))
@@ -134,14 +138,44 @@ _au_get_default_variant (const gchar *manifest,
     }
 
   json_object = json_node_get_object (json_node);
-  variant = json_object_get_string_member_with_default (json_object, "variant", NULL);
+  value = json_object_get_string_member_with_default (json_object, key, NULL);
 
-  if (variant == NULL)
+  if (value == NULL)
     g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                 "the parsed manifest JSON \"%s\" doesn't have the expected \"variant\" key",
-                 manifest);
+                 "the parsed manifest JSON \"%s\" doesn't have the expected \"%s\" key",
+                 manifest, key);
 
-  return g_strdup (variant);
+  return g_strdup (value);
+}
+
+/*
+ * _au_get_default_variant:
+ * @manifest: (not nullable): Path to the JSON manifest file
+ * @error: Used to raise an error on failure
+ *
+ * Returns: (type filename) (transfer full): The variant value taken from the
+ *  manifest file.
+ */
+static gchar *
+_au_get_default_variant (const gchar *manifest,
+                         GError **error)
+{
+  return _au_get_string_from_manifest (manifest, "variant", error);
+}
+
+/*
+ * _au_get_current_system_version:
+ * @manifest: (not nullable): Path to the JSON manifest file
+ * @error: Used to raise an error on failure
+ *
+ * Returns: (type filename) (transfer full): The system version buildid, taken
+ *  from the manifest file.
+ */
+static gchar *
+_au_get_current_system_version (const gchar *manifest,
+                                GError **error)
+{
+  return _au_get_string_from_manifest (manifest, "buildid", error);
 }
 
 /*
@@ -968,6 +1002,7 @@ au_atomupd1_impl_new (const gchar *config_preference,
                       GError **error)
 {
   g_autofree gchar *variant = NULL;
+  g_autofree gchar *system_version = NULL;
   g_autofree gchar *manifest_from_config = NULL;
   AuAtomupd1Impl *atomupd = g_object_new (AU_TYPE_ATOMUPD1_IMPL, NULL);
 
@@ -994,6 +1029,12 @@ au_atomupd1_impl_new (const gchar *config_preference,
     return NULL;
 
   au_atomupd1_set_variant ((AuAtomupd1 *)atomupd, variant);
+
+  system_version = _au_get_current_system_version (atomupd->manifest_path, error);
+  if (system_version == NULL)
+    return NULL;
+
+  au_atomupd1_set_current_version ((AuAtomupd1 *)atomupd, system_version);
 
   /* We currently only have the version 1 of this interface */
   au_atomupd1_set_version ((AuAtomupd1 *)atomupd, 1);
