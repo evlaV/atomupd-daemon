@@ -655,6 +655,8 @@ static void
 _au_ensure_pid_is_killed (GPid pid)
 {
   gsize i;
+  int status;
+  int pgid = getpgid (pid);
 
   g_debug ("Sending SIGTERM to PID %i", pid);
 
@@ -667,23 +669,41 @@ _au_ensure_pid_is_killed (GPid pid)
         {
           int saved_errno;
 
-          if (waitpid (pid, NULL, WNOHANG) > 0)
-            goto success;
-
-          saved_errno = errno;
-          if (saved_errno == ESRCH)
+          if (waitpid (pid, &status, WNOHANG | WUNTRACED) > 0)
             {
-              goto success;
-            }
-          else if (saved_errno == ECHILD)
-            {
-              /* The PID may not be our child, i.e. the rauc service.
-               * It is still safe to kill it, because it is the process
-               * responsible for applying an update and will gracefully
-               * handle the kill(). When we'll try to apply another update
-               * this service will be automatically executed again. */
-              if (kill (pid, 0) != 0)
+              if (WIFEXITED (status))
                 goto success;
+
+              if (WIFSTOPPED (status))
+                {
+                  g_debug ("PID %i is currently paused, sending SIGCONT to the group %i",
+                           pid, pgid);
+                  killpg (pgid, SIGCONT);
+                }
+            }
+          else
+            {
+              saved_errno = errno;
+
+              if (saved_errno == ESRCH)
+                goto success;
+
+              if (saved_errno == ECHILD)
+                {
+                  /* The PID may not be our child, i.e. the rauc service.
+                   * It is still safe to kill it, because it is the process
+                   * responsible for applying an update and will gracefully
+                   * handle the kill(). When we'll try to apply another update
+                   * this service will be automatically executed again. */
+                  if (kill (pid, 0) != 0)
+                    goto success;
+
+                  /* If this process is not our child, we can't use waitpid() and WIFSTOPPED().
+                   * Instead we send a SIGCONT regardless of the status of the process. */
+                  g_debug ("Sending SIGCONT to the group %i to ensure that the PIDs are not paused",
+                           pgid);
+                  killpg (pgid, SIGCONT);
+                }
             }
 
           g_debug ("PID %i is still running", pid);
@@ -765,7 +785,8 @@ au_atomupd1_impl_handle_cancel_update (AuAtomupd1 *object,
   g_autoptr(GTask) task = NULL;
   AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (object);
 
-  if (au_atomupd1_get_update_status (object) != AU_UPDATE_STATUS_IN_PROGRESS)
+  if (au_atomupd1_get_update_status (object) != AU_UPDATE_STATUS_IN_PROGRESS
+      && au_atomupd1_get_update_status (object) != AU_UPDATE_STATUS_PAUSED)
     {
       g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
                                              G_DBUS_ERROR,
@@ -791,11 +812,81 @@ au_atomupd1_impl_handle_cancel_update (AuAtomupd1 *object,
   return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
+/*
+ * _au_send_signal_to_install_procs:
+ * @self: A AuAtomupd1Impl object
+ * @sig: Signal that will be sent to the processes
+ * @error: Used to raise an error on failure
+ *
+ * Send @sig to the install helper PID and to the RAUC service process group ID
+ *
+ * Returns: %TRUE if the signal was successfully sent
+ */
+static gboolean
+_au_send_signal_to_install_procs (AuAtomupd1Impl *self,
+                                  int sig,
+                                  GError **error)
+{
+  gint64 rauc_pid;
+  int rauc_pgid;
+  int saved_errno;
+
+  g_return_val_if_fail (self != NULL, FALSE);
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  if (self->install_pid == 0)
+    {
+      if (error != NULL)
+        *error = g_error_new (G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                              "Unexpectedly the PID of the install helper is not set");
+
+      return FALSE;
+    }
+
+  g_debug ("Sending signal %i to the install helper with PID %i",
+           sig, self->install_pid);
+
+  if (kill (self->install_pid, sig) < 0)
+    {
+      saved_errno = errno;
+      if (error != NULL)
+        *error = g_error_new (G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                              "Unable to send signal %i to the update helper: %s",
+                              sig, g_strerror (saved_errno));
+
+      return FALSE;
+    }
+
+  rauc_pid = _au_get_rauc_service_pid (error);
+  if (rauc_pid < 0)
+    return FALSE;
+
+  if (rauc_pid > 0)
+    {
+      /* Send the signal to the entire PGID, to include the eventual Desync process */
+      rauc_pgid = getpgid (rauc_pid);
+      g_debug ("Sending signal %i to the RAUC service PGID %i", sig, rauc_pgid);
+
+      if (killpg (rauc_pgid, sig) < 0)
+        {
+          saved_errno = errno;
+          if (error != NULL)
+            *error = g_error_new (G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                                  "Unable to send signal %i to the RAUC service: %s",
+                                  sig, g_strerror (saved_errno));
+
+          return FALSE;
+        }
+    }
+  return TRUE;
+}
+
 static gboolean
 au_atomupd1_impl_handle_pause_update (AuAtomupd1 *object,
                                       GDBusMethodInvocation *invocation)
 {
-  g_warning ("TODO: pause update is just a stub!");
+  g_autoptr(GError) error = NULL;
+  AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (object);
 
   if (au_atomupd1_get_update_status (object) != AU_UPDATE_STATUS_IN_PROGRESS)
     {
@@ -803,14 +894,23 @@ au_atomupd1_impl_handle_pause_update (AuAtomupd1 *object,
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "There isn't an update in progress that can be paused");
-      return TRUE;
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-  // au_atomupd1_set_update_status (object, AU_UPDATE_STATUS_PAUSED);
+  if (!_au_send_signal_to_install_procs (self, SIGSTOP, &error))
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                             error->domain,
+                                             error->code,
+                                             "An error occurred while attempting to pause the installation process: %s",
+                                             error->message);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+    }
 
+  au_atomupd1_set_update_status (object, AU_UPDATE_STATUS_PAUSED);
   au_atomupd1_complete_pause_update (object, g_steal_pointer (&invocation));
 
-  return TRUE;
+  return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
 static void
@@ -1082,7 +1182,8 @@ static gboolean
 au_atomupd1_impl_handle_resume_update (AuAtomupd1 *object,
                                        GDBusMethodInvocation *invocation)
 {
-  g_warning ("TODO: resume update is just a stub!");
+  g_autoptr(GError) error = NULL;
+  AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (object);
 
   if (au_atomupd1_get_update_status (object) != AU_UPDATE_STATUS_PAUSED)
     {
@@ -1090,14 +1191,23 @@ au_atomupd1_impl_handle_resume_update (AuAtomupd1 *object,
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "There isn't a paused update that can be resumed");
-      return TRUE;
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-  // au_atomupd1_set_update_status (object, AU_UPDATE_STATUS_IN_PROGRESS);
+  if (!_au_send_signal_to_install_procs (self, SIGCONT, &error))
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                             error->domain,
+                                             error->code,
+                                             "An error occurred while attempting to resume the installation process: %s",
+                                             error->message);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+    }
 
+  au_atomupd1_set_update_status (object, AU_UPDATE_STATUS_IN_PROGRESS);
   au_atomupd1_complete_resume_update (object, g_steal_pointer (&invocation));
 
-  return TRUE;
+  return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
 static void
