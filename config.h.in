@@ -5,3 +5,4 @@
 #mesondefine VERSION
 
 #define _GNU_SOURCE 1
+#define G_LOG_DOMAIN "@project_name@"
