@@ -23,6 +23,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <signal.h>
 #include <unistd.h>
 
 #include <glib.h>
@@ -40,6 +41,8 @@ struct _AuAtomupd1Impl
 {
   AuAtomupd1Skeleton parent_instance;
 
+  GPid install_pid;
+  guint install_event_source;
   gchar *config_path;
   gchar *manifest_path;
   GFile *updates_json_file;
@@ -51,11 +54,16 @@ typedef struct
 {
   AuAtomupd1 *object;
   GDBusMethodInvocation *invocation;
+} RequestData;
+
+typedef struct
+{
+  RequestData *req;
   gint standard_output;
 } QueryData;
 
 static void
-_query_data_free (QueryData *self)
+_request_data_free (RequestData *self)
 {
   if (self->invocation != NULL)
       g_dbus_method_invocation_return_error (g_steal_pointer (&self->invocation),
@@ -65,12 +73,21 @@ _query_data_free (QueryData *self)
 
   g_clear_object (&self->object);
 
+  g_slice_free (RequestData, self);
+}
+
+static void
+_query_data_free (QueryData *self)
+{
+  _request_data_free (self->req);
+
   if (self->standard_output > -1)
     g_close (self->standard_output, NULL);
 
   g_slice_free (QueryData, self);
 }
 
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (RequestData, _request_data_free)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (QueryData, _query_data_free)
 
 static QueryData *
@@ -78,6 +95,8 @@ au_query_data_new (void)
 {
   QueryData *data = g_slice_new0 (QueryData);
   data->standard_output = -1;
+
+  data->req = g_slice_new0 (RequestData);
 
   return data;
 }
@@ -375,11 +394,11 @@ on_query_completed (GPid pid,
   g_autoptr(GError) error = NULL;
   g_autofree gchar *output = NULL;
   gsize out_length;
-  AuAtomupd1Impl *self = (AuAtomupd1Impl *)data->object;
+  AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (data->req->object);
 
   if (!g_spawn_check_wait_status (wait_status, &error))
     {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "An error occurred calling the 'steamos-atomupd-client' helper: %s",
@@ -390,7 +409,7 @@ on_query_completed (GPid pid,
   stdout_channel = g_io_channel_unix_new (data->standard_output);
   if (g_io_channel_read_to_end (stdout_channel, &output, &out_length, &error) != G_IO_STATUS_NORMAL)
     {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "An error occurred reading the output of 'steamos-atomupd-client' helper: %s",
@@ -412,7 +431,7 @@ on_query_completed (GPid pid,
     {
       /* This might happen if there is the terminating null byte '\0' followed
        * by some other data */
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "Helper output is not valid JSON: contains \\0");
@@ -431,7 +450,7 @@ on_query_completed (GPid pid,
         }
       else
         {
-          g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+          g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                                  G_DBUS_ERROR,
                                                  G_DBUS_ERROR_FAILED,
                                                  "The helper output is not a valid JSON: %s",
@@ -442,7 +461,7 @@ on_query_completed (GPid pid,
 
   if (!_au_parse_candidates (json_node, &available, &available_later, &error))
     {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "An error occurred while parsing the helper output JSON: %s",
@@ -461,7 +480,7 @@ on_query_completed (GPid pid,
 
   if (self->updates_json_file == NULL)
     {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "An error occurred while storing the helper output JSON: %s",
@@ -471,7 +490,7 @@ on_query_completed (GPid pid,
   if (!g_file_replace_contents (self->updates_json_file, output, out_length, NULL, FALSE,
                                 G_FILE_CREATE_NONE, NULL, NULL, &error))
     {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "An error occurred while storing the helper output JSON: %s",
@@ -480,10 +499,10 @@ on_query_completed (GPid pid,
     }
 
 success:
-  au_atomupd1_set_versions_available (data->object, available);
-  au_atomupd1_set_versions_available_later (data->object, available_later);
-  au_atomupd1_complete_check_for_updates (data->object,
-                                          g_steal_pointer (&data->invocation),
+  au_atomupd1_set_versions_available (data->req->object, available);
+  au_atomupd1_set_versions_available_later (data->req->object, available_later);
+  au_atomupd1_complete_check_for_updates (data->req->object,
+                                          g_steal_pointer (&data->req->invocation),
                                           available,
                                           available_later);
 }
@@ -501,7 +520,7 @@ au_atomupd1_impl_handle_check_for_updates (AuAtomupd1 *object,
   g_autoptr(QueryData) data = au_query_data_new ();
   g_autoptr(GPtrArray) argv = NULL;
   g_autoptr(GError) error = NULL;
-  AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
+  AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (object);
 
   g_return_val_if_fail (self->config_path != NULL, FALSE);
   g_return_val_if_fail (self->manifest_path != NULL, FALSE);
@@ -584,8 +603,8 @@ au_atomupd1_impl_handle_check_for_updates (AuAtomupd1 *object,
       return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-  data->invocation = g_steal_pointer (&invocation);
-  data->object = g_object_ref (object);
+  data->req->invocation = g_steal_pointer (&invocation);
+  data->req->object = g_object_ref (object);
   g_child_watch_add (child_pid, on_query_completed, g_steal_pointer (&data));
 
   return G_DBUS_METHOD_INVOCATION_HANDLED;
@@ -605,11 +624,161 @@ _au_atomupd1_set_update_status_and_error (AuAtomupd1 *object,
   g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (object));
 }
 
+static void
+_au_ensure_pid_is_killed (GPid pid)
+{
+  gsize i;
+
+  g_debug ("Sending SIGTERM to PID %i", pid);
+
+  if (kill (pid, SIGTERM) == 0)
+    {
+      /* The PIDs we are trying to stop usually do it in less than a second.
+       * We wait up to 2s and, if they are still running, we will send a
+       * SIGKILL. */
+      for (i = 0; i < 4; i++)
+        {
+          int saved_errno;
+
+          if (waitpid (pid, NULL, WNOHANG) > 0)
+            goto success;
+
+          saved_errno = errno;
+          if (saved_errno == ESRCH)
+            {
+              goto success;
+            }
+          else if (saved_errno == ECHILD)
+            {
+              /* The PID may not be our child, i.e. the rauc service.
+               * It is still safe to kill it, because it is the process
+               * responsible for applying an update and will gracefully
+               * handle the kill(). When we'll try to apply another update
+               * this service will be automatically executed again. */
+              if (kill (pid, 0) != 0)
+                goto success;
+            }
+
+          g_debug ("PID %i is still running", pid);
+          g_usleep (0.5 * G_USEC_PER_SEC);
+        }
+    }
+
+  g_debug ("Sending SIGKILL to PID %i", pid);
+  kill (pid, SIGKILL);
+  waitpid (pid, NULL, 0);
+
+success:
+  g_debug ("PID %i terminated successfully", pid);
+}
+
+static void
+_au_cancel_async (GTask *task,
+                  gpointer source_object,
+			            gpointer data,
+                  GCancellable *cancellable)
+{
+  g_autofree gchar *output = NULL;
+  gchar *endptr = NULL;
+  gint wait_status = 0;
+  gint64 rauc_pid;
+  g_autoptr(GError) error = NULL;
+  GPid pid = GPOINTER_TO_INT (data);
+
+  /* The first thing to kill is the install helper. Otherwise, if we kill
+   * RAUC while the helper is still running, the helper might execute RAUC
+   * again before we are able to send the termination signal to the helper. */
+  if (pid > 0)
+    _au_ensure_pid_is_killed (pid);
+
+  /* At the moment a RAUC operation can't be cancelled using its D-Bus API.
+   * For this reason we get its PID number and send a SIGTERM/SIGKILL to it. */
+  const gchar *systemctl_argv[] = {
+    "systemctl",
+    "show",
+    "--property",
+    "MainPID",
+    "rauc",
+    NULL,
+  };
+
+  if (!g_spawn_sync (NULL,  /* working directory */
+                     (gchar **) systemctl_argv,
+                     NULL,  /* envp */
+                     G_SPAWN_SEARCH_PATH,
+                     NULL,  /* child setup */
+                     NULL,  /* user data */
+                     &output,
+                     NULL,  /* stderr */
+                     &wait_status,
+                     &error))
+    {
+      g_task_return_error (task, g_steal_pointer (&error));
+      return;
+    }
+
+  if (!g_spawn_check_wait_status (wait_status, &error))
+    {
+      g_task_return_error (task, g_steal_pointer (&error));
+      return;
+    }
+
+  if (!g_str_has_prefix (output, "MainPID="))
+    {
+      g_debug ("Systemctl output is '%s' instead of the expected 'MainPID=X'", output);
+      g_task_return_new_error (task, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                               "An error occurred while trying to gather the RAUC PID");
+      return;
+    }
+
+  rauc_pid = g_ascii_strtoll (output + strlen("MainPID="), &endptr, 10);
+  if (endptr == NULL || output + strlen("MainPID=") == (const char *) endptr)
+    {
+      g_debug ("Unable to parse Systemctl output: %s", output);
+      g_task_return_new_error (task, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                               "An error occurred while trying to gather the RAUC PID");
+      return;
+    }
+
+  if (rauc_pid > 0)
+    _au_ensure_pid_is_killed (rauc_pid);
+
+  g_task_return_boolean (task, TRUE);
+}
+
+static void
+cancel_callback (GObject *source_object,
+                 GAsyncResult *result,
+                 gpointer user_data)
+{
+  g_autoptr(GError) error = NULL;
+  RequestData *data = user_data;
+
+  if (g_task_propagate_boolean (G_TASK (result), &error))
+    {
+      au_atomupd1_set_update_status (data->object, AU_UPDATE_STATUS_CANCELLED);
+      au_atomupd1_complete_cancel_update (data->object,
+                                          g_steal_pointer (&data->invocation));
+    }
+  else
+    {
+      /* We failed to cancel a running update, probably the update is still
+       * running, but we don't know for certain. */
+      g_dbus_method_invocation_return_error (g_steal_pointer (&data->invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "Failed to cancel an update: %s",
+                                             error->message);
+    }
+}
+
 static gboolean
 au_atomupd1_impl_handle_cancel_update (AuAtomupd1 *object,
                                        GDBusMethodInvocation *invocation)
 {
-  g_warning ("TODO: cancel update is just a stub!");
+  g_autoptr(RequestData) data = g_slice_new0 (RequestData);
+  g_autoptr(GTask) task = NULL;
+  AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (object);
 
   if (au_atomupd1_get_update_status (object) != AU_UPDATE_STATUS_IN_PROGRESS)
     {
@@ -617,14 +786,24 @@ au_atomupd1_impl_handle_cancel_update (AuAtomupd1 *object,
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
                                              "There isn't an update in progress that can be cancelled");
-      return TRUE;
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-  // au_atomupd1_set_update_status (object, AU_UPDATE_STATUS_CANCELLED);
+  /* Remove the previous child watch callback */
+  if (self->install_event_source != 0)
+    g_source_remove (self->install_event_source);
 
-  au_atomupd1_complete_cancel_update (object, g_steal_pointer (&invocation));
+  self->install_event_source = 0;
 
-  return TRUE;
+  data->invocation = g_steal_pointer (&invocation);
+  data->object = g_object_ref (object);
+
+  task = g_task_new (NULL, NULL, cancel_callback, g_steal_pointer (&data));
+
+  g_task_set_task_data (task, GINT_TO_POINTER(self->install_pid), NULL);
+  g_task_run_in_thread (task, _au_cancel_async);
+
+  return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
 static gboolean
@@ -767,6 +946,8 @@ static void
 au_start_update_clear (AuAtomupd1Impl *self)
 {
   g_clear_object (&self->start_update_stdout_stream);
+  self->install_event_source = 0;
+  self->install_pid = 0;
 }
 
 static void
@@ -804,7 +985,6 @@ au_atomupd1_impl_handle_start_update (AuAtomupd1 *object,
   g_autoptr(GInputStream) unix_stream = NULL;
   g_autoptr(GError) error = NULL;
   AuUpdateStatus current_status;
-  GPid client_pid;
   gint client_stdout;
 
   current_status = au_atomupd1_get_update_status (object);
@@ -872,13 +1052,14 @@ au_atomupd1_impl_handle_start_update (AuAtomupd1 *object,
   g_ptr_array_add (argv, g_strdup (arg_id));
   g_ptr_array_add (argv, NULL);
 
+  au_start_update_clear (self);
   if (!g_spawn_async_with_pipes (NULL,    /* working directory */
                                  (gchar **) argv->pdata,
                                  NULL,    /* envp */
                                  G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
                                  NULL,    /* child setup */
                                  NULL,    /* user data */
-                                 &client_pid,
+                                 &self->install_pid,
                                  NULL,    /* standard input */
                                  &client_stdout,
                                  NULL,    /* standard error */
@@ -892,7 +1073,6 @@ au_atomupd1_impl_handle_start_update (AuAtomupd1 *object,
       return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-  au_start_update_clear (self);
   unix_stream = g_unix_input_stream_new (client_stdout, TRUE);
   self->start_update_stdout_stream = g_data_input_stream_new (unix_stream);
 
@@ -901,8 +1081,9 @@ au_atomupd1_impl_handle_start_update (AuAtomupd1 *object,
                                        _au_client_stdout_update_cb,
                                        g_object_ref (object));
 
-  g_child_watch_add (client_pid, (GChildWatchFunc) child_watch_cb,
-                     g_object_ref (object));
+  self->install_event_source = g_child_watch_add (self->install_pid,
+                                                  (GChildWatchFunc) child_watch_cb,
+                                                  g_object_ref (object));
 
   _au_atomupd1_set_update_status_and_error (object, AU_UPDATE_STATUS_IN_PROGRESS,
                                             NULL, NULL);
