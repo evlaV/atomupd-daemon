@@ -3,3 +3,5 @@
  * SPDX-License-Identifier: MIT
  */
 #mesondefine VERSION
+
+#define _GNU_SOURCE 1
