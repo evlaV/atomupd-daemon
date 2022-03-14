@@ -34,7 +34,7 @@ conf_data.set('libexecdir', get_option('libexecdir'))
 systemdsystemunitdir = get_option('systemdsystemunitdir')
 if systemdsystemunitdir == ''
   systemd_dep = dependency('systemd')
-  systemdsystemunitdir = systemd_dep.get_pkgconfig_variable('systemdsystemunitdir')
+  systemdsystemunitdir = systemd_dep.get_variable('systemdsystemunitdir')
 endif
 
 configure_file(
