@@ -30,6 +30,10 @@
 #include <gio/gio.h>
 
 #include "au-atomupd1-impl.h"
+#include "utils.h"
+
+const gchar *AU_DEFAULT_CONFIG = "/etc/steamos-atomupd/client.conf";
+const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
 
 static GMainLoop *main_loop = NULL;
 
