@@ -136,6 +136,10 @@ json_glib = dependency(
   version : '>= 1.6.0',
 )
 
+project_include_dirs = include_directories(
+  '.',
+)
+
 subdir('atomupd-daemon')
 
-#subdir('tests')
+subdir('tests')

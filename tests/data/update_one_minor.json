@@ -1,0 +1,20 @@
+{
+  "minor": {
+    "release": "holo",
+    "candidates": [
+      {
+        "image": {
+          "product": "steamos",
+          "release": "holo",
+          "variant": "steamdeck",
+          "arch": "amd64",
+          "version": "snapshot",
+          "buildid": "20220227.3",
+          "checkpoint": false,
+          "estimated_size": 70910463
+        },
+        "update_path": "steamdeck/20220227.3/steamdeck-20220227.3-snapshot.raucb"
+      }
+    ]
+  }
+}
