@@ -34,6 +34,9 @@
 
 #include "atomupd-daemon/utils.h"
 
+#define _send_atomupd_message_with_null_reply(_bus, _method, _type, _content) \
+  g_assert_null (_send_atomupd_message (_bus, _method, _type, _content))
+
 #define _send_atomupd_message(_bus, _method, _format,  ...)  \
   _send_message(_bus, "com.steampowered.Atomupd1", _method, _format, __VA_ARGS__)
 
@@ -495,6 +498,309 @@ test_query_updates (Fixture *f,
     }
 }
 
+static AtomupdProperties *
+_get_atomupd_properties (GDBusConnection *bus)
+{
+  g_autoptr(GVariantIter) available_iter = NULL;
+  g_autoptr(GVariantIter) available_later_iter = NULL;
+  GVariantDict dict;
+  g_autoptr(GVariant) reply = NULL;
+  g_autoptr(GVariant) properties = NULL;
+  g_autoptr(AtomupdProperties) atomupd_properties = g_new0 (AtomupdProperties, 1);
+
+#define assert_variant(_variant, _type, _member) \
+  g_assert_true (g_variant_dict_lookup (&dict, _variant, _type, \
+                                        &atomupd_properties->_member))
+
+#define assert_variant_dict(_variant, _variant_iter, _member) \
+    g_assert_true (g_variant_dict_lookup (&dict, _variant, "a{?*}", &_variant_iter)); \
+    atomupd_properties->_member = g_variant_iter_n_children (_variant_iter)
+
+  reply = _send_properties_message (bus, "GetAll", "(s)", "com.steampowered.Atomupd1");
+  g_variant_get (reply, "(@a{sv})", &properties);
+  g_variant_dict_init (&dict, properties);
+
+  assert_variant ("Version", "u", version);
+  assert_variant ("ProgressPercentage", "d", progress_percentage);
+  assert_variant ("EstimatedCompletionTime", "t", estimated_completion_time);
+  assert_variant ("UpdateStatus", "u", status);
+  assert_variant ("UpdateVersion", "s", update_version);
+  assert_variant ("Variant", "s", variant);
+  assert_variant ("FailureCode", "s", failure_code);
+  assert_variant ("FailureMessage", "s", failure_message);
+  assert_variant ("CurrentVersion", "s", current_version);
+
+  assert_variant_dict ("VersionsAvailable", available_iter, versions_available_n);
+  assert_variant_dict ("VersionsAvailableLater", available_later_iter,
+                       versions_available_later_n);
+
+  return g_steal_pointer (&atomupd_properties);
+}
+
+static void
+test_default_properties (Fixture *f,
+                         gconstpointer context)
+{
+  GPid daemon_pid;
+  g_autoptr(GDBusConnection) bus = NULL;
+  g_autoptr(AtomupdProperties) atomupd_properties = NULL;
+  g_auto(GStrv) test_envp = g_get_environ ();
+
+  bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
+
+  if (_is_daemon_service_running (bus, NULL))
+    {
+      g_test_skip ("Can't run this test if another instance of the Atomupd "
+                   "daemon service is already running");
+      return;
+    }
+
+  /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
+  test_envp = g_environ_setenv (test_envp, "PATH", f->builddir, TRUE);
+
+  _start_daemon_service (bus, f->manifest_path, test_envp, &daemon_pid);
+
+  atomupd_properties = _get_atomupd_properties (bus);
+  /* The version of this interface is the number 1 */
+  g_assert_cmpuint (atomupd_properties->version, ==, 1);
+  g_assert_true (atomupd_properties->progress_percentage == 0);
+  g_assert_cmpuint (atomupd_properties->estimated_completion_time, ==, 0);
+  g_assert_cmpuint (atomupd_properties->status, ==, AU_UPDATE_STATUS_IDLE);
+  g_assert_cmpstr (atomupd_properties->update_version, ==, "");
+  /* Variant parsed from "manifest.json" */
+  g_assert_cmpstr (atomupd_properties->variant, ==, "steamdeck");
+  g_assert_cmpstr (atomupd_properties->failure_code, ==, "");
+  g_assert_cmpstr (atomupd_properties->failure_message, ==, "");
+  g_assert_cmpuint (atomupd_properties->versions_available_n, ==, 0);
+  g_assert_cmpuint (atomupd_properties->versions_available_later_n, ==, 0);
+  /* Version buildid parsed from "manifest.json" */
+  g_assert_cmpstr (atomupd_properties->current_version, ==, "20220205.2");
+
+  _stop_daemon_service (daemon_pid);
+}
+
+static void
+_check_message_reply (GDBusConnection *bus,
+                      const gchar *method,
+                      const gchar *message_type,
+                      const gchar *message_content,
+                      const gchar *expected_reply)
+{
+  g_autoptr(GVariant) reply = NULL;
+  g_autofree gchar *reply_str = NULL;
+
+  reply = _send_atomupd_message (bus, method, message_type, message_content);
+  g_variant_get (reply, "(s)", &reply_str);
+
+  g_assert_cmpstr (reply_str, ==, expected_reply);
+}
+
+static void
+test_unexpected_methods (Fixture *f,
+                         gconstpointer context)
+{
+  GPid daemon_pid;
+  g_autoptr(GDBusConnection) bus = NULL;
+  g_auto(GStrv) test_envp = g_get_environ ();
+
+  bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
+
+  if (_is_daemon_service_running (bus, NULL))
+    {
+      g_test_skip ("Can't run this test if another instance of the Atomupd "
+                   "daemon service is already running");
+      return;
+    }
+
+  _start_daemon_service (bus, f->manifest_path, test_envp, &daemon_pid);
+
+  _check_message_reply (bus, "StartUpdate", "(s)", "20220120.1",
+                        "It is not possible to start an update before calling \"CheckForUpdates\"");
+  _check_message_reply (bus, "PauseUpdate", NULL, NULL,
+                        "There isn't an update in progress that can be paused");
+  _check_message_reply (bus, "ResumeUpdate", NULL, NULL,
+                        "There isn't a paused update that can be resumed");
+  _check_message_reply (bus, "CancelUpdate", NULL, NULL,
+                        "There isn't an update in progress that can be cancelled");
+
+  _stop_daemon_service (daemon_pid);
+}
+
+/*
+ * @envp: (nullable) (element-type filename) (transfer full):
+ * @rauc_pid: (out):
+ *
+ * Returns: (element-type filename) (transfer full):
+ *   An updated environment list with "G_TEST_MOCK_RAUC_SERVICE_PID" set
+ *   to the mock rauc service pid.
+ */
+static gchar **
+_launch_rauc_service_and_setenv (gchar **envp,
+                                 GPid *rauc_pid)
+{
+  GPid pid;
+  gboolean spawn_ret;
+  g_autofree gchar *pid_str = NULL;
+  g_autoptr(GError) error = NULL;
+
+  const char * const rauc_argv[] = { "mock-rauc-service", NULL };
+
+  /* Launch a mock rauc service that does nothing until it receives
+   * the SIGTERM signal. This will allow us to test the cancel and
+   * pause methods. */
+  spawn_ret = g_spawn_async (NULL,
+                             (char **) rauc_argv,
+                             envp,
+                             G_SPAWN_SEARCH_PATH,
+                             NULL,
+                             NULL,
+                             &pid,
+                             &error);
+  g_assert_no_error (error);
+  g_assert_true (spawn_ret);
+
+  g_debug ("Launched a mock rauc service with pid %i", pid);
+
+  if (rauc_pid)
+    *rauc_pid = pid;
+
+  pid_str = g_strdup_printf ("%i", pid);
+  return g_environ_setenv (envp, "G_TEST_MOCK_RAUC_SERVICE_PID",
+                           pid_str, TRUE);
+}
+
+static void
+test_start_pause_stop_update (Fixture *f,
+                              gconstpointer context)
+{
+  GPid daemon_pid;
+  GPid rauc_pid;
+  AuUpdateStatus status;
+  g_autofree gchar *update_file_path = NULL;
+  g_autoptr(GVariant) reply = NULL;
+  g_autoptr(GDBusConnection) bus = NULL;
+  g_autoptr(AtomupdProperties) atomupd_properties = NULL;
+  g_autoptr(GDateTime) time_now = NULL;
+  g_auto(GStrv) test_envp = g_get_environ ();
+
+  bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
+
+  if (_is_daemon_service_running (bus, NULL))
+    {
+      g_test_skip ("Can't run this test if another instance of the Atomupd "
+                   "daemon service is already running");
+      return;
+    }
+
+  /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
+  test_envp = g_environ_setenv (test_envp, "PATH", f->builddir, TRUE);
+
+  update_file_path = g_build_filename (f->srcdir, "data", "update_one_minor.json", NULL);
+  test_envp = g_environ_setenv (test_envp, "G_TEST_UPDATE_JSON",
+                                update_file_path, TRUE);
+
+  test_envp = _launch_rauc_service_and_setenv (test_envp, &rauc_pid);
+
+  _start_daemon_service (bus, f->manifest_path, test_envp, &daemon_pid);
+
+  _call_check_for_updates (bus, NULL, NULL);
+
+  g_debug ("Starting an update that is expected to complete in 1.5 seconds");
+  _send_atomupd_message_with_null_reply (bus, "StartUpdate", "(s)", "mock-success");
+
+  g_usleep (2 * G_USEC_PER_SEC);
+
+  reply = _get_atomupd_property (bus, "UpdateStatus");
+  g_variant_get (reply, "u", &status);
+  g_assert_cmpuint (status, ==, AU_UPDATE_STATUS_SUCCESSFUL);
+
+  /* With "mock-infinite" we simulate an update that is in progress.
+   * To make it more predictable, it will always print a progress of
+   * "16.08% 06m35s" until we cancel it with a SIGTERM. */
+  g_debug ("Starting infinite update");
+  _send_atomupd_message_with_null_reply (bus, "StartUpdate", "(s)", "mock-infinite");
+
+  g_usleep (G_USEC_PER_SEC);
+  time_now = g_date_time_new_now_utc ();
+  atomupd_properties = _get_atomupd_properties (bus);
+  g_assert_true (atomupd_properties->progress_percentage == 16.08);
+  g_assert_cmpuint (atomupd_properties->estimated_completion_time, >,
+                    g_date_time_to_unix (time_now));
+  g_assert_cmpuint (atomupd_properties->status, ==, AU_UPDATE_STATUS_IN_PROGRESS);
+  g_assert_cmpstr (atomupd_properties->update_version, ==, "mock-infinite");
+  g_clear_pointer (&atomupd_properties, atomupd_properties_free);
+
+  _send_atomupd_message_with_null_reply (bus, "PauseUpdate", NULL, NULL);
+  atomupd_properties = _get_atomupd_properties (bus);
+  g_assert_true (atomupd_properties->progress_percentage == 16.08);
+  g_assert_cmpuint (atomupd_properties->status, ==, AU_UPDATE_STATUS_PAUSED);
+  /* Assert that the mock rauc service has not been killed.
+   * Because it is not our own child, we can't check for "WIFSTOPPED". */
+  g_assert_cmpint (kill (rauc_pid, 0) , ==, 0);
+  g_clear_pointer (&atomupd_properties, atomupd_properties_free);
+
+  _send_atomupd_message_with_null_reply (bus, "ResumeUpdate", NULL, NULL);
+  _send_atomupd_message_with_null_reply (bus, "CancelUpdate", NULL, NULL);
+  g_usleep (G_USEC_PER_SEC);
+  atomupd_properties = _get_atomupd_properties (bus);
+  /* When receiving SIGTERM the mock steamos-atomupd-client will print
+   * "17.50% 05m50s" and then quit */
+  g_assert_true (atomupd_properties->progress_percentage == 17.50);
+  g_assert_cmpuint (atomupd_properties->estimated_completion_time, >,
+                    g_date_time_to_unix (time_now));
+  g_assert_cmpuint (atomupd_properties->status, ==, AU_UPDATE_STATUS_CANCELLED);
+  g_assert_cmpstr (atomupd_properties->update_version, ==, "mock-infinite");
+  /* Assert that the CancelUpdate successfully killed the rauc service */
+  g_assert_cmpint (kill (rauc_pid, 0) , !=, 0);
+
+  _stop_daemon_service (daemon_pid);
+}
+
+static void
+test_multiple_method_calls (Fixture *f,
+                            gconstpointer context)
+{
+  GPid daemon_pid;
+  GPid rauc_pid;
+  g_autoptr(GVariant) reply = NULL;
+  g_autoptr(GDBusConnection) bus = NULL;
+  g_autoptr(AtomupdProperties) atomupd_properties = NULL;
+  g_auto(GStrv) test_envp = g_get_environ ();
+
+  bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
+
+  if (_is_daemon_service_running (bus, NULL))
+    {
+      g_test_skip ("Can't run this test if another instance of the Atomupd "
+                   "daemon service is already running");
+      return;
+    }
+
+  /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
+  test_envp = g_environ_setenv (test_envp, "PATH", f->builddir, TRUE);
+  test_envp = _launch_rauc_service_and_setenv (test_envp, &rauc_pid);
+
+  _start_daemon_service (bus, f->manifest_path, test_envp, &daemon_pid);
+
+  _call_check_for_updates (bus, NULL, NULL);
+  reply = _send_atomupd_message (bus, "CheckForUpdates", "(a{sv})", NULL);
+  g_assert_nonnull (reply);
+
+  _send_atomupd_message_with_null_reply (bus, "StartUpdate", "(s)", "mock-infinite");
+  _send_atomupd_message_with_null_reply (bus, "PauseUpdate", NULL, NULL);
+  /* Pausing again should not be allowed */
+  _check_message_reply (bus, "PauseUpdate", NULL, NULL,
+                        "There isn't an update in progress that can be paused");
+  /* It is expected to be possible to cancel a paused update */
+  _send_atomupd_message_with_null_reply (bus, "CancelUpdate", NULL, NULL);
+  g_usleep (G_USEC_PER_SEC);
+  atomupd_properties = _get_atomupd_properties (bus);
+  g_assert_cmpuint (atomupd_properties->status, ==, AU_UPDATE_STATUS_CANCELLED);
+  g_assert_cmpint (kill (rauc_pid, 0) , !=, 0);
+
+  _stop_daemon_service (daemon_pid);
+}
+
 int
 main (int argc,
       char **argv)
@@ -509,6 +815,10 @@ main (int argc,
     g_test_add(_name, Fixture, NULL, setup, _test, teardown)
 
   test_add ("/daemon/updates", test_query_updates);
+  test_add ("/daemon/default_properties", test_default_properties);
+  test_add ("/daemon/unexpected_methods", test_unexpected_methods);
+  test_add ("/daemon/start_pause_stop_update", test_start_pause_stop_update);
+  test_add ("/daemon/multiple_method_calls", test_multiple_method_calls);
 
   ret = g_test_run ();
   return ret;
