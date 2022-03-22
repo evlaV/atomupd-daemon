@@ -1,0 +1,38 @@
+{
+  "minor": {
+    "release": "holo",
+    "candidates": [
+      {
+        "image": {
+          "product": "steamos",
+          "release": "holo",
+          "variant": "steamdeck",
+          "arch": "amd64",
+          "version": "snapshot",
+          "buildid": "20220120.1",
+          "checkpoint": false,
+          "estimated_size": 0
+        },
+        "update_path": "steamdeck/20220120.1/steamdeck-20220120.1-snapshot.raucb"
+      }
+    ]
+  },
+  "major": {
+    "release": "holo",
+    "candidates": [
+      {
+        "image": {
+          "product": "steamos",
+          "release": "holo",
+          "variant": "steamdeck",
+          "arch": "amd64",
+          "version": "snapshot",
+          "buildid": "20220202.1",
+          "checkpoint": false,
+          "estimated_size": 0
+        },
+        "update_path": "steamdeck/20220202.1/steamdeck-20220202.1-snapshot.raucb"
+      }
+    ]
+  }
+}

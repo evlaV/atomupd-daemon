@@ -1,6 +1,7 @@
 variables:
   STEAM_CI_DEPENDENCIES: >-
     clang
+    dbus
     json-glib
     meson
     ninja
@@ -20,6 +21,9 @@ stages:
 
       pacman -Syu --needed --noconfirm --noprogressbar \
       ${STEAM_CI_DEPENDENCIES}
+
+      # By setting this env var we can start new D-Bus services
+      export DBUS_SESSION_BUS_ADDRESS=`dbus-daemon --fork --config-file=/usr/share/dbus-1/session.conf --print-address`
 
       export CC=${COMPILER}
       export CXX=${COMPILER}++

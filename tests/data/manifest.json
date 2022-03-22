@@ -1,0 +1,9 @@
+{
+  "product": "steamos",
+  "release": "holo",
+  "variant": "steamdeck",
+  "arch": "amd64",
+  "version": "snapshot",
+  "buildid": "20220205.2",
+  "checkpoint": false
+}

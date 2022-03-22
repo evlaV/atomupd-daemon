@@ -28,7 +28,7 @@ project(
     'c_std=c99',
     'warning_level=2',
   ],
-  meson_version : '>=0.49.0',
+  meson_version : '>=0.58.0',
 )
 
 api_major = '0'
@@ -136,6 +136,10 @@ json_glib = dependency(
   version : '>= 1.6.0',
 )
 
+project_include_dirs = include_directories(
+  '.',
+)
+
 subdir('atomupd-daemon')
 
-#subdir('tests')
+subdir('tests')

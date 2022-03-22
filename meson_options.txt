@@ -2,6 +2,13 @@
 # SPDX-License-Identifier: MIT
 
 option(
+  'install_tests',
+  type : 'boolean',
+  value : false,
+  description : 'Install automated tests',
+)
+
+option(
   'systemdsystemunitdir',
   type : 'string',
   value : '',

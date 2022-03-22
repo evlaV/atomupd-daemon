@@ -23,42 +23,25 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
-
 #include <stdio.h>
-#include <unistd.h>
+#include <stdlib.h>
 
-/**
- * AuUpdateStatus:
- * @AU_UPDATE_STATUS_IDLE: The update has not been launched yet
- * @AU_UPDATE_STATUS_IN_PROGRESS: The update is currently being applied
- * @AU_UPDATE_STATUS_PAUSED: The update has been paused
- * @AU_UPDATE_STATUS_SUCCESSFUL: The update process successfully completed
- * @AU_UPDATE_STATUS_FAILED: An Error occurred during the update
- * @AU_UPDATE_STATUS_CANCELLED: A special case of FAILED where the update attempt
- *  has been cancelled
- */
-typedef enum
+#include <glib.h>
+
+int
+main (int argc,
+      char **argv)
 {
-  AU_UPDATE_STATUS_IDLE = 0,
-  AU_UPDATE_STATUS_IN_PROGRESS = 1,
-  AU_UPDATE_STATUS_PAUSED = 2,
-  AU_UPDATE_STATUS_SUCCESSFUL = 3,
-  AU_UPDATE_STATUS_FAILED = 4,
-  AU_UPDATE_STATUS_CANCELLED = 5,
-} AuUpdateStatus;
+  /* Mock implementation for "systemctl show --property MainPID rauc" */
 
+  const gchar *rauc_pid = NULL;
 
-/**
- * AuUpdateType:
- * @AU_UPDATE_TYPE_MINOR: A minor update
- * @AU_UPDATE_TYPE_MAJOR: A major update
- */
-typedef enum
-{
-  AU_UPDATE_TYPE_MINOR = 0,
-  AU_UPDATE_TYPE_MAJOR = 1,
-} AuUpdateType;
+  rauc_pid = g_getenv ("G_TEST_MOCK_RAUC_SERVICE_PID");
 
-extern const gchar *AU_DEFAULT_CONFIG;
-extern const gchar *AU_DEFAULT_MANIFEST;
+  if (rauc_pid == NULL)
+    return EXIT_FAILURE;
+
+  printf ("MainPID=%s\n", rauc_pid);
+
+  return EXIT_SUCCESS;
+}
