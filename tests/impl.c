@@ -50,6 +50,7 @@ typedef struct
   gchar *srcdir;
   gchar *builddir;
   gchar *manifest_path;
+  GStrv test_envp;
 } Fixture;
 
 static void
@@ -66,6 +67,10 @@ setup (Fixture *f,
     f->builddir = g_path_get_dirname (argv0);
 
   f->manifest_path = g_build_filename (f->srcdir, "data", "manifest.json", NULL);
+
+  f->test_envp = g_get_environ ();
+  /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
+  f->test_envp = g_environ_setenv (f->test_envp, "PATH", f->builddir, TRUE);
 }
 
 static void
@@ -75,6 +80,7 @@ teardown (Fixture *f,
   g_free (f->srcdir);
   g_free (f->builddir);
   g_free (f->manifest_path);
+  g_strfreev (f->test_envp);
 }
 
 typedef struct
@@ -462,7 +468,6 @@ test_query_updates (Fixture *f,
 {
   gsize i;
   g_autoptr(GDBusConnection) bus = NULL;
-  g_auto(GStrv) test_envp = g_get_environ ();
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
@@ -473,9 +478,6 @@ test_query_updates (Fixture *f,
       return;
     }
 
-  /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
-  test_envp = g_environ_setenv (test_envp, "PATH", f->builddir, TRUE);
-
   for (i = 0; i < G_N_ELEMENTS (updates_test); i++)
     {
       GPid daemon_pid;
@@ -483,10 +485,10 @@ test_query_updates (Fixture *f,
       g_autofree gchar *update_file_path = NULL;
 
       update_file_path = g_build_filename (f->srcdir, "data", test->update_json, NULL);
-      test_envp = g_environ_setenv (test_envp, "G_TEST_UPDATE_JSON",
-                                    update_file_path, TRUE);
+      f->test_envp = g_environ_setenv (f->test_envp, "G_TEST_UPDATE_JSON",
+                                       update_file_path, TRUE);
 
-      _start_daemon_service (bus, f->manifest_path, test_envp, &daemon_pid);
+      _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
       _call_check_for_updates (bus, test->versions_available,
                                test->versions_available_later);
@@ -544,7 +546,6 @@ test_default_properties (Fixture *f,
   GPid daemon_pid;
   g_autoptr(GDBusConnection) bus = NULL;
   g_autoptr(AtomupdProperties) atomupd_properties = NULL;
-  g_auto(GStrv) test_envp = g_get_environ ();
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
@@ -555,10 +556,7 @@ test_default_properties (Fixture *f,
       return;
     }
 
-  /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
-  test_envp = g_environ_setenv (test_envp, "PATH", f->builddir, TRUE);
-
-  _start_daemon_service (bus, f->manifest_path, test_envp, &daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
   atomupd_properties = _get_atomupd_properties (bus);
   /* The version of this interface is the number 1 */
@@ -601,7 +599,6 @@ test_unexpected_methods (Fixture *f,
 {
   GPid daemon_pid;
   g_autoptr(GDBusConnection) bus = NULL;
-  g_auto(GStrv) test_envp = g_get_environ ();
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
@@ -612,7 +609,7 @@ test_unexpected_methods (Fixture *f,
       return;
     }
 
-  _start_daemon_service (bus, f->manifest_path, test_envp, &daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
   _check_message_reply (bus, "StartUpdate", "(s)", "20220120.1",
                         "It is not possible to start an update before calling \"CheckForUpdates\"");
@@ -681,7 +678,6 @@ test_start_pause_stop_update (Fixture *f,
   g_autoptr(GDBusConnection) bus = NULL;
   g_autoptr(AtomupdProperties) atomupd_properties = NULL;
   g_autoptr(GDateTime) time_now = NULL;
-  g_auto(GStrv) test_envp = g_get_environ ();
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
@@ -692,16 +688,13 @@ test_start_pause_stop_update (Fixture *f,
       return;
     }
 
-  /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
-  test_envp = g_environ_setenv (test_envp, "PATH", f->builddir, TRUE);
-
   update_file_path = g_build_filename (f->srcdir, "data", "update_one_minor.json", NULL);
-  test_envp = g_environ_setenv (test_envp, "G_TEST_UPDATE_JSON",
-                                update_file_path, TRUE);
+  f->test_envp = g_environ_setenv (f->test_envp, "G_TEST_UPDATE_JSON",
+                                   update_file_path, TRUE);
 
-  test_envp = _launch_rauc_service_and_setenv (test_envp, &rauc_pid);
+  f->test_envp = _launch_rauc_service_and_setenv (f->test_envp, &rauc_pid);
 
-  _start_daemon_service (bus, f->manifest_path, test_envp, &daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
   _call_check_for_updates (bus, NULL, NULL);
 
@@ -765,7 +758,6 @@ test_multiple_method_calls (Fixture *f,
   g_autoptr(GVariant) reply = NULL;
   g_autoptr(GDBusConnection) bus = NULL;
   g_autoptr(AtomupdProperties) atomupd_properties = NULL;
-  g_auto(GStrv) test_envp = g_get_environ ();
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
@@ -776,11 +768,9 @@ test_multiple_method_calls (Fixture *f,
       return;
     }
 
-  /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
-  test_envp = g_environ_setenv (test_envp, "PATH", f->builddir, TRUE);
-  test_envp = _launch_rauc_service_and_setenv (test_envp, &rauc_pid);
+  f->test_envp = _launch_rauc_service_and_setenv (f->test_envp, &rauc_pid);
 
-  _start_daemon_service (bus, f->manifest_path, test_envp, &daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
   _call_check_for_updates (bus, NULL, NULL);
   reply = _send_atomupd_message (bus, "CheckForUpdates", "(a{sv})", NULL);
