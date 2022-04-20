@@ -63,6 +63,14 @@ on_sigint (gpointer user_data)
   return FALSE;
 }
 
+static gboolean
+on_sigterm (gpointer user_data)
+{
+  g_debug ("Caught SIGTERM. Initiating shutdown.");
+  g_main_loop_quit (main_loop);
+  return FALSE;
+}
+
 static gchar *opt_config = NULL;
 static gchar *opt_manifest = NULL;
 static gboolean opt_replace = FALSE;
@@ -127,6 +135,7 @@ main (int argc,
 
   main_loop = g_main_loop_new (NULL, FALSE);
   g_unix_signal_add (SIGINT, on_sigint, NULL);
+  g_unix_signal_add (SIGTERM, on_sigterm, NULL);
 
   flags = G_BUS_NAME_OWNER_FLAGS_ALLOW_REPLACEMENT;
 
