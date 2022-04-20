@@ -34,6 +34,7 @@
 
 const gchar *AU_DEFAULT_CONFIG = "/etc/steamos-atomupd/client.conf";
 const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
+const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json";
 
 static GMainLoop *main_loop = NULL;
 

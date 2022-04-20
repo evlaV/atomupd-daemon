@@ -389,7 +389,6 @@ on_query_completed (GPid pid,
   g_autoptr(GIOChannel) stdout_channel = NULL;
   g_autoptr(GVariant) available = NULL;
   g_autoptr(GVariant) available_later = NULL;
-  g_autoptr(GFileIOStream) stream = NULL;
   g_autoptr(JsonNode) json_node = NULL;
   g_autoptr(GError) error = NULL;
   g_autofree gchar *output = NULL;
@@ -469,24 +468,6 @@ on_query_completed (GPid pid,
       return;
     }
 
-  /* Store the update info in a file */
-  if (self->updates_json_file != NULL)
-    {
-      g_file_delete (self->updates_json_file, NULL, NULL);
-      g_clear_object (&self->updates_json_file);
-    }
-
-  self->updates_json_file = g_file_new_tmp ("atomupd-updates-XXXXXX.json", &stream, &error);
-
-  if (self->updates_json_file == NULL)
-    {
-      g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
-                                             G_DBUS_ERROR,
-                                             G_DBUS_ERROR_FAILED,
-                                             "An error occurred while storing the helper output JSON: %s",
-                                             error->message);
-      return;
-    }
   if (!g_file_replace_contents (self->updates_json_file, output, out_length, NULL, FALSE,
                                 G_FILE_CREATE_NONE, NULL, NULL, &error))
     {
@@ -1118,7 +1099,7 @@ au_atomupd1_impl_handle_start_update (AuAtomupd1 *object,
       return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-  if (self->updates_json_file == NULL)
+  if (!g_file_query_exists (self->updates_json_file, NULL))
     {
       g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
                                              G_DBUS_ERROR,
@@ -1265,11 +1246,8 @@ au_atomupd1_impl_finalize (GObject *object)
   g_free (self->config_path);
   g_free (self->manifest_path);
 
-  if (self->updates_json_file != NULL)
-    {
-      g_file_delete (self->updates_json_file, NULL, NULL);
-      g_clear_object (&self->updates_json_file);
-    }
+  // Keep the update file, to be able to reuse it later on
+  g_clear_object (&self->updates_json_file);
 
   if (self->updates_json_copy != NULL)
     {
@@ -1314,6 +1292,9 @@ au_atomupd1_impl_new (const gchar *config_preference,
   g_autofree gchar *variant = NULL;
   g_autofree gchar *system_version = NULL;
   g_autofree gchar *manifest_from_config = NULL;
+  g_autoptr(GFile) updates_json_parent = NULL;
+  const gchar *updates_json_path;
+  g_autoptr(GError) local_error = NULL;
   AuAtomupd1Impl *atomupd = g_object_new (AU_TYPE_ATOMUPD1_IMPL, NULL);
 
   if (config_preference != NULL)
@@ -1332,6 +1313,25 @@ au_atomupd1_impl_new (const gchar *config_preference,
         atomupd->manifest_path = g_steal_pointer (&manifest_from_config);
       else
         atomupd->manifest_path = g_strdup (AU_DEFAULT_MANIFEST);
+    }
+
+  /* This environment variable is used for debugging and automated tests */
+  updates_json_path = g_getenv ("AU_UPDATES_JSON_FILE");
+  if (updates_json_path == NULL)
+    updates_json_path = AU_DEFAULT_UPDATE_JSON;
+
+  atomupd->updates_json_file = g_file_new_for_path (updates_json_path);
+
+  updates_json_parent = g_file_get_parent (atomupd->updates_json_file);
+  if (!g_file_make_directory_with_parents (updates_json_parent, NULL, &local_error))
+    {
+      if (local_error->code != G_IO_ERROR_EXISTS)
+        {
+          g_propagate_error (error, g_steal_pointer (&local_error));
+          return NULL;
+        }
+
+      g_clear_error (&local_error);
     }
 
   variant = _au_get_default_variant (atomupd->manifest_path, error);

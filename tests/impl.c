@@ -29,6 +29,7 @@
 #include <libelf.h>
 
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <glib-unix.h>
 #include <gio/gio.h>
 
@@ -50,6 +51,7 @@ typedef struct
   gchar *srcdir;
   gchar *builddir;
   gchar *manifest_path;
+  gchar *updates_json;
   GStrv test_envp;
 } Fixture;
 
@@ -57,6 +59,9 @@ static void
 setup (Fixture *f,
        gconstpointer context)
 {
+  int fd;
+  g_autoptr(GError) error = NULL;
+
   f->srcdir = g_strdup (g_getenv ("G_TEST_SRCDIR"));
   f->builddir = g_strdup (g_getenv ("G_TEST_BUILDDIR"));
 
@@ -68,9 +73,17 @@ setup (Fixture *f,
 
   f->manifest_path = g_build_filename (f->srcdir, "data", "manifest.json", NULL);
 
+  fd = g_file_open_tmp ("steamos-atomupd-XXXXXX.json", &f->updates_json, &error);
+  g_assert_no_error (error);
+  close (fd);
+  /* Start with the update JSON not available */
+  g_assert_cmpint (g_unlink (f->updates_json), ==, 0);
+
   f->test_envp = g_get_environ ();
   /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
   f->test_envp = g_environ_setenv (f->test_envp, "PATH", f->builddir, TRUE);
+  f->test_envp = g_environ_setenv (f->test_envp, "AU_UPDATES_JSON_FILE",
+                                   f->updates_json, TRUE);
 }
 
 static void
@@ -81,6 +94,9 @@ teardown (Fixture *f,
   g_free (f->builddir);
   g_free (f->manifest_path);
   g_strfreev (f->test_envp);
+
+  g_unlink (f->updates_json);
+  g_free (f->updates_json);
 }
 
 typedef struct
@@ -697,6 +713,11 @@ test_start_pause_stop_update (Fixture *f,
   _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
   _call_check_for_updates (bus, NULL, NULL);
+
+  /* Restart the service. When starting an update we expect that it shouldn't
+   * complain that we didn't check for updates, because we already did. */
+  _stop_daemon_service (daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
   g_debug ("Starting an update that is expected to complete in 1.5 seconds");
   _send_atomupd_message_with_null_reply (bus, "StartUpdate", "(s)", "mock-success");
