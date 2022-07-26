@@ -41,7 +41,7 @@ configure_file(
   input : 'com.steampowered.Atomupd1.service.in',
   output : 'com.steampowered.Atomupd1.service',
   configuration : conf_data,
-  install_dir : join_paths(get_option('datadir'), 'dbus-1/system-services')
+  install_dir : join_paths(get_option('prefix'), get_option('datadir'), 'dbus-1/system-services')
 )
 
 configure_file(
@@ -53,7 +53,7 @@ configure_file(
 
 install_data(
   'com.steampowered.Atomupd1.conf',
-  install_dir : join_paths(get_option('datadir'), 'dbus-1/system.d')
+  install_dir : join_paths(get_option('prefix'), get_option('datadir'), 'dbus-1/system.d')
 )
 
 executable(

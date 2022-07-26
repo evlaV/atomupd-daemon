@@ -28,6 +28,7 @@ test_env.set('PATH', join_paths(meson.current_build_dir(), '..', 'atomupd-daemon
 test_env.prepend('PATH', meson.current_build_dir())
 
 tests_dir = join_paths(
+  get_option('prefix'),
   get_option('libexecdir'),
   'installed-tests',
   meson.project_name() + '-' + api_major,
