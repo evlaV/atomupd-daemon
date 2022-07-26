@@ -29,7 +29,7 @@ atomupd1 = gnome.gdbus_codegen(
 )
 
 conf_data = configuration_data()
-conf_data.set('libexecdir', get_option('libexecdir'))
+conf_data.set('libexecdir', get_option('prefix') / get_option('libexecdir'))
 
 systemdsystemunitdir = get_option('systemdsystemunitdir')
 if systemdsystemunitdir == ''
@@ -70,5 +70,5 @@ executable(
     json_glib,
   ],
   install : true,
-  install_dir : get_option('libexecdir'),
+  install_dir : get_option('prefix') / get_option('libexecdir'),
 )
