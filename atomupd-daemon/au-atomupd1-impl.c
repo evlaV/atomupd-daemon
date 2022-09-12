@@ -673,6 +673,9 @@ _au_ensure_pid_is_killed (GPid pid)
   int status;
   int pgid = getpgid (pid);
 
+  if (pid < 1)
+    return;
+
   g_debug ("Sending SIGTERM to PID %i", pid);
 
   if (kill (pid, SIGTERM) == 0)
@@ -747,8 +750,7 @@ _au_cancel_async (GTask *task,
   /* The first thing to kill is the install helper. Otherwise, if we kill
    * RAUC while the helper is still running, the helper might execute RAUC
    * again before we are able to send the termination signal to the helper. */
-  if (pid > 0)
-    _au_ensure_pid_is_killed (pid);
+  _au_ensure_pid_is_killed (pid);
 
   /* At the moment a RAUC operation can't be cancelled using its D-Bus API.
    * For this reason we get its PID number and send a SIGTERM/SIGKILL to it. */
@@ -760,8 +762,7 @@ _au_cancel_async (GTask *task,
       return;
     }
 
-  if (rauc_pid > 0)
-    _au_ensure_pid_is_killed (rauc_pid);
+  _au_ensure_pid_is_killed (rauc_pid);
 
   g_task_return_boolean (task, TRUE);
 }
