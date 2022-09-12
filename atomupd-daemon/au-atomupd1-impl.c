@@ -647,10 +647,8 @@ _au_get_rauc_service_pid (GError **error)
   if (!g_str_has_prefix (output, "MainPID="))
     {
       g_debug ("Systemctl output is '%s' instead of the expected 'MainPID=X'", output);
-      if (error != NULL)
-        *error = g_error_new (G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-                              "An error occurred while trying to gather the RAUC PID");
-
+      g_set_error (error, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                   "An error occurred while trying to gather the RAUC PID");
       return -1;
     }
 
@@ -658,8 +656,8 @@ _au_get_rauc_service_pid (GError **error)
   if (endptr == NULL || output + strlen("MainPID=") == (const char *) endptr)
     {
       g_debug ("Unable to parse Systemctl output: %s", output);
-      *error = g_error_new (G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-                            "An error occurred while trying to gather the RAUC PID");
+      g_set_error (error, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                   "An error occurred while trying to gather the RAUC PID");
       return -1;
     }
 
@@ -852,10 +850,8 @@ _au_send_signal_to_install_procs (AuAtomupd1Impl *self,
 
   if (self->install_pid == 0)
     {
-      if (error != NULL)
-        *error = g_error_new (G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-                              "Unexpectedly the PID of the install helper is not set");
-
+      g_set_error (error, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                   "Unexpectedly the PID of the install helper is not set");
       return FALSE;
     }
 
@@ -865,11 +861,9 @@ _au_send_signal_to_install_procs (AuAtomupd1Impl *self,
   if (kill (self->install_pid, sig) < 0)
     {
       saved_errno = errno;
-      if (error != NULL)
-        *error = g_error_new (G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-                              "Unable to send signal %i to the update helper: %s",
-                              sig, g_strerror (saved_errno));
-
+      g_set_error (error, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                   "Unable to send signal %i to the update helper: %s",
+                   sig, g_strerror (saved_errno));
       return FALSE;
     }
 
@@ -886,11 +880,9 @@ _au_send_signal_to_install_procs (AuAtomupd1Impl *self,
       if (killpg (rauc_pgid, sig) < 0)
         {
           saved_errno = errno;
-          if (error != NULL)
-            *error = g_error_new (G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-                                  "Unable to send signal %i to the RAUC service: %s",
-                                  sig, g_strerror (saved_errno));
-
+          g_set_error (error, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                       "Unable to send signal %i to the RAUC service: %s",
+                       sig, g_strerror (saved_errno));
           return FALSE;
         }
     }
