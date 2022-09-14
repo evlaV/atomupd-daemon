@@ -52,6 +52,8 @@ typedef struct
   gchar *builddir;
   gchar *manifest_path;
   gchar *updates_json;
+  /* Text file where we store the mock RAUC service pid */
+  gchar *rauc_pid_path;
   GStrv test_envp;
 } Fixture;
 
@@ -79,11 +81,19 @@ setup (Fixture *f,
   /* Start with the update JSON not available */
   g_assert_cmpint (g_unlink (f->updates_json), ==, 0);
 
+  fd = g_file_open_tmp ("rauc-pid-XXXXXX", &f->rauc_pid_path, &error);
+  g_assert_no_error (error);
+  close (fd);
+  /* Start with the mock RAUC service stopped */
+  g_assert_cmpint (g_unlink (f->rauc_pid_path), ==, 0);
+
   f->test_envp = g_get_environ ();
   /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
   f->test_envp = g_environ_setenv (f->test_envp, "PATH", f->builddir, TRUE);
   f->test_envp = g_environ_setenv (f->test_envp, "AU_UPDATES_JSON_FILE",
                                    f->updates_json, TRUE);
+  f->test_envp = g_environ_setenv (f->test_envp, "G_TEST_MOCK_RAUC_SERVICE_PID",
+                                   f->rauc_pid_path, TRUE);
 }
 
 static void
@@ -97,6 +107,9 @@ teardown (Fixture *f,
 
   g_unlink (f->updates_json);
   g_free (f->updates_json);
+
+  g_unlink (f->rauc_pid_path);
+  g_free (f->rauc_pid_path);
 }
 
 typedef struct
@@ -640,16 +653,14 @@ test_unexpected_methods (Fixture *f,
 }
 
 /*
+ * @rauc_pid_path: Path to the file where the RAUC service pid will be stored
  * @envp: (nullable) (element-type filename) (transfer full):
  * @rauc_pid: (out):
- *
- * Returns: (element-type filename) (transfer full):
- *   An updated environment list with "G_TEST_MOCK_RAUC_SERVICE_PID" set
- *   to the mock rauc service pid.
  */
-static gchar **
-_launch_rauc_service_and_setenv (gchar **envp,
-                                 GPid *rauc_pid)
+static void
+_launch_rauc_service (const gchar *rauc_pid_path,
+                      gchar **envp,
+                      GPid *rauc_pid)
 {
   GPid pid;
   gboolean spawn_ret;
@@ -678,8 +689,8 @@ _launch_rauc_service_and_setenv (gchar **envp,
     *rauc_pid = pid;
 
   pid_str = g_strdup_printf ("%i", pid);
-  return g_environ_setenv (envp, "G_TEST_MOCK_RAUC_SERVICE_PID",
-                           pid_str, TRUE);
+  g_file_set_contents (rauc_pid_path, pid_str, -1, &error);
+  g_assert_no_error (error);
 }
 
 static void
@@ -708,7 +719,7 @@ test_start_pause_stop_update (Fixture *f,
   f->test_envp = g_environ_setenv (f->test_envp, "G_TEST_UPDATE_JSON",
                                    update_file_path, TRUE);
 
-  f->test_envp = _launch_rauc_service_and_setenv (f->test_envp, &rauc_pid);
+  _launch_rauc_service (f->rauc_pid_path, f->test_envp, &rauc_pid);
 
   _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
@@ -789,7 +800,7 @@ test_multiple_method_calls (Fixture *f,
       return;
     }
 
-  f->test_envp = _launch_rauc_service_and_setenv (f->test_envp, &rauc_pid);
+  _launch_rauc_service (f->rauc_pid_path, f->test_envp, &rauc_pid);
 
   _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
