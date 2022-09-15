@@ -492,6 +492,29 @@ _call_check_for_updates (GDBusConnection *bus,
 }
 
 static void
+_query_for_updates (Fixture *f,
+                    GDBusConnection *bus,
+                    const UpdatesTest *test)
+{
+  GPid daemon_pid;
+  g_autofree gchar *update_file_path = NULL;
+
+  update_file_path = g_build_filename (f->srcdir, "data", test->update_json, NULL);
+  f->test_envp = g_environ_setenv (f->test_envp, "G_TEST_UPDATE_JSON",
+                                   update_file_path, TRUE);
+
+  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+
+  _call_check_for_updates (bus, test->versions_available,
+                           test->versions_available_later);
+
+  _check_versions_property (bus, "VersionsAvailable", test->versions_available);
+  _check_versions_property (bus, "VersionsAvailableLater", test->versions_available_later);
+
+  _stop_daemon_service (daemon_pid);
+}
+
+static void
 test_query_updates (Fixture *f,
                     gconstpointer context)
 {
@@ -508,25 +531,7 @@ test_query_updates (Fixture *f,
     }
 
   for (i = 0; i < G_N_ELEMENTS (updates_test); i++)
-    {
-      GPid daemon_pid;
-      const UpdatesTest *test = &updates_test[i];
-      g_autofree gchar *update_file_path = NULL;
-
-      update_file_path = g_build_filename (f->srcdir, "data", test->update_json, NULL);
-      f->test_envp = g_environ_setenv (f->test_envp, "G_TEST_UPDATE_JSON",
-                                       update_file_path, TRUE);
-
-      _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
-
-      _call_check_for_updates (bus, test->versions_available,
-                               test->versions_available_later);
-
-      _check_versions_property (bus, "VersionsAvailable", test->versions_available);
-      _check_versions_property (bus, "VersionsAvailableLater", test->versions_available_later);
-
-      _stop_daemon_service (daemon_pid);
-    }
+    _query_for_updates (f, bus, &updates_test[i]);
 }
 
 static AtomupdProperties *
