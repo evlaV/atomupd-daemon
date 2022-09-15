@@ -44,6 +44,14 @@
 #define _send_properties_message(_bus, _method, _format,  ...)  \
   _send_message(_bus, "org.freedesktop.DBus.Properties", _method, _format, __VA_ARGS__)
 
+#define _skip_if_daemon_is_running(_bus, _error) \
+  if (_is_daemon_service_running (bus, _error)) \
+    { \
+      g_test_skip ("Can't run this test if another instance of the Atomupd " \
+                   "daemon service is already running"); \
+      return; \
+    }
+
 static const char *argv0;
 
 typedef struct
@@ -523,12 +531,7 @@ test_query_updates (Fixture *f,
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
-  if (_is_daemon_service_running (bus, NULL))
-    {
-      g_test_skip ("Can't run this test if another instance of the Atomupd "
-                   "daemon service is already running");
-      return;
-    }
+  _skip_if_daemon_is_running (bus, NULL);
 
   for (i = 0; i < G_N_ELEMENTS (updates_test); i++)
     _query_for_updates (f, bus, &updates_test[i]);
@@ -583,12 +586,7 @@ test_default_properties (Fixture *f,
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
-  if (_is_daemon_service_running (bus, NULL))
-    {
-      g_test_skip ("Can't run this test if another instance of the Atomupd "
-                   "daemon service is already running");
-      return;
-    }
+  _skip_if_daemon_is_running (bus, NULL);
 
   _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
@@ -636,12 +634,7 @@ test_unexpected_methods (Fixture *f,
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
-  if (_is_daemon_service_running (bus, NULL))
-    {
-      g_test_skip ("Can't run this test if another instance of the Atomupd "
-                   "daemon service is already running");
-      return;
-    }
+  _skip_if_daemon_is_running (bus, NULL);
 
   _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
@@ -713,12 +706,7 @@ test_start_pause_stop_update (Fixture *f,
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
-  if (_is_daemon_service_running (bus, NULL))
-    {
-      g_test_skip ("Can't run this test if another instance of the Atomupd "
-                   "daemon service is already running");
-      return;
-    }
+  _skip_if_daemon_is_running (bus, NULL);
 
   update_file_path = g_build_filename (f->srcdir, "data", "update_one_minor.json", NULL);
   f->test_envp = g_environ_setenv (f->test_envp, "G_TEST_UPDATE_JSON",
@@ -803,12 +791,7 @@ test_multiple_method_calls (Fixture *f,
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
-  if (_is_daemon_service_running (bus, NULL))
-    {
-      g_test_skip ("Can't run this test if another instance of the Atomupd "
-                   "daemon service is already running");
-      return;
-    }
+  _skip_if_daemon_is_running (bus, NULL);
 
   _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
@@ -884,12 +867,7 @@ test_restarted_service (Fixture *f,
 
   bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
 
-  if (_is_daemon_service_running (bus, NULL))
-    {
-      g_test_skip ("Can't run this test if another instance of the Atomupd "
-                   "daemon service is already running");
-      return;
-    }
+  _skip_if_daemon_is_running (bus, NULL);
 
   for (i = 0; i < G_N_ELEMENTS (reboot_for_update_test); i++)
     {
