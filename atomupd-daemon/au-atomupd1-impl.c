@@ -246,6 +246,8 @@ _au_parse_image (JsonObject *candidate_obj,
 /*
  * @json_object: (not nullable): A JSON object representing the available updates
  * @type:
+ * @updated_version: Update buildid that has been already installed and is
+ *  waiting a reboot, or %NULL if there isn't such update
  * @available_builder: (not nullable): The available updates will be added to this
  *  GVariant builder
  * @available_later_builder: (not nullable): The available updates, that require a
@@ -258,6 +260,7 @@ _au_parse_image (JsonObject *candidate_obj,
 static gboolean
 _au_get_json_array_candidates (JsonObject *json_object,
                                AuUpdateType type,
+                               const gchar *updated_version,
                                GVariantBuilder *available_builder,
                                GVariantBuilder *available_later_builder,
                                GError **error)
@@ -322,6 +325,17 @@ _au_get_json_array_candidates (JsonObject *json_object,
                             &id, &variant, &size, error))
         return FALSE;
 
+      if (i == 0 && g_strcmp0 (id, updated_version) == 0)
+        {
+          /* If the first proposed update matches the version already
+           * applied (and is pending a reboot), there's nothing left for
+           * us to do. Otherwise, we would be applying the same update
+           * twice - something which we want avoid. */
+          g_debug ("The proposed update to version '%s' has already been applied. Reboot to start using it.",
+                   id);
+          return TRUE;
+        }
+
       g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
 
       g_variant_builder_add (&builder, "{sv}", "variant",
@@ -348,6 +362,8 @@ _au_get_json_array_candidates (JsonObject *json_object,
 
 /*
  * @json_node: (not nullable): The JsonNode of the steamos-atomupd-client output
+ * @updated_version: Update buildid that has been already installed and is
+ *  waiting a reboot, or %NULL if there isn't such update
  * @available: (out) (not optional): Map of available updates that can be installed
  * @available_later: (out) (not optional): Map of available updates that require
  *  a newer system version
@@ -355,6 +371,7 @@ _au_get_json_array_candidates (JsonObject *json_object,
  */
 static gboolean
 _au_parse_candidates (JsonNode *json_node,
+                      const gchar *updated_version,
                       GVariant **available,
                       GVariant **available_later,
                       GError **error)
@@ -371,12 +388,12 @@ _au_parse_candidates (JsonNode *json_node,
 
   json_object = json_node_get_object (json_node);
 
-  if (!_au_get_json_array_candidates (json_object, AU_UPDATE_TYPE_MINOR, &available_builder,
-                                      &available_later_builder, error))
+  if (!_au_get_json_array_candidates (json_object, AU_UPDATE_TYPE_MINOR, updated_version,
+                                      &available_builder, &available_later_builder, error))
     return FALSE;
 
-  if (!_au_get_json_array_candidates (json_object, AU_UPDATE_TYPE_MAJOR, &available_builder,
-                                      &available_later_builder, error))
+  if (!_au_get_json_array_candidates (json_object, AU_UPDATE_TYPE_MAJOR, updated_version,
+                                      &available_builder, &available_later_builder, error))
     return FALSE;
 
   *available = g_variant_ref_sink (g_variant_builder_end (&available_builder));
@@ -397,7 +414,9 @@ on_query_completed (GPid pid,
   g_autoptr(JsonNode) json_node = NULL;
   g_autoptr(GError) error = NULL;
   g_autofree gchar *output = NULL;
+  const gchar *updated_version = NULL;
   gsize out_length;
+  AuUpdateStatus current_status;
   AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (data->req->object);
 
   if (!g_spawn_check_wait_status (wait_status, &error))
@@ -463,7 +482,11 @@ on_query_completed (GPid pid,
         }
     }
 
-  if (!_au_parse_candidates (json_node, &available, &available_later, &error))
+  current_status = au_atomupd1_get_update_status (data->req->object);
+  if (current_status == AU_UPDATE_STATUS_SUCCESSFUL)
+    updated_version = au_atomupd1_get_update_version (data->req->object);
+
+  if (!_au_parse_candidates (json_node, updated_version, &available, &available_later, &error))
     {
       g_dbus_method_invocation_return_error (g_steal_pointer (&data->req->invocation),
                                              G_DBUS_ERROR,

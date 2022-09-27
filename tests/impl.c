@@ -161,6 +161,7 @@ typedef struct
 typedef struct
 {
   const gchar *update_json;
+  const gchar *reboot_for_update;
   VersionsTest versions_available[3];
   VersionsTest versions_available_later[3];
 } UpdatesTest;
@@ -254,6 +255,80 @@ static const UpdatesTest updates_test[] =
         .update_type = AU_UPDATE_TYPE_MAJOR,
       },
     }
+  },
+};
+
+static const UpdatesTest pending_reboot_test[] =
+{
+  {
+    .update_json = "update_one_minor.json",
+    /* Pending a different version than the proposed update */
+    .reboot_for_update = "20220222.1",
+    .versions_available =
+    {
+      {
+        .buildid = "20220227.3",
+        .variant = "steamdeck",
+        .estimated_size = 70910463,
+      },
+    },
+  },
+
+  {
+    .update_json = "update_one_minor.json",
+    /* The single update proposed has already been applied */
+    .reboot_for_update = "20220227.3",
+  },
+
+  {
+    .update_json = "update_one_minor_one_major.json",
+    /* The proposed minor update has already been applied */
+    .reboot_for_update = "20220120.1",
+    .versions_available =
+    {
+      {
+        .buildid = "20220202.1",
+        .variant = "steamdeck",
+        .update_type = AU_UPDATE_TYPE_MAJOR,
+      },
+    },
+  },
+
+  {
+    .update_json = "update_three_minors.json",
+    /* The minor update has already been applied */
+    .reboot_for_update = "20211225.1",
+  },
+
+  {
+    .update_json = "update_three_minors.json",
+    /* This could probably happen when a downgrade is requested.
+     * In this situation the daemon shows the available versions as-is,
+     * given that the "later" versions cannot be installed without
+     * first fulfilling their requirements */
+    .reboot_for_update = "20220101.1",
+    .versions_available =
+    {
+      {
+        .buildid = "20211225.1",
+        .variant = "steamdeck",
+        .estimated_size = 40310422,
+      },
+    },
+    .versions_available_later =
+    {
+      {
+        .buildid = "20220101.1",
+        .variant = "steamdeck",
+        .requires_buildid = "20211225.1",
+      },
+      {
+        .buildid = "20220227.3",
+        .variant = "steamdeck",
+        .estimated_size = 30410461,
+        .requires_buildid = "20220101.1",
+      },
+    },
   },
 };
 
@@ -506,10 +581,26 @@ _query_for_updates (Fixture *f,
 {
   GPid daemon_pid;
   g_autofree gchar *update_file_path = NULL;
+  g_autofree gchar *reboot_for_update = NULL;
+  g_autoptr(GError) error = NULL;
 
   update_file_path = g_build_filename (f->srcdir, "data", test->update_json, NULL);
   f->test_envp = g_environ_setenv (f->test_envp, "G_TEST_UPDATE_JSON",
                                    update_file_path, TRUE);
+
+  if (test->reboot_for_update != NULL)
+    {
+      int fd;
+
+      fd = g_file_open_tmp ("reboot-for-update-XXXXXX", &reboot_for_update, &error);
+      g_assert_no_error (error);
+      close (fd);
+      g_file_set_contents (reboot_for_update, test->reboot_for_update, -1, &error);
+      g_assert_no_error (error);
+
+      f->test_envp = g_environ_setenv (f->test_envp, "AU_REBOOT_FOR_UPDATE",
+                                       reboot_for_update, TRUE);
+    }
 
   _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
@@ -907,6 +998,21 @@ test_restarted_service (Fixture *f,
     }
 }
 
+static void
+test_pending_reboot_check (Fixture *f,
+                           gconstpointer context)
+{
+  gsize i;
+  g_autoptr(GDBusConnection) bus = NULL;
+
+  bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
+
+  _skip_if_daemon_is_running (bus, NULL);
+
+  for (i = 0; i < G_N_ELEMENTS (pending_reboot_test); i++)
+    _query_for_updates (f, bus, &pending_reboot_test[i]);
+}
+
 int
 main (int argc,
       char **argv)
@@ -920,12 +1026,13 @@ main (int argc,
 #define test_add(_name, _test) \
     g_test_add(_name, Fixture, NULL, setup, _test, teardown)
 
-  test_add ("/daemon/updates", test_query_updates);
+  test_add ("/daemon/query_updates", test_query_updates);
   test_add ("/daemon/default_properties", test_default_properties);
   test_add ("/daemon/unexpected_methods", test_unexpected_methods);
   test_add ("/daemon/start_pause_stop_update", test_start_pause_stop_update);
   test_add ("/daemon/multiple_method_calls", test_multiple_method_calls);
   test_add ("/daemon/restarted_service", test_restarted_service);
+  test_add ("/daemon/pending_reboot_check", test_pending_reboot_check);
 
   ret = g_test_run ();
   return ret;
