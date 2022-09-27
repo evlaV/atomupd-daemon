@@ -664,6 +664,63 @@ _au_get_rauc_service_pid (GError **error)
   return rauc_pid;
 }
 
+/*
+ * Returns: The @process PID or -1 if it's not available or an error occurred.
+ */
+static gint64
+_au_get_process_pid (const gchar *process,
+                     GError **error)
+{
+  g_autofree gchar *output = NULL;
+  gchar *endptr = NULL;
+  gint wait_status = 0;
+  gint64 pid;
+
+  g_return_val_if_fail (process != NULL, -1);
+  g_return_val_if_fail (error == NULL || *error == NULL, -1);
+
+  const gchar *argv[] = {
+    "pidof",
+    "--single-shot",
+    "-x",
+    process,
+    NULL,
+  };
+
+  if (!g_spawn_sync (NULL,  /* working directory */
+                     (gchar **) argv,
+                     NULL,  /* envp */
+                     G_SPAWN_SEARCH_PATH,
+                     NULL,  /* child setup */
+                     NULL,  /* user data */
+                     &output,
+                     NULL,  /* stderr */
+                     &wait_status,
+                     error))
+    return -1;
+
+  if (WIFEXITED (wait_status) && WEXITSTATUS (wait_status) == 1)
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "There isn't a running process for %s", process);
+      return -1;
+    }
+
+  if (!g_spawn_check_wait_status (wait_status, error))
+    return -1;
+
+  pid = g_ascii_strtoll (output, &endptr, 10);
+  if (endptr == NULL || output == (const char *) endptr)
+    {
+      g_debug ("Unable to parse pidof output: %s", output);
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "An error occurred while trying to gather the %s PID", process);
+      return -1;
+    }
+
+  return pid;
+}
+
 static void
 _au_ensure_pid_is_killed (GPid pid)
 {
@@ -1285,9 +1342,13 @@ au_atomupd1_impl_new (const gchar *config_preference,
   g_autofree gchar *variant = NULL;
   g_autofree gchar *system_version = NULL;
   g_autofree gchar *manifest_from_config = NULL;
+  g_autofree gchar *installed_version = NULL;
   g_autoptr(GFile) updates_json_parent = NULL;
   const gchar *updates_json_path;
+  const gchar *reboot_for_update;
   g_autoptr(GError) local_error = NULL;
+  gint64 client_pid = -1;
+  gint64 rauc_pid = -1;
   AuAtomupd1Impl *atomupd = g_object_new (AU_TYPE_ATOMUPD1_IMPL, NULL);
 
   if (config_preference != NULL)
@@ -1341,6 +1402,45 @@ au_atomupd1_impl_new (const gchar *config_preference,
 
   /* We currently only have the version 1 of this interface */
   au_atomupd1_set_version ((AuAtomupd1 *)atomupd, 1);
+
+  client_pid = _au_get_process_pid ("steamos-atomupd-client", &local_error);
+  if (client_pid > -1)
+    {
+      g_debug ("There is already a steamos-atomupd-client process running, stopping it...");
+      _au_ensure_pid_is_killed (client_pid);
+    }
+  else
+    {
+      g_debug ("%s", local_error->message);
+      g_clear_error (&local_error);
+    }
+
+  g_debug ("Stopping the RAUC service, if it's running...");
+  rauc_pid = _au_get_rauc_service_pid (NULL);
+  _au_ensure_pid_is_killed (rauc_pid);
+
+  /* This environment variable is used for debugging and automated tests */
+  reboot_for_update = g_getenv ("AU_REBOOT_FOR_UPDATE");
+  if (reboot_for_update == NULL)
+    reboot_for_update = AU_REBOOT_FOR_UPDATE;
+
+  if (g_file_get_contents (reboot_for_update, &installed_version, NULL, NULL))
+    {
+      gssize i;
+
+      g_debug ("An update has already been successfully installed, it will be applied at the next reboot");
+      installed_version = g_strstrip (installed_version);
+      for (i = strlen (installed_version) - 1; i > 0; i--)
+        {
+          if (installed_version[i] == '\n')
+            installed_version[i] = '\0';
+          else
+            break;
+        }
+
+      au_atomupd1_set_update_version ((AuAtomupd1 *)atomupd, installed_version);
+      au_atomupd1_set_update_status ((AuAtomupd1 *)atomupd, AU_UPDATE_STATUS_SUCCESSFUL);
+    }
 
   return (AuAtomupd1 *)atomupd;
 }

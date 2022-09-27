@@ -730,6 +730,11 @@ test_start_pause_stop_update (Fixture *f,
   _stop_daemon_service (daemon_pid);
   _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
 
+  /* Assert that restarting the daemon successfully killed the old rauc service */
+  g_assert_cmpint (kill (rauc_pid, 0) , !=, 0);
+
+  _launch_rauc_service (f->rauc_pid_path, f->test_envp, &rauc_pid);
+
   g_debug ("Starting an update that is expected to complete in 1.5 seconds");
   _send_atomupd_message_with_null_reply (bus, "StartUpdate", "(s)", "mock-success");
 
@@ -800,9 +805,11 @@ test_multiple_method_calls (Fixture *f,
       return;
     }
 
-  _launch_rauc_service (f->rauc_pid_path, f->test_envp, &rauc_pid);
-
   _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+
+  /* Launch the RAUC service after the atomupd daemon because in its start up
+   * process it will kill any eventual RAUC processes that are already running */
+  _launch_rauc_service (f->rauc_pid_path, f->test_envp, &rauc_pid);
 
   _call_check_for_updates (bus, NULL, NULL);
   reply = _send_atomupd_message (bus, "CheckForUpdates", "(a{sv})", NULL);
@@ -823,6 +830,100 @@ test_multiple_method_calls (Fixture *f,
   _stop_daemon_service (daemon_pid);
 }
 
+typedef struct
+{
+  const gchar *file_content;
+  const gchar *expected_update_version;
+  AuUpdateStatus expected_status;
+} RebootForUpdateTest;
+
+static const RebootForUpdateTest reboot_for_update_test[] =
+{
+  {
+    .expected_update_version = "",
+    .expected_status = AU_UPDATE_STATUS_IDLE,
+  },
+
+  {
+    .file_content = "20220914.1",
+    .expected_update_version = "20220914.1",
+    .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
+  },
+
+  {
+    .file_content = "20220911.1\n",
+    .expected_update_version = "20220911.1",
+    .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
+  },
+
+  {
+    .file_content = "20220915.100\n\n",
+    .expected_update_version = "20220915.100",
+    .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
+  },
+
+  {
+    .file_content = "",
+    .expected_update_version = "",
+    .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
+  },
+};
+
+static void
+test_restarted_service (Fixture *f,
+                        gconstpointer context)
+{
+  g_autoptr(GDBusConnection) bus = NULL;
+  g_autoptr(GError) error = NULL;
+  gsize i;
+
+  bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
+
+  if (_is_daemon_service_running (bus, NULL))
+    {
+      g_test_skip ("Can't run this test if another instance of the Atomupd "
+                   "daemon service is already running");
+      return;
+    }
+
+  for (i = 0; i < G_N_ELEMENTS (reboot_for_update_test); i++)
+    {
+      GPid daemon_pid;
+      gint fd;
+      const RebootForUpdateTest *test = &reboot_for_update_test[i];
+      g_autoptr(AtomupdProperties) atomupd_properties = NULL;
+      g_autofree gchar *reboot_for_update = NULL;
+
+      if (test->file_content != NULL)
+        {
+          fd = g_file_open_tmp ("reboot_for_update-XXXXXX", &reboot_for_update, &error);
+          g_assert_no_error (error);
+          g_assert_cmpint (fd, !=, -1);
+          close (fd);
+
+          g_file_set_contents (reboot_for_update, test->file_content, -1, &error);
+          g_assert_no_error (error);
+
+          f->test_envp = g_environ_setenv (f->test_envp, "AU_REBOOT_FOR_UPDATE",
+                                           reboot_for_update, TRUE);
+        }
+      else
+        {
+          f->test_envp = g_environ_setenv (f->test_envp, "AU_REBOOT_FOR_UPDATE",
+                                           "/missing_file", TRUE);
+        }
+
+      _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+
+      atomupd_properties = _get_atomupd_properties (bus);
+      g_assert_cmpstr (atomupd_properties->update_version, ==, test->expected_update_version);
+      g_assert_cmpuint (atomupd_properties->status, ==, test->expected_status);
+
+      _stop_daemon_service (daemon_pid);
+      g_unlink (reboot_for_update);
+    }
+}
+
 int
 main (int argc,
       char **argv)
@@ -841,6 +942,7 @@ main (int argc,
   test_add ("/daemon/unexpected_methods", test_unexpected_methods);
   test_add ("/daemon/start_pause_stop_update", test_start_pause_stop_update);
   test_add ("/daemon/multiple_method_calls", test_multiple_method_calls);
+  test_add ("/daemon/restarted_service", test_restarted_service);
 
   ret = g_test_run ();
   return ret;
