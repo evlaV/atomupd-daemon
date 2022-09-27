@@ -198,65 +198,49 @@ _au_get_current_system_version (const gchar *manifest,
 }
 
 /*
- * @images: (not nullable): The parsed image details will be added in this
- *  GVariant builder
- * @json_object: (not nullable): A JSON object representing a single image update
- * @type:
- * @requires: (nullable): Indicates the required build id in order to apply this
- *  image update. If set to %NULL, it is assumed that this image could be applied
- *  without any restrictions
+ * @candidate_obj: (not nullable): A JSON object representing the image update
+ * @id: (inout) (not nullable):
+ * @variant: (inout) (not nullable):
+ * @size: (inout) (not nullable):
  * @error: Used to raise an error on failure
- *
- * Returns the parsed image build id or %NULL, if an error occurred.
  */
-static const gchar *
-_au_parse_image (GVariantBuilder *images,
-                 JsonObject *candidate_obj,
-                 AuUpdateType type,
-                 const gchar *requires,
+static gboolean
+_au_parse_image (JsonObject *candidate_obj,
+                 gchar **id,
+                 gchar **variant,
+                 gint64 *size,
                  GError **error)
 {
   JsonObject *img_obj = NULL;  /* borrowed */
   JsonNode *img_node = NULL;  /* borrowed */
-  const gchar *id = NULL;
-  const gchar *variant = NULL;
-  gint64 size;
-  GVariantBuilder builder;
+  const gchar *local_id = NULL;
+  const gchar *local_variant = NULL;
+  gint64 local_size;
 
-  g_return_val_if_fail (images != NULL, NULL);
-  g_return_val_if_fail (candidate_obj != NULL, NULL);
-  g_return_val_if_fail (error == NULL || *error == NULL, NULL);
-
-  g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
+  g_return_val_if_fail (candidate_obj != NULL, FALSE);
+  g_return_val_if_fail (id != NULL, FALSE);
+  g_return_val_if_fail (variant != NULL, FALSE);
+  g_return_val_if_fail (size != NULL, FALSE);
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
   img_node = json_object_get_member (candidate_obj, "image");
   img_obj = json_node_get_object (img_node);
 
-  size = json_object_get_int_member_with_default (img_obj, "estimated_size", 0);
-  id = json_object_get_string_member_with_default (img_obj, "buildid", NULL);
-  variant = json_object_get_string_member_with_default (img_obj, "variant", NULL);
-  if (id == NULL || variant == NULL)
+  local_size = json_object_get_int_member_with_default (img_obj, "estimated_size", 0);
+  local_id = json_object_get_string_member_with_default (img_obj, "buildid", NULL);
+  local_variant = json_object_get_string_member_with_default (img_obj, "variant", NULL);
+  if (local_id == NULL || local_variant == NULL)
     {
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
                    "The \"image\" JSON object doesn't have the expected members");
-      return NULL;
+      return FALSE;
     }
 
-  g_variant_builder_add (&builder, "{sv}", "variant",
-                          g_variant_new_string (variant));
-  g_variant_builder_add (&builder, "{sv}", "estimated_size",
-                          g_variant_new_uint64 (size));
-  g_variant_builder_add (&builder, "{sv}", "update_type",
-                          g_variant_new_uint32 (type));
-  if (requires != NULL)
-    g_variant_builder_add (&builder, "{sv}", "requires",
-                           g_variant_new_string (requires));
+  *id = g_strdup (local_id);
+  *variant = g_strdup (local_variant);
+  *size = local_size;
 
-  g_variant_builder_add (images,
-                         "{sa{sv}}",
-                         id,
-                         &builder);
-  return id;
+  return TRUE;
 }
 
 /*
@@ -279,7 +263,7 @@ _au_get_json_array_candidates (JsonObject *json_object,
                                GError **error)
 {
   const gchar *type_string = NULL;
-  const gchar *requires = NULL;
+  g_autofree gchar *requires = NULL;
   JsonObject *sub_obj = NULL;  /* borrowed */
   JsonNode *sub_node = NULL;  /* borrowed */
   JsonArray *array = NULL;  /* borrowed */
@@ -329,13 +313,34 @@ _au_get_json_array_candidates (JsonObject *json_object,
 
   for (i = 0; i < array_size; i++)
     {
-      requires = _au_parse_image (i == 0 ? available_builder : available_later_builder,
-                                  json_array_get_object_element (array, i),
-                                  type,
-                                  requires,
-                                  error);
-      if (requires == NULL)
+      g_autofree gchar *id = NULL;
+      g_autofree gchar *variant = NULL;
+      gint64 size;
+      GVariantBuilder builder;
+
+      if (!_au_parse_image (json_array_get_object_element (array, i),
+                            &id, &variant, &size, error))
         return FALSE;
+
+      g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
+
+      g_variant_builder_add (&builder, "{sv}", "variant",
+                             g_variant_new_string (variant));
+      g_variant_builder_add (&builder, "{sv}", "estimated_size",
+                             g_variant_new_uint64 (size));
+      g_variant_builder_add (&builder, "{sv}", "update_type",
+                             g_variant_new_uint32 (type));
+      if (requires != NULL)
+        g_variant_builder_add (&builder, "{sv}", "requires",
+                               g_variant_new_string (requires));
+
+      g_variant_builder_add (i == 0 ? available_builder : available_later_builder,
+                             "{sa{sv}}",
+                             id,
+                             &builder);
+
+      g_clear_pointer (&requires, g_free);
+      requires = g_steal_pointer (&id);
     }
 
   return TRUE;
