@@ -552,6 +552,20 @@ _check_versions_property (GDBusConnection *bus,
 }
 
 static void
+_check_string_property (GDBusConnection *bus,
+                        const gchar *property,
+                        const gchar *expected_value)
+{
+  g_autoptr(GVariant) reply = NULL;
+  const gchar *value;
+
+  reply = _get_atomupd_property (bus, property);
+  value = g_variant_get_string (reply, NULL);
+
+  g_assert_cmpstr (value, ==, expected_value);
+}
+
+static void
 _call_check_for_updates (GDBusConnection *bus,
                          const VersionsTest *versions_available,
                          const VersionsTest *versions_available_later)
@@ -1013,6 +1027,134 @@ test_pending_reboot_check (Fixture *f,
     _query_for_updates (f, bus, &pending_reboot_test[i]);
 }
 
+typedef struct
+{
+  const gchar *initial_file_content; /* Initial content of the file used to store the chosen branch */
+  const gchar *initial_expected_variant;
+  const gchar *edited_file_content; /* Simulate a variant change as if this was done with steamos-select-branch */
+  const gchar *edited_expected_variant;
+  const gchar *switch_to_variant; /* Change variant with the SwitchToVariant method */
+  const gchar *switch_expected_variant; /* Expected value in the branch file */
+} VariantTest;
+
+static const VariantTest variant_test[] =
+{
+  {
+    .initial_file_content = NULL, /* File missing */
+    .initial_expected_variant = "steamdeck", /* Default value from the f->manifest_path */
+    .switch_to_variant = "steamdeck-main", /* This should create the missing file */
+    .switch_expected_variant = "main", /* Assume "steamdeck-main" is stored in its contracted form */
+  },
+
+  {
+    .initial_file_content = "rel",
+    .initial_expected_variant = "steamdeck",
+    .edited_file_content = "bc",
+    .edited_expected_variant = "steamdeck-bc",
+    .switch_to_variant = "steamdeck",
+    .switch_expected_variant = "rel",
+  },
+
+  {
+    .initial_file_content = "beta\n",
+    .initial_expected_variant = "steamdeck-beta",
+    .edited_file_content = "rel",
+    .edited_expected_variant = "steamdeck",
+    .switch_to_variant = "steamdeck-beta",
+    .switch_expected_variant = "beta",
+  },
+
+  {
+    .initial_file_content = "steamdeck-main\n",
+    .initial_expected_variant = "steamdeck-main",
+    .edited_file_content = "staging",
+    .edited_expected_variant = "steamdeck-staging",
+    .switch_to_variant = "steamdeck-newer-future-variant",
+    .switch_expected_variant = "steamdeck-newer-future-variant",
+  },
+
+  {
+    .initial_file_content = "",
+    .initial_expected_variant = "steamdeck", /* Default value from the f->manifest_path */
+    .edited_file_content = "steamdeck-main",
+    .edited_expected_variant = "steamdeck-main",
+    .switch_to_variant = "holo-another-beta",
+    .switch_expected_variant = "holo-another-beta",
+  },
+};
+
+static void
+test_switch_variant (Fixture *f,
+                     gconstpointer context)
+{
+  GPid daemon_pid;
+  gulong wait = 0.3 * G_USEC_PER_SEC;
+
+  gsize i;
+  g_autoptr(GDBusConnection) bus = NULL;
+  g_autoptr(GError) error = NULL;
+
+  bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
+
+  _skip_if_daemon_is_running (bus, NULL);
+
+  for (i = 0; i < G_N_ELEMENTS (variant_test); i++)
+    {
+      VariantTest test = variant_test[i];
+      g_autofree gchar *steamos_branch = NULL;
+      int fd;
+      fd = g_file_open_tmp ("steamos-branch-XXXXXX", &steamos_branch, &error);
+      g_assert_no_error (error);
+      close (fd);
+      f->test_envp = g_environ_setenv (f->test_envp, "AU_CHOSEN_BRANCH_FILE",
+                                       steamos_branch, TRUE);
+
+      if (test.initial_file_content != NULL)
+        {
+          g_file_set_contents (steamos_branch, test.initial_file_content, -1, &error);
+          g_assert_no_error (error);
+
+        }
+      else
+        {
+          g_unlink (steamos_branch);
+        }
+
+      _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+
+      _check_string_property (bus, "Variant", test.initial_expected_variant);
+
+      if (test.edited_file_content != NULL)
+        {
+          g_file_set_contents (steamos_branch, test.edited_file_content, -1, &error);
+          g_assert_no_error (error);
+
+          /* Wait a few milliseconds to ensure the inotify kicked in */
+          g_usleep (wait);
+
+          _check_string_property (bus, "Variant", test.edited_expected_variant);
+        }
+
+      if (test.switch_to_variant != NULL)
+        {
+          g_autofree gchar *parsed_variant = NULL;
+
+          _send_atomupd_message_with_null_reply (bus, "SwitchToVariant", "(s)", test.switch_to_variant);
+
+          /* No need to wait here because we expect the new property to take immediate effect */
+
+          _check_string_property (bus, "Variant", test.switch_to_variant);
+
+          g_file_get_contents (steamos_branch, &parsed_variant, NULL, &error);
+          g_assert_no_error (error);
+          g_assert_cmpstr (parsed_variant, ==, test.switch_expected_variant);
+        }
+
+      _stop_daemon_service (daemon_pid);
+      g_unlink (steamos_branch);
+    }
+}
+
 int
 main (int argc,
       char **argv)
@@ -1033,6 +1175,7 @@ main (int argc,
   test_add ("/daemon/multiple_method_calls", test_multiple_method_calls);
   test_add ("/daemon/restarted_service", test_restarted_service);
   test_add ("/daemon/pending_reboot_check", test_pending_reboot_check);
+  test_add ("/daemon/switch_variant", test_switch_variant);
 
   ret = g_test_run ();
   return ret;
