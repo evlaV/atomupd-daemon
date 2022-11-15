@@ -63,5 +63,6 @@ typedef enum
 extern const gchar *AU_DEFAULT_CONFIG;
 extern const gchar *AU_DEFAULT_MANIFEST;
 extern const gchar *AU_DEFAULT_UPDATE_JSON;
+extern const gchar *AU_DEFAULT_BRANCH_PATH;
 
 extern const gchar *AU_REBOOT_FOR_UPDATE;

@@ -90,14 +90,17 @@
     <!--
         Variant:
 
-        String that represents the chosen update variant.
-        This value is updated everytime `CheckForUpdates` gets called.
+        String that represents the chosen update variant that is currently
+        being tracked.
+        This value is updated every time a new variant is chosen with
+        `SwitchToVariant` method or via the CLI tool steamos-select-branch.
         Typical values include `steamdeck` and `steamdeck-beta`.
         It defaults to the variant value from the steamos-atomupd manifest JSON
-        if either `CheckForUpdates` has not been called yet, or if it was
-        called without specifying a variant.
+        if the text file is empty or missing.
     -->
-    <property name="Variant" type="s" access="read"/>
+    <property name="Variant" type="s" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
 
     <!--
         FailureCode:
@@ -190,25 +193,25 @@
     <property name="CurrentVersion" type="s" access="read"/>
 
     <!--
+        SwitchToVariant:
+        @variant: Desired update variant. Possible values include `steamdeck` and
+          and `steamdeck-beta`
+
+        Change the update variant to @variant.
+        This value is stored in the same text file that the CLI tool
+        steamos-select-branch uses.
+    -->
+    <method name="SwitchToVariant">
+      <arg type="s" name="variant" direction="in"/>
+    </method>
+
+    <!--
         CheckForUpdates:
-        @options: Vardict with configuration options
+        @options: Vardict with configuration options. None currently available,
+          reserved for future use
         @versions_available: Map of available update IDs to their keys and values
         @versions_available_later: Map of available update IDs, to their keys and
           values, that require a newer system version
-
-        Supported keys in the @options vardict include:
-        <variablelist>
-          <varlistentry>
-            <term>variant s</term>
-            <listitem><para>
-              Desired update variant. Possible values include `steamdeck` and
-              `steamdeck-beta`.
-            </para></listitem>
-          </varlistentry>
-        </variablelist>
-
-        If @options doesn't include the key `variant`, its value will be taken
-        from the steamos-atomupd manifest JSON file.
 
         At least one update is available, for the current system version, when
         @versions_available is not the empty map.

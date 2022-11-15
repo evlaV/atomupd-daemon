@@ -47,6 +47,8 @@ struct _AuAtomupd1Impl
   gchar *manifest_path;
   GFile *updates_json_file;
   GFile *updates_json_copy;
+  GFileMonitor *variant_monitor;
+  gulong changed_id;
   GDataInputStream *start_update_stdout_stream;
 };
 
@@ -61,6 +63,41 @@ typedef struct
   RequestData *req;
   gint standard_output;
 } QueryData;
+
+typedef struct
+{
+  const gchar *expanded;
+  const gchar *contracted;
+} VariantConversion;
+
+/* This is the same contracted->expanded relation that steamos-update uses */
+static const VariantConversion variant_conversions[] =
+{
+  {
+    .expanded = "steamdeck",
+    .contracted = "rel",
+  },
+  {
+    .expanded = "steamdeck-rc",
+    .contracted = "rc",
+  },
+  {
+    .expanded = "steamdeck-beta",
+    .contracted = "beta",
+  },
+  {
+    .expanded = "steamdeck-bc",
+    .contracted = "bc",
+  },
+  {
+    .expanded = "steamdeck-main",
+    .contracted = "main",
+  },
+  {
+    .expanded = "steamdeck-staging",
+    .contracted = "staging",
+  },
+};
 
 static void
 _request_data_free (RequestData *self)
@@ -99,6 +136,203 @@ au_query_data_new (void)
   data->req = g_slice_new0 (RequestData);
 
   return data;
+}
+
+/*
+ * _au_get_expanded_variant:
+ * @variant: (not nullable): Variant to expand
+ *
+ * In Jupiter we historically stored the chosen variant in a contracted
+ * form. This method will convert the contracted variant into the
+ * expanded version that could be used in `steamos-atomupd-client`.
+ *
+ * If the variant is not a legacy contracted version, a copy of @variant
+ * will be returned.
+ *
+ * Returns: (transfer full): The expanded version of @variant, or a copy of
+ *  @variant, if it doesn't need to be expanded.
+ */
+static gchar *
+_au_get_expanded_variant (const gchar *variant)
+{
+  gsize i;
+
+  g_return_val_if_fail (variant != NULL, NULL);
+
+  for (i = 0; i < G_N_ELEMENTS (variant_conversions); i++)
+    {
+      if (g_strcmp0 (variant, variant_conversions[i].contracted) == 0)
+        return g_strdup (variant_conversions[i].expanded);
+    }
+
+  g_debug ("The variant %s doesn't need to be expanded", variant);
+  return g_strdup (variant);
+}
+
+/*
+ * _au_get_legacy_contracted_variant:
+ * @variant: (not nullable): Variant to contract
+ *
+ * In Jupiter we historically stored the chosen variant in a contracted
+ * form. This method will convert the canonical expanded variant into the
+ * contracted version.
+ *
+ * If the variant isn't one that required to be contracted, a copy of
+ * @variant will be returned.
+ *
+ * Returns: (transfer full): The contracted version of @variant, or a copy of
+ *  @variant, if it doesn't need to be contracted.
+ */
+static gchar *
+_au_get_legacy_contracted_variant (const gchar *variant)
+{
+  gsize i;
+
+  g_return_val_if_fail (variant != NULL, NULL);
+
+  for (i = 0; i < G_N_ELEMENTS (variant_conversions); i++)
+    {
+      if (g_strcmp0 (variant, variant_conversions[i].expanded) == 0)
+        return g_strdup (variant_conversions[i].contracted);
+    }
+
+  g_debug ("The variant %s doesn't have a legacy contracted version", variant);
+  return g_strdup (variant);
+}
+
+static const gchar *
+_au_get_branch_file_path (void)
+{
+  static const gchar *branch_file = NULL;
+
+  if (branch_file == NULL)
+    {
+      /* This environment variable is used for debugging and automated tests */
+      branch_file = g_getenv ("AU_CHOSEN_BRANCH_FILE");
+
+      if (branch_file == NULL)
+        branch_file = AU_DEFAULT_BRANCH_PATH;
+    }
+
+  return branch_file;
+}
+
+static gchar * _au_get_default_variant (const gchar *manifest,
+                                        GError **error);
+
+/*
+ * _au_get_chosen_variant:
+ * @manifest_path: (not nullable): Path to the configuration file
+ * @error: Used to raise an error on failure
+ *
+ * Retrieve the variant that is currently being tracked. This value is taken
+ * by parsing the branch file. If the file is empty or not available, it will
+ * be returned the default variant from the JSON manifest file.
+ *
+ * Returns: (transfer full): The chosen variant that is currently being
+ *  tracked
+ */
+static gchar *
+_au_get_chosen_variant (const gchar *manifest_path,
+                        GError **error)
+{
+  g_autofree gchar *variant = NULL;
+  g_autoptr(GError) local_error = NULL;
+  const char *search;
+  gsize len;
+
+  if (!g_file_get_contents (_au_get_branch_file_path (), &variant, &len, &local_error))
+    {
+      if (local_error->code != G_FILE_ERROR_NOENT)
+        {
+          g_propagate_error (error, g_steal_pointer (&local_error));
+          return NULL;
+        }
+
+      g_clear_error (&local_error);
+      return g_strdup (_au_get_default_variant (manifest_path, error));
+    }
+
+  if (len == 0)
+    return g_strdup (_au_get_default_variant (manifest_path, error));
+
+  /* Remove eventual trailing newline that might be added by steamos-select-branch */
+  if (variant[len-1] == '\n')
+    variant[len-1] = '\0';
+
+  search = strstr (variant, "\n");
+  if (search != NULL)
+    {
+      /* If we have multiple newlines the file is likely malformed */
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "Failed to parse the branch file path \"%s\"",
+                   _au_get_branch_file_path ());
+      return NULL;
+    }
+
+  return g_steal_pointer (&variant);
+}
+
+/*
+ * _au_set_variant:
+ *
+ * Update the Variant property with the expanded version of @variant and
+ * clear the eventual available updates list.
+ */
+static void
+_au_set_variant (AuAtomupd1 *object,
+                 const gchar *variant)
+{
+  g_autoptr(GVariant) available = NULL;
+  g_autoptr(GVariant) available_later = NULL;
+  g_autofree gchar *expanded_variant = _au_get_expanded_variant (variant);
+
+  if (g_strcmp0 (expanded_variant, au_atomupd1_get_variant (object)) == 0)
+    {
+      g_debug ("We are already tracking the variant %s, nothing to do", expanded_variant);
+      return;
+    }
+
+  g_debug ("%s is the new chosen variant", expanded_variant);
+
+  available = g_variant_new ("a{sa{sv}}", NULL);
+  available_later = g_variant_new ("a{sa{sv}}", NULL);
+  au_atomupd1_set_versions_available (object, g_steal_pointer (&available));
+  au_atomupd1_set_versions_available_later (object, g_steal_pointer (&available_later));
+  au_atomupd1_set_variant (object, expanded_variant);
+}
+
+/*
+ * _au_variant_changed_cb:
+ *
+ * When the branch file changes, the new content is parsed and reflected
+ * in the "Variant" property.
+ */
+static void
+_au_variant_changed_cb (GFileMonitor *monitor,
+                        GFile *file,
+                        GFile *other_file,
+                        GFileMonitorEvent event_type,
+                        AuAtomupd1 *atomupd)
+{
+  AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL (atomupd);
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *variant = NULL;
+
+  g_debug ("The chosen branch file changed (monitor event %i)", event_type);
+
+  if (event_type == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT)
+    {
+      variant = _au_get_chosen_variant (self->manifest_path, &error);
+      if (variant == NULL)
+        {
+          g_warning ("An error occurred while loading the updated chosen variant: %s",
+                     error->message);
+          return;
+        }
+
+      _au_set_variant (atomupd, variant);
+    }
 }
 
 /*
@@ -173,7 +407,7 @@ _au_get_string_from_manifest (const gchar *manifest,
  * @error: Used to raise an error on failure
  *
  * Returns: (type filename) (transfer full): The variant value taken from the
- *  manifest file.
+ *  manifest file, or %NULL on failure
  */
 static gchar *
 _au_get_default_variant (const gchar *manifest,
@@ -517,11 +751,39 @@ success:
 }
 
 static gboolean
+au_atomupd1_impl_handle_switch_to_variant (AuAtomupd1 *object,
+                                           GDBusMethodInvocation *invocation,
+                                           const gchar *arg_variant)
+{
+  g_autofree gchar *contracted_variant = NULL;
+  g_autoptr(GError) error = NULL;
+
+  contracted_variant = _au_get_legacy_contracted_variant (arg_variant);
+
+  /* Store the legacy contracted version to ensure compatibility with steamos-update */
+  if (!g_file_set_contents (_au_get_branch_file_path (), contracted_variant, -1, &error))
+    {
+      g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_FAILED,
+                                             "An error occurred while storing the chosen variant: %s",
+                                             error->message);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+    }
+
+  _au_set_variant (object, arg_variant);
+
+  au_atomupd1_complete_switch_to_variant (object, g_steal_pointer (&invocation));
+
+  return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static gboolean
 au_atomupd1_impl_handle_check_for_updates (AuAtomupd1 *object,
                                            GDBusMethodInvocation *invocation,
                                            GVariant *arg_options)
 {
-  g_autofree gchar *variant = NULL;
+  const gchar *variant = NULL;
   const gchar *key = NULL;
   GVariant *value = NULL;
   GVariantIter iter;
@@ -538,47 +800,16 @@ au_atomupd1_impl_handle_check_for_updates (AuAtomupd1 *object,
 
   while (g_variant_iter_loop (&iter, "{sv}", &key, &value))
     {
-      if (g_strcmp0 (key, "variant") == 0)
-        {
-          if (g_variant_is_of_type (value, G_VARIANT_TYPE_STRING))
-            {
-              variant = g_strdup (g_variant_get_string (value, NULL));
-              continue;
-            }
-        }
-      else
-        {
-          g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
-                                                 G_DBUS_ERROR,
-                                                 G_DBUS_ERROR_FAILED,
-                                                 "The argument '%s' is not a valid option",
-                                                 key);
-          return G_DBUS_METHOD_INVOCATION_HANDLED;
-        }
-
+      /* Reserved for future use */
       g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_FAILED,
-                                             "The option argument '%s' has an unexpected value type",
+                                             "The argument '%s' is not a valid option",
                                              key);
       return G_DBUS_METHOD_INVOCATION_HANDLED;
     }
 
-  if (variant == NULL)
-    {
-      variant = _au_get_default_variant (self->manifest_path, &error);
-      if (variant == NULL)
-        {
-          g_dbus_method_invocation_return_error (g_steal_pointer (&invocation),
-                                                 G_DBUS_ERROR,
-                                                 G_DBUS_ERROR_FAILED,
-                                                 "An error occurred while parsing the manifest: %s",
-                                                 error->message);
-          return G_DBUS_METHOD_INVOCATION_HANDLED;
-        }
-    }
-
-  au_atomupd1_set_variant (object, variant);
+  variant = au_atomupd1_get_variant (object);
 
   argv = g_ptr_array_new_with_free_func (g_free);
   g_ptr_array_add (argv, g_strdup ("steamos-atomupd-client"));
@@ -587,7 +818,7 @@ au_atomupd1_impl_handle_check_for_updates (AuAtomupd1 *object,
   g_ptr_array_add (argv, g_strdup ("--manifest-file"));
   g_ptr_array_add (argv, g_strdup (self->manifest_path));
   g_ptr_array_add (argv, g_strdup ("--variant"));
-  g_ptr_array_add (argv, g_steal_pointer (&variant));
+  g_ptr_array_add (argv, g_strdup (variant));
   g_ptr_array_add (argv, g_strdup ("--query-only"));
   g_ptr_array_add (argv, g_strdup ("--estimate-download-size"));
   g_ptr_array_add (argv, NULL);
@@ -1311,6 +1542,7 @@ init_atomupd1_iface (AuAtomupd1Iface *iface)
   iface->handle_pause_update = au_atomupd1_impl_handle_pause_update;
   iface->handle_resume_update = au_atomupd1_impl_handle_resume_update;
   iface->handle_start_update = au_atomupd1_impl_handle_start_update;
+  iface->handle_switch_to_variant = au_atomupd1_impl_handle_switch_to_variant;
 }
 
 G_DEFINE_TYPE_WITH_CODE (AuAtomupd1Impl, au_atomupd1_impl, AU_TYPE_ATOMUPD1_SKELETON,
@@ -1332,6 +1564,14 @@ au_atomupd1_impl_finalize (GObject *object)
       g_file_delete (self->updates_json_copy, NULL, NULL);
       g_clear_object (&self->updates_json_copy);
     }
+
+  if (self->changed_id != 0)
+    {
+      g_signal_handler_disconnect (self->variant_monitor, self->changed_id);
+      self->changed_id = 0;
+    }
+
+  g_clear_object (&self->variant_monitor);
 
   au_start_update_clear (self);
 
@@ -1368,10 +1608,12 @@ au_atomupd1_impl_new (const gchar *config_preference,
                       GError **error)
 {
   g_autofree gchar *variant = NULL;
+  g_autofree gchar *expanded_variant = NULL;
   g_autofree gchar *system_version = NULL;
   g_autofree gchar *manifest_from_config = NULL;
   g_autofree gchar *installed_version = NULL;
   g_autoptr(GFile) updates_json_parent = NULL;
+  g_autoptr(GFile) branch_file = NULL;
   const gchar *updates_json_path;
   const gchar *reboot_for_update;
   g_autoptr(GError) local_error = NULL;
@@ -1416,11 +1658,24 @@ au_atomupd1_impl_new (const gchar *config_preference,
       g_clear_error (&local_error);
     }
 
-  variant = _au_get_default_variant (atomupd->manifest_path, error);
-  if (variant == NULL)
+  /* Monitor the file for changes to avoid an out of sync situation, e.g. in
+   * case the CLI steamos-select-branch is manually invoked. */
+  branch_file = g_file_new_for_path (_au_get_branch_file_path ());
+  atomupd->variant_monitor = g_file_monitor_file (branch_file, G_FILE_MONITOR_NONE,
+                                                  NULL, error);
+  if (atomupd->variant_monitor == NULL)
     return NULL;
 
-  au_atomupd1_set_variant ((AuAtomupd1 *)atomupd, variant);
+  atomupd->changed_id = g_signal_connect (atomupd->variant_monitor, "changed",
+                                          G_CALLBACK (_au_variant_changed_cb), atomupd);
+
+  variant = _au_get_chosen_variant (atomupd->manifest_path, error);
+  if (variant == NULL)
+    return NULL;
+  expanded_variant = _au_get_expanded_variant (variant);
+
+  g_debug ("Tracking the variant %s", expanded_variant);
+  au_atomupd1_set_variant ((AuAtomupd1 *)atomupd, expanded_variant);
 
   system_version = _au_get_current_system_version (atomupd->manifest_path, error);
   if (system_version == NULL)

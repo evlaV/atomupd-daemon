@@ -36,6 +36,9 @@ const gchar *AU_DEFAULT_CONFIG = "/etc/steamos-atomupd/client.conf";
 const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
 const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json";
 
+/* Please keep this in sync with steamos-select-branch */
+const gchar *AU_DEFAULT_BRANCH_PATH = "/var/lib/steamos-branch";
+
 /* Please keep this in sync with steamos-customizations common.mk */
 const gchar *AU_REBOOT_FOR_UPDATE = "/run/steamos-atomupd/reboot_for_update";
 
