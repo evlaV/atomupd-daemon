@@ -337,20 +337,15 @@ _au_variant_changed_cb (GFileMonitor *monitor,
 
 /*
  * _au_get_manifest_path_from_config:
- * @config: (not nullable): Path to the configuration file
+ * @client_config: (not nullable): Object that holds the configuration key file
  *
  * Returns: (type filename) (transfer full): The configured path to the manifest,
  *  or %NULL if the configuration doesn't have the "Manifest" field.
  */
 static gchar *
-_au_get_manifest_path_from_config (const gchar *config)
+_au_get_manifest_path_from_config (GKeyFile *client_config)
 {
-  g_autoptr(GKeyFile) client_config = g_key_file_new ();
-
-  g_return_val_if_fail (config != NULL, NULL);
-
-  if (!g_key_file_load_from_file (client_config, config, G_KEY_FILE_NONE, NULL))
-    return NULL;
+  g_return_val_if_fail (client_config != NULL, NULL);
 
   return g_key_file_get_string (client_config, "Host", "Manifest", NULL);
 }
@@ -1620,11 +1615,21 @@ au_atomupd1_impl_new (const gchar *config_preference,
   gint64 client_pid = -1;
   gint64 rauc_pid = -1;
   AuAtomupd1Impl *atomupd = g_object_new (AU_TYPE_ATOMUPD1_IMPL, NULL);
+  g_autoptr(GKeyFile) client_config = g_key_file_new ();
 
   if (config_preference != NULL)
     atomupd->config_path = g_strdup (config_preference);
   else
     atomupd->config_path = g_strdup (AU_DEFAULT_CONFIG);
+
+  if (!g_key_file_load_from_file (client_config, atomupd->config_path,
+                                  G_KEY_FILE_NONE, &local_error))
+    {
+      /* The configuration file is not mandatory, continue anyway */
+      g_debug ("Failed to load the config file %s: %s", atomupd->config_path,
+               local_error->message);
+      g_clear_error (&local_error);
+    }
 
   if (manifest_preference != NULL)
     {
@@ -1632,7 +1637,7 @@ au_atomupd1_impl_new (const gchar *config_preference,
     }
   else
     {
-      manifest_from_config = _au_get_manifest_path_from_config (atomupd->config_path);
+      manifest_from_config = _au_get_manifest_path_from_config (client_config);
       if (manifest_from_config != NULL)
         atomupd->manifest_path = g_steal_pointer (&manifest_from_config);
       else
