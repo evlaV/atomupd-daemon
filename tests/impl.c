@@ -59,6 +59,7 @@ typedef struct
   gchar *srcdir;
   gchar *builddir;
   gchar *manifest_path;
+  gchar *conf_path;
   gchar *updates_json;
   /* Text file where we store the mock RAUC service pid */
   gchar *rauc_pid_path;
@@ -82,6 +83,7 @@ setup (Fixture *f,
     f->builddir = g_path_get_dirname (argv0);
 
   f->manifest_path = g_build_filename (f->srcdir, "data", "manifest.json", NULL);
+  f->conf_path = g_build_filename (f->srcdir, "data", "client.conf", NULL);
 
   fd = g_file_open_tmp ("steamos-atomupd-XXXXXX.json", &f->updates_json, &error);
   g_assert_no_error (error);
@@ -111,6 +113,7 @@ teardown (Fixture *f,
   g_free (f->srcdir);
   g_free (f->builddir);
   g_free (f->manifest_path);
+  g_free (f->conf_path);
   g_strfreev (f->test_envp);
 
   g_unlink (f->updates_json);
@@ -133,6 +136,7 @@ typedef struct
   gchar *failure_code;
   gchar *failure_message;
   gchar *current_version;
+  GStrv known_variants;
 } AtomupdProperties;
 
 static void
@@ -143,6 +147,7 @@ atomupd_properties_free (AtomupdProperties *atomupd_properties)
   g_clear_pointer (&atomupd_properties->failure_code, g_free);
   g_clear_pointer (&atomupd_properties->failure_message, g_free);
   g_clear_pointer (&atomupd_properties->current_version, g_free);
+  g_clear_pointer (&atomupd_properties->known_variants, g_strfreev);
 
   g_free (atomupd_properties);
 }
@@ -432,6 +437,7 @@ _stop_daemon_service (GPid daemon_pid)
 static void
 _start_daemon_service (GDBusConnection *bus,
                        const gchar *manifest_path,
+                       const gchar *conf,
                        gchar **envp,
                        GPid *daemon_pid)
 {
@@ -448,6 +454,8 @@ _start_daemon_service (GDBusConnection *bus,
     "--session",
     "--manifest-file",
     manifest_path,
+    conf == NULL ? NULL : "--config",
+    conf,
     NULL,
   };
 
@@ -616,7 +624,7 @@ _query_for_updates (Fixture *f,
                                        reboot_for_update, TRUE);
     }
 
-  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, f->conf_path, f->test_envp, &daemon_pid);
 
   _call_check_for_updates (bus, test->versions_available,
                            test->versions_available_later);
@@ -673,6 +681,7 @@ _get_atomupd_properties (GDBusConnection *bus)
   assert_variant ("FailureCode", "s", failure_code);
   assert_variant ("FailureMessage", "s", failure_message);
   assert_variant ("CurrentVersion", "s", current_version);
+  assert_variant ("KnownVariants", "^as", known_variants);
 
   assert_variant_dict ("VersionsAvailable", available_iter, versions_available_n);
   assert_variant_dict ("VersionsAvailableLater", available_later_iter,
@@ -681,19 +690,63 @@ _get_atomupd_properties (GDBusConnection *bus)
   return g_steal_pointer (&atomupd_properties);
 }
 
+typedef struct
+{
+  const gchar *config_name;
+  const gchar *variants[10];
+} PropertiesTest;
+
+static const PropertiesTest properties_test[] =
+{
+  {
+    .config_name = NULL, /* Configuration file missing */
+    .variants = { NULL },
+  },
+
+  {
+    .config_name = "client.conf",
+    .variants = { "rel", "rc", "beta", "bc", "main", NULL },
+  },
+
+  {
+    .config_name = "client_empty_variants.conf",
+    .variants = { NULL },
+  },
+
+  {
+    .config_name = "client_no_variants.conf", /* "Variants" missing from the config */
+    .variants = { NULL },
+  },
+
+  {
+    .config_name = "client_one_variant.conf",
+    .variants = { "rel", NULL },
+  },
+
+  {
+    .config_name = "client_invalid_variant.conf", /* The invalid variants are skipped */
+    .variants = { "rel", "Anoth3r-one", "valid", NULL },
+  },
+
+  {
+    .config_name = "client_two_variants.conf", /* "Variants" list ending with a semicolon */
+    .variants = { "rel", "beta", NULL },
+  },
+};
+
 static void
-test_default_properties (Fixture *f,
-                         gconstpointer context)
+_check_default_properties (Fixture *f,
+                           GDBusConnection *bus,
+                           const PropertiesTest *test)
 {
   GPid daemon_pid;
-  g_autoptr(GDBusConnection) bus = NULL;
+  g_autofree gchar *config_path = NULL;
   g_autoptr(AtomupdProperties) atomupd_properties = NULL;
 
-  bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
+  if (test->config_name != NULL)
+    config_path = g_build_filename (f->srcdir, "data", test->config_name, NULL);
 
-  _skip_if_daemon_is_running (bus, NULL);
-
-  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, config_path, f->test_envp, &daemon_pid);
 
   atomupd_properties = _get_atomupd_properties (bus);
   /* The version of this interface is the number 1 */
@@ -710,8 +763,24 @@ test_default_properties (Fixture *f,
   g_assert_cmpuint (atomupd_properties->versions_available_later_n, ==, 0);
   /* Version buildid parsed from "manifest.json" */
   g_assert_cmpstr (atomupd_properties->current_version, ==, "20220205.2");
+  g_assert_cmpstrv (atomupd_properties->known_variants, test->variants);
 
   _stop_daemon_service (daemon_pid);
+}
+
+static void
+test_default_properties (Fixture *f,
+                         gconstpointer context)
+{
+  gsize i;
+  g_autoptr(GDBusConnection) bus = NULL;
+
+  bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
+
+  _skip_if_daemon_is_running (bus, NULL);
+
+  for (i = 0; i < G_N_ELEMENTS (properties_test); i++)
+    _check_default_properties (f, bus, &properties_test[i]);
 }
 
 static void
@@ -741,7 +810,7 @@ test_unexpected_methods (Fixture *f,
 
   _skip_if_daemon_is_running (bus, NULL);
 
-  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, f->conf_path, f->test_envp, &daemon_pid);
 
   _check_message_reply (bus, "StartUpdate", "(s)", "20220120.1",
                         "It is not possible to start an update before calling \"CheckForUpdates\"");
@@ -819,14 +888,14 @@ test_start_pause_stop_update (Fixture *f,
 
   _launch_rauc_service (f->rauc_pid_path, f->test_envp, &rauc_pid);
 
-  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, f->conf_path, f->test_envp, &daemon_pid);
 
   _call_check_for_updates (bus, NULL, NULL);
 
   /* Restart the service. When starting an update we expect that it shouldn't
    * complain that we didn't check for updates, because we already did. */
   _stop_daemon_service (daemon_pid);
-  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, f->conf_path, f->test_envp, &daemon_pid);
 
   /* Assert that restarting the daemon successfully killed the old rauc service */
   g_assert_cmpint (kill (rauc_pid, 0) , !=, 0);
@@ -898,7 +967,7 @@ test_multiple_method_calls (Fixture *f,
 
   _skip_if_daemon_is_running (bus, NULL);
 
-  _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+  _start_daemon_service (bus, f->manifest_path, f->conf_path, f->test_envp, &daemon_pid);
 
   /* Launch the RAUC service after the atomupd daemon because in its start up
    * process it will kill any eventual RAUC processes that are already running */
@@ -1001,7 +1070,7 @@ test_restarted_service (Fixture *f,
                                            "/missing_file", TRUE);
         }
 
-      _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+      _start_daemon_service (bus, f->manifest_path, f->conf_path, f->test_envp, &daemon_pid);
 
       atomupd_properties = _get_atomupd_properties (bus);
       g_assert_cmpstr (atomupd_properties->update_version, ==, test->expected_update_version);
@@ -1120,7 +1189,7 @@ test_switch_variant (Fixture *f,
           g_unlink (steamos_branch);
         }
 
-      _start_daemon_service (bus, f->manifest_path, f->test_envp, &daemon_pid);
+      _start_daemon_service (bus, f->manifest_path, f->conf_path, f->test_envp, &daemon_pid);
 
       _check_string_property (bus, "Variant", test.initial_expected_variant);
 
