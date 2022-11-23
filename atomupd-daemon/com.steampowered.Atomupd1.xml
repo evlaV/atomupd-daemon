@@ -197,6 +197,14 @@
     <property name="CurrentVersion" type="s" access="read"/>
 
     <!--
+        KnownVariants:
+
+        Array of strings representing the known suggested variants that could
+        be chosen.
+    -->
+    <property name="KnownVariants" type="as" access="read"/>
+
+    <!--
         SwitchToVariant:
         @variant: Desired update variant. Possible values include `steamdeck` and
           and `steamdeck-beta`

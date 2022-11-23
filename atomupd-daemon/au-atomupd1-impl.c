@@ -351,6 +351,54 @@ _au_get_manifest_path_from_config (GKeyFile *client_config)
 }
 
 /*
+ * _au_get_known_variants_from_config:
+ * @client_config: (not nullable): Object that holds the configuration key file
+ * @error: Used to raise an error on failure
+ *
+ * The only allowed symbols for the known variants are lowercase
+ * and uppercase word characters, numbers, underscore, hyphen and the semicolon
+ * as a separator.
+ * Eventual variants that have symbols outside those allowed, will be
+ * skipped.
+ *
+ * Returns: (array zero-terminated=1) (transfer full) (nullable): The list
+ *  of known variants, or %NULL if the configuration doesn't have the
+ *  "Variants" field.
+ */
+static gchar **
+_au_get_known_variants_from_config (GKeyFile *client_config,
+                                    GError **error)
+{
+  g_autoptr(GRegex) regex;
+  g_autoptr(GPtrArray) valid_variants = NULL;
+  g_auto(GStrv) variants = NULL;
+  g_return_val_if_fail (client_config != NULL, NULL);
+
+  regex = g_regex_new ("^[a-zA-Z0-9_-]+$", 0, 0, NULL);
+  g_assert (regex != NULL);    /* known to be valid at compile-time */
+
+  valid_variants = g_ptr_array_new_with_free_func (g_free);
+
+  variants = g_key_file_get_string_list (client_config, "Server", "Variants", NULL, error);
+  if (variants == NULL)
+    return NULL;
+
+  /* Sanitize the input. This helps us to skip improper/unexpected user inputs */
+  for (gsize i = 0; variants[i] != NULL; i++)
+    {
+      if (g_regex_match (regex, variants[i], 0, NULL))
+        g_ptr_array_add (valid_variants, g_strdup (variants[i]));
+      else
+        g_warning ("The variant \"%s\" has characters that are not allowed, skipping...",
+                   variants[i]);
+    }
+
+  g_ptr_array_add (valid_variants, NULL);
+
+  return (gchar **) g_ptr_array_free (g_steal_pointer (&valid_variants), FALSE);
+}
+
+/*
  * _au_get_string_from_manifest:
  * @manifest: (not nullable): Path to the JSON manifest file
  * @key: (not nullable): Key whose value will be returned
@@ -1607,6 +1655,7 @@ au_atomupd1_impl_new (const gchar *config_preference,
   g_autofree gchar *system_version = NULL;
   g_autofree gchar *manifest_from_config = NULL;
   g_autofree gchar *installed_version = NULL;
+  g_auto(GStrv) known_variants = NULL;
   g_autoptr(GFile) updates_json_parent = NULL;
   g_autoptr(GFile) branch_file = NULL;
   const gchar *updates_json_path;
@@ -1642,6 +1691,20 @@ au_atomupd1_impl_new (const gchar *config_preference,
         atomupd->manifest_path = g_steal_pointer (&manifest_from_config);
       else
         atomupd->manifest_path = g_strdup (AU_DEFAULT_MANIFEST);
+    }
+
+  g_debug ("Getting the list of known variants");
+  known_variants = _au_get_known_variants_from_config (client_config, &local_error);
+  if (known_variants == NULL)
+    {
+      /* Log the error, leave "KnownVariants" as empty and try to continue */
+      g_warning ("Failed to get the list of known variants from %s: %s",
+                 atomupd->config_path, local_error->message);
+      g_clear_error (&local_error);
+    }
+  else
+    {
+      au_atomupd1_set_known_variants ((AuAtomupd1 *)atomupd, (const gchar *const *)known_variants);
     }
 
   /* This environment variable is used for debugging and automated tests */
