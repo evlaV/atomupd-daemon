@@ -54,6 +54,8 @@
 
 static const char *argv0;
 
+static gulong default_wait = 0.5 * G_USEC_PER_SEC;
+
 typedef struct
 {
   gchar *srcdir;
@@ -424,7 +426,7 @@ _stop_daemon_service (GPid daemon_pid)
   g_debug ("Stopping the daemon service");
 
   kill (daemon_pid, SIGTERM);
-  g_usleep (0.5 * G_USEC_PER_SEC);
+  g_usleep (default_wait);
   /* Ensure that the daemon is really killed */
   kill (daemon_pid, SIGKILL);
 }
@@ -442,7 +444,6 @@ _start_daemon_service (GDBusConnection *bus,
   g_return_if_fail (manifest_path != NULL);
   g_return_if_fail (daemon_pid != NULL);
 
-  gulong wait = 0.5 * G_USEC_PER_SEC;
   gsize max_wait = 10;
   gsize i;
   g_autoptr(GError) error = NULL;
@@ -469,7 +470,7 @@ _start_daemon_service (GDBusConnection *bus,
 
   g_debug ("Executed the D-Bus daemon service");
 
-  g_usleep (wait);
+  g_usleep (default_wait);
   /* Wait up to 5 seconds (10 times 500ms) for the D-Bus service to start.
    * If after that time the service is still not up, it's safe to assume that
    * something went wrong. */
@@ -480,7 +481,7 @@ _start_daemon_service (GDBusConnection *bus,
 
       g_debug ("Atomupd service is not ready: %s", error->message);
       g_clear_error (&error);
-      g_usleep (wait);
+      g_usleep (default_wait);
     }
 
   g_assert_cmpint (i, <, max_wait);
@@ -903,7 +904,8 @@ test_start_pause_stop_update (Fixture *f,
   g_debug ("Starting an update that is expected to complete in 1.5 seconds");
   _send_atomupd_message_with_null_reply (bus, "StartUpdate", "(s)", "mock-success");
 
-  g_usleep (2 * G_USEC_PER_SEC);
+  /* 3 seconds should be enough to let the update complete */
+  g_usleep (3 * G_USEC_PER_SEC);
 
   reply = _get_atomupd_property (bus, "UpdateStatus");
   g_variant_get (reply, "u", &status);
@@ -915,7 +917,7 @@ test_start_pause_stop_update (Fixture *f,
   g_debug ("Starting infinite update");
   _send_atomupd_message_with_null_reply (bus, "StartUpdate", "(s)", "mock-infinite");
 
-  g_usleep (G_USEC_PER_SEC);
+  g_usleep (2 * default_wait);
   time_now = g_date_time_new_now_utc ();
   atomupd_properties = _get_atomupd_properties (bus);
   g_assert_true (atomupd_properties->progress_percentage == 16.08);
@@ -936,7 +938,7 @@ test_start_pause_stop_update (Fixture *f,
 
   _send_atomupd_message_with_null_reply (bus, "ResumeUpdate", NULL, NULL);
   _send_atomupd_message_with_null_reply (bus, "CancelUpdate", NULL, NULL);
-  g_usleep (G_USEC_PER_SEC);
+  g_usleep (2 * default_wait);
   atomupd_properties = _get_atomupd_properties (bus);
   /* When receiving SIGTERM the mock steamos-atomupd-client will print
    * "17.50% 05m50s" and then quit */
@@ -982,7 +984,7 @@ test_multiple_method_calls (Fixture *f,
                         "There isn't an update in progress that can be paused");
   /* It is expected to be possible to cancel a paused update */
   _send_atomupd_message_with_null_reply (bus, "CancelUpdate", NULL, NULL);
-  g_usleep (G_USEC_PER_SEC);
+  g_usleep (2 * default_wait);
   atomupd_properties = _get_atomupd_properties (bus);
   g_assert_cmpuint (atomupd_properties->status, ==, AU_UPDATE_STATUS_CANCELLED);
   g_assert_cmpint (kill (rauc_pid, 0) , !=, 0);
