@@ -648,7 +648,7 @@ _get_atomupd_properties (GDBusConnection *bus)
 {
   g_autoptr(GVariantIter) available_iter = NULL;
   g_autoptr(GVariantIter) available_later_iter = NULL;
-  GVariantDict dict;
+  g_auto(GVariantDict) dict = {{{0}}};
   g_autoptr(GVariant) reply = NULL;
   g_autoptr(GVariant) properties = NULL;
   g_autoptr(AtomupdProperties) atomupd_properties = g_new0 (AtomupdProperties, 1);
