@@ -1348,6 +1348,7 @@ _au_client_stdout_update_cb (GObject *object_stream,
   cursor = parts[1];
   while (*cursor != '\0')
     {
+      g_autoptr(GDateTime) updated_estimation = NULL;
       guint64 value;
 
       endptr = NULL;
@@ -1366,19 +1367,19 @@ _au_client_stdout_update_cb (GObject *object_stream,
       switch (endptr[0])
         {
           case 'd':
-            time_estimation = g_date_time_add_days (time_estimation, value);
+            updated_estimation = g_date_time_add_days (time_estimation, value);
             break;
 
           case 'h':
-            time_estimation = g_date_time_add_hours (time_estimation, value);
+            updated_estimation = g_date_time_add_hours (time_estimation, value);
             break;
 
           case 'm':
-            time_estimation = g_date_time_add_minutes (time_estimation, value);
+            updated_estimation = g_date_time_add_minutes (time_estimation, value);
             break;
 
           case 's':
-            time_estimation = g_date_time_add_seconds (time_estimation, value);
+            updated_estimation = g_date_time_add_seconds (time_estimation, value);
             break;
 
           default:
@@ -1387,6 +1388,9 @@ _au_client_stdout_update_cb (GObject *object_stream,
             g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (object));
             return;
         }
+
+      g_date_time_unref (time_estimation);
+      time_estimation = g_steal_pointer (&updated_estimation);
     }
 
   au_atomupd1_set_estimated_completion_time (object,
