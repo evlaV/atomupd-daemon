@@ -250,11 +250,11 @@ _au_get_chosen_variant (const gchar *manifest_path,
         }
 
       g_clear_error (&local_error);
-      return g_strdup (_au_get_default_variant (manifest_path, error));
+      return _au_get_default_variant (manifest_path, error);
     }
 
   if (len == 0)
-    return g_strdup (_au_get_default_variant (manifest_path, error));
+    return _au_get_default_variant (manifest_path, error);
 
   /* Remove eventual trailing newline that might be added by steamos-select-branch */
   if (variant[len-1] == '\n')
