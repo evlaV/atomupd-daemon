@@ -98,8 +98,6 @@ setup (Fixture *f,
   g_assert_cmpint (g_unlink (f->rauc_pid_path), ==, 0);
 
   f->test_envp = g_get_environ ();
-  /* Override the daemon PATH to ensure that it will use the mock steamos-atomupd-client */
-  f->test_envp = g_environ_setenv (f->test_envp, "PATH", f->builddir, TRUE);
   f->test_envp = g_environ_setenv (f->test_envp, "AU_UPDATES_JSON_FILE",
                                    f->updates_json, TRUE);
   f->test_envp = g_environ_setenv (f->test_envp, "G_TEST_MOCK_RAUC_SERVICE_PID",

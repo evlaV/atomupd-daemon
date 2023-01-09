@@ -24,6 +24,7 @@
 test_env = environment()
 test_env.set('G_TEST_SRCDIR', meson.current_source_dir())
 test_env.set('G_TEST_BUILDDIR', meson.current_build_dir())
+# Override PATH to ensure that we always use the mock steamos-atomupd-client
 test_env.set('PATH', join_paths(meson.current_build_dir(), '..', 'atomupd-daemon'))
 test_env.prepend('PATH', meson.current_build_dir())
 
