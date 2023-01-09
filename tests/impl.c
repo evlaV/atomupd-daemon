@@ -1055,8 +1055,9 @@ test_restarted_service (Fixture *f,
       g_assert_cmpstr (atomupd_properties->update_version, ==, test->expected_update_version);
       g_assert_cmpuint (atomupd_properties->status, ==, test->expected_status);
 
-      g_unlink (reboot_for_update);
       _stop_daemon_service (daemon_proc);
+      if (reboot_for_update != NULL)
+        g_unlink (reboot_for_update);
     }
 }
 
