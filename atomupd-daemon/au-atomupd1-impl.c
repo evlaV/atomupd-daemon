@@ -684,7 +684,7 @@ on_query_completed (GPid pid,
                     gint wait_status,
                     gpointer user_data)
 {
-  QueryData *data = user_data;
+  g_autoptr(QueryData) data = user_data;
   g_autoptr(GIOChannel) stdout_channel = NULL;
   g_autoptr(GVariant) available = NULL;
   g_autoptr(GVariant) available_later = NULL;
@@ -1130,7 +1130,7 @@ cancel_callback (GObject *source_object,
                  gpointer user_data)
 {
   g_autoptr(GError) error = NULL;
-  RequestData *data = user_data;
+  g_autoptr(RequestData) data = user_data;
 
   if (g_task_propagate_boolean (G_TASK (result), &error))
     {
