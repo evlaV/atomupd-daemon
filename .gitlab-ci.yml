@@ -5,6 +5,7 @@ variables:
     json-glib
     meson
     ninja
+    valgrind
 
 stages:
   - build
@@ -32,10 +33,17 @@ stages:
         --werror \
         -Db_lundef=${LUNDEF} \
         -Db_sanitize=${SANITIZER} \
+        -Dusing_valgrind=${VALGRIND:-false} \
         _build
       ninja -C _build
       ninja -C _build install
-      meson test --verbose -C _build
+
+      if [ -z "${VALGRIND-}" ]; then
+        meson test --verbose -C _build
+      else
+        export DEBUGINFOD_URLS=https://debuginfod.archlinux.org
+        meson test --wrap='valgrind --trace-children=yes --error-exitcode=1' --verbose -C _build
+      fi
 
   artifacts:
     paths:
@@ -69,3 +77,11 @@ build:clang_asan:
     COMPILER: "clang"
     LUNDEF: "false"
     SANITIZER: "address,undefined"
+
+build:valgrind:
+  extends: .build
+  variables:
+    COMPILER: "gcc"
+    LUNDEF: "true"
+    SANITIZER: "none"
+    VALGRIND: "true"

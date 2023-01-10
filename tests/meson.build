@@ -24,9 +24,19 @@
 test_env = environment()
 test_env.set('G_TEST_SRCDIR', meson.current_source_dir())
 test_env.set('G_TEST_BUILDDIR', meson.current_build_dir())
-# Override PATH to ensure that we always use the mock steamos-atomupd-client
-test_env.set('PATH', join_paths(meson.current_build_dir(), '..', 'atomupd-daemon'))
-test_env.prepend('PATH', meson.current_build_dir())
+
+if get_option('using_valgrind')
+  # If we want to use valgrind we should not override the default PATH values,
+  # otherwise valgrind could fail to start
+  test_env.prepend('PATH', join_paths(meson.current_build_dir(), '..', 'atomupd-daemon'))
+  test_env.prepend('PATH', meson.current_build_dir())
+
+  test_env.set('AU_TEST_VALGRIND', '1')
+else
+  # Override PATH to ensure that we always use the mock steamos-atomupd-client
+  test_env.set('PATH', join_paths(meson.current_build_dir(), '..', 'atomupd-daemon'))
+  test_env.prepend('PATH', meson.current_build_dir())
+endif
 
 tests_dir = join_paths(
   get_option('prefix'),
@@ -68,6 +78,13 @@ exe = executable(
   install_dir : tests_dir,
 )
 
-test('test-impl', exe, env : test_env, timeout : 60)
+if get_option('using_valgrind')
+  # Increase the timeout because valgrind considerably slows down the execution time
+  test_timeout = 300
+else
+  test_timeout = 60
+endif
+
+test('test-impl', exe, env : test_env, timeout : test_timeout)
 
 install_subdir('data', install_dir : tests_dir)

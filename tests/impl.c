@@ -1214,6 +1214,10 @@ main (int argc,
 
   g_test_init (&argc, &argv, NULL);
 
+  /* Valgrind is really slow, so we need to increase our default wait time */
+  if (g_getenv ("AU_TEST_VALGRIND") != NULL)
+    default_wait = 4 * default_wait;
+
 #define test_add(_name, _test) \
     g_test_add(_name, Fixture, NULL, setup, _test, teardown)
 

@@ -14,3 +14,10 @@ option(
   value : '',
   description : 'Directory for systemd unit files',
 )
+
+option(
+  'using_valgrind',
+  type : 'boolean',
+  value : false,
+  description : 'Set to \'true\' if the tests are executed under valgrind',
+)
