@@ -883,7 +883,11 @@ test_start_pause_stop_update (Fixture *f,
   g_debug ("Starting an update that is expected to complete in 1.5 seconds");
   _send_atomupd_message_with_null_reply (bus, "StartUpdate", "(s)", "mock-success");
 
-  /* 3 seconds should be enough to let the update complete */
+  /* The update is expected to complete in 1.5 seconds. Wait for 2x as much because
+   * there might be a slight delay before the mock process actually receives this
+   * D-Bus message and starts the update. There is no need to wait longer with
+   * Valgrind because we are just sending a D-Bus message to a process that is
+   * already up and running. */
   g_usleep (3 * G_USEC_PER_SEC);
 
   reply = _get_atomupd_property (bus, "UpdateStatus");
