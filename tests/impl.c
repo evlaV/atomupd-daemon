@@ -937,6 +937,54 @@ test_start_pause_stop_update (Fixture *f,
 }
 
 static void
+test_progress_default (Fixture *f,
+                       gconstpointer context)
+{
+  g_autoptr(GSubprocess) daemon_proc = NULL;
+  gdouble progress;
+  g_autofree gchar *update_file_path = NULL;
+  g_autoptr(GVariant) reply = NULL;
+  g_autoptr(GDBusConnection) bus = NULL;
+
+  bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, NULL);
+
+  _skip_if_daemon_is_running (bus, NULL);
+
+  update_file_path = g_build_filename (f->srcdir, "data", "update_one_minor.json", NULL);
+  f->test_envp = g_environ_setenv (f->test_envp, "G_TEST_UPDATE_JSON",
+                                   update_file_path, TRUE);
+
+  daemon_proc = _start_daemon_service (bus, f->manifest_path, f->conf_path, f->test_envp);
+
+  _call_check_for_updates (bus, NULL, NULL);
+
+  g_debug ("Starting an update that is expected to complete in 1.5 seconds");
+  _send_atomupd_message_with_null_reply (bus, "StartUpdate", "(s)", "mock-success");
+  /* Wait for 2x as much to ensure it really finished */
+  g_usleep (3 * G_USEC_PER_SEC);
+
+  reply = _get_atomupd_property (bus, "ProgressPercentage");
+  g_variant_get (reply, "d", &progress);
+  g_assert_true (progress == 100);
+  g_clear_pointer (&reply, g_variant_unref);
+
+  /* With "mock-stuck" we simulate an update that is stuck and never prints progress
+   * updates. */
+  g_debug ("Starting stuck update");
+  _send_atomupd_message_with_null_reply (bus, "StartUpdate", "(s)", "mock-stuck");
+  g_usleep (default_wait);
+
+  reply = _get_atomupd_property (bus, "ProgressPercentage");
+  g_variant_get (reply, "d", &progress);
+  /* When we start an update, even if RAUC didn't print any progress yet, we
+   * expect the progress percentage to be set by default to zero */
+  g_assert_true (progress == 0);
+
+  _send_atomupd_message_with_null_reply (bus, "CancelUpdate", NULL, NULL);
+  _stop_daemon_service (daemon_proc);
+}
+
+static void
 test_multiple_method_calls (Fixture *f,
                             gconstpointer context)
 {
@@ -1229,6 +1277,7 @@ main (int argc,
   test_add ("/daemon/default_properties", test_default_properties);
   test_add ("/daemon/unexpected_methods", test_unexpected_methods);
   test_add ("/daemon/start_pause_stop_update", test_start_pause_stop_update);
+  test_add ("/daemon/progress_default", test_progress_default);
   test_add ("/daemon/multiple_method_calls", test_multiple_method_calls);
   test_add ("/daemon/restarted_service", test_restarted_service);
   test_add ("/daemon/pending_reboot_check", test_pending_reboot_check);

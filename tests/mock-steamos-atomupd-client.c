@@ -136,6 +136,16 @@ main (int argc,
       printf ("17.50%% 05m50s\n");
       return EXIT_SUCCESS;
     }
+  else if (g_str_equal ("mock-stuck", opt_update_version))
+    {
+      /* Simulate an update that takes a very long time to start.
+       * To make it consistent for the testing, we never print a single
+       * progress update */
+      while (!stopped)
+        g_usleep (delay);
+
+      return EXIT_SUCCESS;
+    }
 
   return EXIT_FAILURE;
 }

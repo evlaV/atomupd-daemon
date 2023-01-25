@@ -1541,6 +1541,7 @@ au_atomupd1_impl_handle_start_update (AuAtomupd1 *object,
                                                   (GChildWatchFunc) child_watch_cb,
                                                   g_object_ref (object));
 
+  au_atomupd1_set_progress_percentage (object, 0);
   _au_atomupd1_set_update_status_and_error (object, AU_UPDATE_STATUS_IN_PROGRESS,
                                             NULL, NULL);
 
