@@ -21,3 +21,17 @@ option(
   value : false,
   description : 'Set to \'true\' if the tests are executed under valgrind',
 )
+
+option(
+  'atomupd1_bus_name',
+  type : 'string',
+  value : 'com.steampowered.Atomupd1',
+  description : 'Bus name of the Atomupd1 API',
+)
+
+option(
+  'atomupd1_path',
+  type : 'string',
+  value : '/com/steampowered/Atomupd1',
+  description : 'Path of the Atomupd1 API',
+)

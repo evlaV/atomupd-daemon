@@ -6,3 +6,6 @@
 
 #define _GNU_SOURCE 1
 #define G_LOG_DOMAIN "@project_name@"
+
+#define AU_ATOMUPD1_BUS_NAME "@atomupd1_bus_name@"
+#define AU_ATOMUPD1_PATH "@atomupd1_path@"

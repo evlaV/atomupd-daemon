@@ -103,10 +103,11 @@ foreach flag : no_warning_cflags
   add_global_arguments(supported_no_warning_cflags, language : 'c')
 endforeach
 
-
 conf_data = configuration_data()
 conf_data.set_quoted('VERSION', version)
 conf_data.set('project_name', meson.project_name())
+conf_data.set('atomupd1_bus_name', get_option('atomupd1_bus_name'))
+conf_data.set('atomupd1_path', get_option('atomupd1_path'))
 
 configure_file(
   input : 'config.h.in',

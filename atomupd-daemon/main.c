@@ -104,8 +104,6 @@ main(int argc, char *argv[])
    g_autoptr(GOptionContext) option_context = NULL;
    g_autoptr(GDBusConnection) bus = NULL;
    g_autoptr(AuAtomupd1) atomupd = NULL;
-   const gchar *atomupd1_path = "/com/steampowered/Atomupd1";
-   const gchar *atomupd1_bus_name = "com.steampowered.Atomupd1";
    GError **error = &local_error;
 
    option_context = g_option_context_new("");
@@ -149,13 +147,13 @@ main(int argc, char *argv[])
    }
 
    if (!g_dbus_interface_skeleton_export(G_DBUS_INTERFACE_SKELETON(atomupd), bus,
-                                         atomupd1_path, error)) {
+                                         AU_ATOMUPD1_PATH, error)) {
       g_warning("An error occurred while registering the D-Bus object '%s': %s",
-                atomupd1_path, local_error->message);
+                AU_ATOMUPD1_PATH, local_error->message);
       return EXIT_FAILURE;
    }
 
-   g_bus_own_name_on_connection(bus, atomupd1_bus_name, flags, name_acquired_cb,
+   g_bus_own_name_on_connection(bus, AU_ATOMUPD1_BUS_NAME, flags, name_acquired_cb,
                                 name_lost_cb, NULL, NULL);
 
    g_debug("Starting the main loop");
