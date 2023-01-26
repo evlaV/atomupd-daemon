@@ -74,6 +74,7 @@ exe = executable(
   sources: [
     'impl.c',
     'fixture.c',
+    'services.c',
   ],
   dependencies : [glib, gio, json_glib],
   include_directories : project_include_dirs,

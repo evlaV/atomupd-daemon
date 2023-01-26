@@ -35,6 +35,7 @@
 
 #include "atomupd-daemon/utils.h"
 #include "fixture.h"
+#include "services.h"
 
 #define _send_atomupd_message_with_null_reply(_bus, _method, _type, _content)            \
    g_assert_null(_send_atomupd_message(_bus, _method, _type, _content))
@@ -46,7 +47,7 @@
    _send_message(_bus, "org.freedesktop.DBus.Properties", _method, _format, __VA_ARGS__)
 
 #define _skip_if_daemon_is_running(_bus, _error)                                         \
-   if (_is_daemon_service_running(bus, _error)) {                                        \
+   if (au_tests_is_daemon_service_running(bus, _error)) {                                \
       g_test_skip("Can't run this test if another instance of the Atomupd "              \
                   "daemon service is already running");                                  \
       return;                                                                            \
@@ -308,91 +309,6 @@ _send_message(GDBusConnection *bus,
    return g_variant_ref_sink(reply_body);
 }
 
-/*
- * Returns: %TRUE if the atomic update daemon service is running. Otherwise
- * it will return %FALSE and will set @error (if provided).
- */
-static gboolean
-_is_daemon_service_running(GDBusConnection *bus, GError **error)
-{
-   g_autoptr(GVariant) ping_reply = NULL;
-
-   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
-
-   g_assert_nonnull(bus);
-
-   ping_reply = g_dbus_connection_call_sync(
-      bus, "com.steampowered.Atomupd1", "/com/steampowered/Atomupd1",
-      "org.freedesktop.DBus.Peer", "Ping", g_variant_new("()"), /* consumed */
-      NULL, G_DBUS_CALL_FLAGS_NONE, 1000, NULL, error);
-
-   return ping_reply != NULL;
-}
-
-static void
-_stop_daemon_service(GSubprocess *daemon_proc)
-{
-   g_return_if_fail(daemon_proc != NULL);
-
-   g_debug("Stopping the daemon service");
-
-   g_subprocess_send_signal(daemon_proc, SIGTERM);
-   g_usleep(default_wait);
-   /* Ensure that the daemon is really killed */
-   g_subprocess_force_exit(daemon_proc);
-}
-
-static GSubprocess *
-_start_daemon_service(GDBusConnection *bus,
-                      const gchar *manifest_path,
-                      const gchar *conf,
-                      gchar **envp)
-{
-   g_return_val_if_fail(manifest_path != NULL, NULL);
-
-   g_autoptr(GSubprocessLauncher) proc_launcher = NULL;
-   g_autoptr(GSubprocess) proc = NULL;
-   gsize max_wait = 10;
-   gsize i;
-   g_autoptr(GError) error = NULL;
-
-   const gchar *daemon_argv[] = {
-      "atomupd-daemon",
-      "--session",
-      "--manifest-file",
-      manifest_path,
-      conf == NULL ? NULL : "--config",
-      conf,
-      NULL,
-   };
-
-   proc_launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
-   g_subprocess_launcher_set_environ(proc_launcher, envp);
-   proc = g_subprocess_launcher_spawnv(proc_launcher, daemon_argv, &error);
-   g_assert_no_error(error);
-
-   g_debug("Executed the D-Bus daemon service");
-
-   g_usleep(default_wait);
-   /* Wait up to 5 seconds (10 times 500ms) for the D-Bus service to start.
-    * If after that time the service is still not up, it's safe to assume that
-    * something went wrong. */
-   for (i = 0; i < max_wait; i++) {
-      if (_is_daemon_service_running(bus, &error))
-         break;
-
-      g_debug("Atomupd service is not ready: %s", error->message);
-      g_clear_error(&error);
-      g_usleep(default_wait);
-   }
-
-   g_assert_cmpint(i, <, max_wait);
-
-   g_debug("The service successfully started");
-
-   return g_steal_pointer(&proc);
-}
-
 static void
 _check_available_versions(GVariantIter *available_iter,
                           const VersionsTest *versions_available)
@@ -526,7 +442,8 @@ _query_for_updates(Fixture *f, GDBusConnection *bus, const UpdatesTest *test)
          g_environ_setenv(f->test_envp, "AU_REBOOT_FOR_UPDATE", reboot_for_update, TRUE);
    }
 
-   daemon_proc = _start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+   daemon_proc =
+      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
    _call_check_for_updates(bus, test->versions_available, test->versions_available_later);
 
@@ -534,7 +451,7 @@ _query_for_updates(Fixture *f, GDBusConnection *bus, const UpdatesTest *test)
    _check_versions_property(bus, "VersionsAvailableLater",
                             test->versions_available_later);
 
-   _stop_daemon_service(daemon_proc);
+   au_tests_stop_daemon_service(daemon_proc);
 }
 
 static void
@@ -644,7 +561,8 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
    if (test->config_name != NULL)
       config_path = g_build_filename(f->srcdir, "data", test->config_name, NULL);
 
-   daemon_proc = _start_daemon_service(bus, f->manifest_path, config_path, f->test_envp);
+   daemon_proc =
+      au_tests_start_daemon_service(bus, f->manifest_path, config_path, f->test_envp);
 
    atomupd_properties = _get_atomupd_properties(bus);
    /* The version of this interface is the number 1 */
@@ -663,7 +581,7 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
    g_assert_cmpstr(atomupd_properties->current_version, ==, "20220205.2");
    g_assert_cmpstrv(atomupd_properties->known_variants, test->variants);
 
-   _stop_daemon_service(daemon_proc);
+   au_tests_stop_daemon_service(daemon_proc);
 }
 
 static void
@@ -706,7 +624,8 @@ test_unexpected_methods(Fixture *f, gconstpointer context)
 
    _skip_if_daemon_is_running(bus, NULL);
 
-   daemon_proc = _start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+   daemon_proc =
+      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
    _check_message_reply(
       bus, "StartUpdate", "(s)", "20220120.1",
@@ -718,31 +637,7 @@ test_unexpected_methods(Fixture *f, gconstpointer context)
    _check_message_reply(bus, "CancelUpdate", NULL, NULL,
                         "There isn't an update in progress that can be cancelled");
 
-   _stop_daemon_service(daemon_proc);
-}
-
-/*
- * @rauc_pid_path: Path to the file where the RAUC service pid will be stored
- */
-static GSubprocess *
-_launch_rauc_service(const gchar *rauc_pid_path)
-{
-   g_autoptr(GSubprocess) proc = NULL;
-   g_autoptr(GError) error = NULL;
-
-   /* Launch a mock rauc service that does nothing until it receives
-    * the SIGTERM signal. This will allow us to test the cancel and
-    * pause methods. */
-   proc = g_subprocess_new(G_SUBPROCESS_FLAGS_SEARCH_PATH_FROM_ENVP, &error,
-                           "mock-rauc-service", NULL);
-   g_assert_no_error(error);
-
-   g_debug("Launched a mock rauc service with pid %s", g_subprocess_get_identifier(proc));
-
-   g_file_set_contents(rauc_pid_path, g_subprocess_get_identifier(proc), -1, &error);
-   g_assert_no_error(error);
-
-   return g_steal_pointer(&proc);
+   au_tests_stop_daemon_service(daemon_proc);
 }
 
 static void
@@ -765,23 +660,25 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    f->test_envp =
       g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
 
-   rauc_proc = _launch_rauc_service(f->rauc_pid_path);
+   rauc_proc = au_tests_launch_rauc_service(f->rauc_pid_path);
 
-   daemon_proc = _start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+   daemon_proc =
+      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
    _call_check_for_updates(bus, NULL, NULL);
 
    /* Restart the service. When starting an update we expect that it shouldn't
     * complain that we didn't check for updates, because we already did. */
-   _stop_daemon_service(daemon_proc);
+   au_tests_stop_daemon_service(daemon_proc);
    g_clear_object(&daemon_proc);
-   daemon_proc = _start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+   daemon_proc =
+      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
    /* Assert that restarting the daemon successfully killed the old rauc service */
    g_assert_true(g_subprocess_get_if_exited(rauc_proc));
 
    g_clear_object(&rauc_proc);
-   rauc_proc = _launch_rauc_service(f->rauc_pid_path);
+   rauc_proc = au_tests_launch_rauc_service(f->rauc_pid_path);
 
    g_debug("Starting an update that is expected to complete in 1.5 seconds");
    _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", "mock-success");
@@ -837,7 +734,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    /* Assert that the CancelUpdate successfully killed the rauc service */
    g_assert_true(g_subprocess_get_if_exited(rauc_proc));
 
-   _stop_daemon_service(daemon_proc);
+   au_tests_stop_daemon_service(daemon_proc);
 }
 
 static void
@@ -857,7 +754,8 @@ test_progress_default(Fixture *f, gconstpointer context)
    f->test_envp =
       g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
 
-   daemon_proc = _start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+   daemon_proc =
+      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
    _call_check_for_updates(bus, NULL, NULL);
 
@@ -884,7 +782,7 @@ test_progress_default(Fixture *f, gconstpointer context)
    g_assert_true(progress == 0);
 
    _send_atomupd_message_with_null_reply(bus, "CancelUpdate", NULL, NULL);
-   _stop_daemon_service(daemon_proc);
+   au_tests_stop_daemon_service(daemon_proc);
 }
 
 static void
@@ -900,11 +798,12 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
 
    _skip_if_daemon_is_running(bus, NULL);
 
-   daemon_proc = _start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+   daemon_proc =
+      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
    /* Launch the RAUC service after the atomupd daemon because in its start up
     * process it will kill any eventual RAUC processes that are already running */
-   rauc_proc = _launch_rauc_service(f->rauc_pid_path);
+   rauc_proc = au_tests_launch_rauc_service(f->rauc_pid_path);
 
    _call_check_for_updates(bus, NULL, NULL);
    reply = _send_atomupd_message(bus, "CheckForUpdates", "(a{sv})", NULL);
@@ -922,7 +821,7 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_CANCELLED);
    g_assert_true(g_subprocess_get_if_exited(rauc_proc));
 
-   _stop_daemon_service(daemon_proc);
+   au_tests_stop_daemon_service(daemon_proc);
 }
 
 typedef struct {
@@ -997,14 +896,14 @@ test_restarted_service(Fixture *f, gconstpointer context)
       }
 
       daemon_proc =
-         _start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+         au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
       atomupd_properties = _get_atomupd_properties(bus);
       g_assert_cmpstr(atomupd_properties->update_version, ==,
                       test->expected_update_version);
       g_assert_cmpuint(atomupd_properties->status, ==, test->expected_status);
 
-      _stop_daemon_service(daemon_proc);
+      au_tests_stop_daemon_service(daemon_proc);
       if (reboot_for_update != NULL)
          g_unlink(reboot_for_update);
    }
@@ -1116,7 +1015,7 @@ test_switch_variant(Fixture *f, gconstpointer context)
       }
 
       daemon_proc =
-         _start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+         au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
       _check_string_property(bus, "Variant", test.initial_expected_variant);
 
@@ -1146,7 +1045,7 @@ test_switch_variant(Fixture *f, gconstpointer context)
          g_assert_cmpstr(parsed_variant, ==, test.switch_expected_variant);
       }
 
-      _stop_daemon_service(daemon_proc);
+      au_tests_stop_daemon_service(daemon_proc);
       g_unlink(steamos_branch);
    }
 }
