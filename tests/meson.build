@@ -71,7 +71,10 @@ executable(
 
 exe = executable(
   'test-impl',
-  'impl.c',
+  sources: [
+    'impl.c',
+    'fixture.c',
+  ],
   dependencies : [glib, gio, json_glib],
   include_directories : project_include_dirs,
   install : get_option('install_tests'),
