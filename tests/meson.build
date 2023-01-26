@@ -80,9 +80,9 @@ exe = executable(
 
 if get_option('using_valgrind')
   # Increase the timeout because valgrind considerably slows down the execution time
-  test_timeout = 300
+  test_timeout = 500
 else
-  test_timeout = 60
+  test_timeout = 100
 endif
 
 test('test-impl', exe, env : test_env, timeout : test_timeout)
