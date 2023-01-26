@@ -69,26 +69,24 @@ executable(
   install_dir: tests_dir
 )
 
-exe = executable(
-  'test-impl',
-  sources: [
-    'impl.c',
-    'fixture.c',
-    'services.c',
-  ],
-  dependencies : [glib, gio, json_glib],
-  include_directories : project_include_dirs,
-  install : get_option('install_tests'),
-  install_dir : tests_dir,
-)
+foreach test_name : ['impl', 'manager']
+  exe = executable(
+    'test-' + test_name,
+    sources : [test_name + '.c', 'fixture.c', 'services.c'],
+    dependencies : [glib, gio, json_glib],
+    include_directories : project_include_dirs,
+    install : get_option('install_tests'),
+    install_dir : tests_dir,
+  )
 
-if get_option('using_valgrind')
-  # Increase the timeout because valgrind considerably slows down the execution time
-  test_timeout = 500
-else
-  test_timeout = 100
-endif
+  if get_option('using_valgrind')
+    # Increase the timeout because valgrind considerably slows down the execution time
+    test_timeout = 500
+  else
+    test_timeout = 100
+  endif
 
-test('test-impl', exe, env : test_env, timeout : test_timeout)
+  test(test_name, exe, env : test_env, timeout : test_timeout)
+endforeach
 
 install_subdir('data', install_dir : tests_dir)
