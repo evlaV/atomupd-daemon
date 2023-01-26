@@ -51,8 +51,6 @@
       return;                                                                            \
    }
 
-static const char *argv0;
-
 static gulong default_wait = 0.5 * G_USEC_PER_SEC;
 
 typedef struct {
@@ -70,6 +68,7 @@ static void
 setup(Fixture *f, gconstpointer context)
 {
    int fd;
+   const char *argv0 = context;
    g_autoptr(GError) error = NULL;
 
    f->srcdir = g_strdup(g_getenv("G_TEST_SRCDIR"));
@@ -1221,15 +1220,13 @@ main(int argc, char **argv)
 {
    int ret;
 
-   argv0 = argv[0];
-
    g_test_init(&argc, &argv, NULL);
 
    /* Valgrind is really slow, so we need to increase our default wait time */
    if (g_getenv("AU_TEST_VALGRIND") != NULL)
       default_wait = 4 * default_wait;
 
-#define test_add(_name, _test) g_test_add(_name, Fixture, NULL, setup, _test, teardown)
+#define test_add(_name, _test) g_test_add(_name, Fixture, argv[0], setup, _test, teardown)
 
    test_add("/daemon/query_updates", test_query_updates);
    test_add("/daemon/default_properties", test_default_properties);
