@@ -28,16 +28,16 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#include <glib.h>
-#include <glib-object.h>
 #include <gio/gio.h>
+#include <glib-object.h>
+#include <glib.h>
 
 #include "au-atomupd1.h"
 
-#define AU_TYPE_ATOMUPD1_IMPL (au_atomupd1_impl_get_type ())
+#define AU_TYPE_ATOMUPD1_IMPL (au_atomupd1_impl_get_type())
 
-G_DECLARE_FINAL_TYPE (AuAtomupd1Impl, au_atomupd1_impl, AU, ATOMUPD1_IMPL, AuAtomupd1Skeleton)
+G_DECLARE_FINAL_TYPE(
+   AuAtomupd1Impl, au_atomupd1_impl, AU, ATOMUPD1_IMPL, AuAtomupd1Skeleton)
 
-AuAtomupd1 *au_atomupd1_impl_new (const gchar *config,
-                                  const gchar *manifest,
-                                  GError **error);
+AuAtomupd1 *
+au_atomupd1_impl_new(const gchar *config, const gchar *manifest, GError **error);

@@ -31,25 +31,24 @@
 
 static volatile sig_atomic_t stopped = FALSE;
 
-static void sig_handler(int _)
+static void
+sig_handler(int _)
 {
-  stopped = TRUE;
+   stopped = TRUE;
 }
 
 int
-main (int argc,
-      char **argv)
+main(int argc, char **argv)
 {
-  /* Make this service its own group leader. The real rauc service is launched
-   * by systemd, so it's not a child of atomupd-daemon. */
-  if (setpgid (getpid (), 0) != 0)
-    return EXIT_FAILURE;
+   /* Make this service its own group leader. The real rauc service is launched
+    * by systemd, so it's not a child of atomupd-daemon. */
+   if (setpgid(getpid(), 0) != 0)
+      return EXIT_FAILURE;
 
-  signal (SIGTERM, sig_handler);
-  while (!stopped)
-    {
-      g_usleep (0.5 * G_USEC_PER_SEC);
-    }
+   signal(SIGTERM, sig_handler);
+   while (!stopped) {
+      g_usleep(0.5 * G_USEC_PER_SEC);
+   }
 
-  return EXIT_SUCCESS;
+   return EXIT_SUCCESS;
 }

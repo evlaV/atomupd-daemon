@@ -29,29 +29,26 @@
 #include <glib.h>
 
 int
-main (int argc,
-      char **argv)
+main(int argc, char **argv)
 {
-  /* Mock implementation for "systemctl show --property MainPID rauc" */
+   /* Mock implementation for "systemctl show --property MainPID rauc" */
 
-  const gchar *rauc_pid_path = NULL;
-  g_autofree gchar *rauc_file_content = NULL;
+   const gchar *rauc_pid_path = NULL;
+   g_autofree gchar *rauc_file_content = NULL;
 
-  rauc_pid_path = g_getenv ("G_TEST_MOCK_RAUC_SERVICE_PID");
+   rauc_pid_path = g_getenv("G_TEST_MOCK_RAUC_SERVICE_PID");
 
-  if (rauc_pid_path == NULL)
-    return EXIT_FAILURE;
+   if (rauc_pid_path == NULL)
+      return EXIT_FAILURE;
 
-  if (g_file_get_contents (rauc_pid_path, &rauc_file_content, NULL, NULL))
-    {
-      if (g_strcmp0 (rauc_file_content, "") != 0)
-        {
-          printf ("MainPID=%s\n", rauc_file_content);
-          return EXIT_SUCCESS;
-        }
-    }
+   if (g_file_get_contents(rauc_pid_path, &rauc_file_content, NULL, NULL)) {
+      if (g_strcmp0(rauc_file_content, "") != 0) {
+         printf("MainPID=%s\n", rauc_file_content);
+         return EXIT_SUCCESS;
+      }
+   }
 
-  printf ("MainPID=0\n");
+   printf("MainPID=0\n");
 
-  return EXIT_SUCCESS;
+   return EXIT_SUCCESS;
 }

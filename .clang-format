@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT
+#
+# Loosely based on virglrenderer.
+
+BasedOnStyle: LLVM
+AlwaysBreakAfterReturnType: TopLevel
+BinPackParameters: false
+BraceWrapping:
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterFunction: true
+  AfterStruct: false
+  BeforeElse: false
+  SplitEmptyFunction: true
+BreakBeforeBraces: Custom
+ColumnLimit: 90
+ContinuationIndentWidth: 3
+Cpp11BracedListStyle: false
+IndentWidth: 3
+PenaltyBreakBeforeFirstCallParameter: 1
+PenaltyExcessCharacter: 100
+SpaceAfterCStyleCast: false
+SpaceBeforeCpp11BracedList: false

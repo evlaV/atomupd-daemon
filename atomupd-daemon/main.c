@@ -25,9 +25,9 @@
 
 #include <sysexits.h>
 
-#include <glib.h>
-#include <glib-unix.h>
 #include <gio/gio.h>
+#include <glib-unix.h>
+#include <glib.h>
 
 #include "au-atomupd1-impl.h"
 #include "utils.h"
@@ -45,36 +45,32 @@ const gchar *AU_REBOOT_FOR_UPDATE = "/run/steamos-atomupd/reboot_for_update";
 static GMainLoop *main_loop = NULL;
 
 static void
-name_acquired_cb (GDBusConnection *connection,
-                  const gchar *name,
-                  gpointer user_data)
+name_acquired_cb(GDBusConnection *connection, const gchar *name, gpointer user_data)
 {
-  g_debug ("Acquired the name %s on the message bus", name);
+   g_debug("Acquired the name %s on the message bus", name);
 }
 
 static void
-name_lost_cb (GDBusConnection *connection,
-              const gchar *name,
-              gpointer user_data)
+name_lost_cb(GDBusConnection *connection, const gchar *name, gpointer user_data)
 {
-  g_debug ("Lost the name %s on the message bus", name);
-  g_main_loop_quit (main_loop);
+   g_debug("Lost the name %s on the message bus", name);
+   g_main_loop_quit(main_loop);
 }
 
 static gboolean
-on_sigint (gpointer user_data)
+on_sigint(gpointer user_data)
 {
-  g_debug ("Caught SIGINT. Initiating shutdown.");
-  g_main_loop_quit (main_loop);
-  return FALSE;
+   g_debug("Caught SIGINT. Initiating shutdown.");
+   g_main_loop_quit(main_loop);
+   return FALSE;
 }
 
 static gboolean
-on_sigterm (gpointer user_data)
+on_sigterm(gpointer user_data)
 {
-  g_debug ("Caught SIGTERM. Initiating shutdown.");
-  g_main_loop_quit (main_loop);
-  return FALSE;
+   g_debug("Caught SIGTERM. Initiating shutdown.");
+   g_main_loop_quit(main_loop);
+   return FALSE;
 }
 
 static gchar *opt_config = NULL;
@@ -84,111 +80,90 @@ static gboolean opt_session = FALSE;
 static gboolean opt_verbose = FALSE;
 static gboolean opt_version = FALSE;
 
-static GOptionEntry options[] =
-{
-  { "config", '\0',
-    G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_config,
-    "Use this configuration file", "PATH" },
-  { "manifest-file", '\0',
-    G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_manifest,
-    "Use this manifest file", "PATH" },
-  { "replace", '\0',
-    G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_replace,
-    "Replace a previous instance with the same bus name.",
-    NULL },
-  { "session", '\0',
-    G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &opt_session,
-    "Use the session bus instead of the system bus",
-    NULL },
-  { "verbose", '\0',
-    G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_verbose,
-    "Be more verbose.", NULL },
-  { "version", '\0',
-    G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_version,
-    "Print version number and exit.", NULL },
-  { NULL }
+static GOptionEntry options[] = {
+   { "config", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_config,
+     "Use this configuration file", "PATH" },
+   { "manifest-file", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_manifest,
+     "Use this manifest file", "PATH" },
+   { "replace", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_replace,
+     "Replace a previous instance with the same bus name.", NULL },
+   { "session", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &opt_session,
+     "Use the session bus instead of the system bus", NULL },
+   { "verbose", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_verbose,
+     "Be more verbose.", NULL },
+   { "version", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_version,
+     "Print version number and exit.", NULL },
+   { NULL }
 };
 
 int
-main (int argc,
-      char *argv[])
+main(int argc, char *argv[])
 {
-  GBusNameOwnerFlags flags;
-  g_autoptr(GError) local_error = NULL;
-  g_autoptr(GOptionContext) option_context = NULL;
-  g_autoptr(GDBusConnection) bus = NULL;
-  g_autoptr(AuAtomupd1) atomupd = NULL;
-  const gchar *atomupd1_path = "/com/steampowered/Atomupd1";
-  const gchar *atomupd1_bus_name = "com.steampowered.Atomupd1";
-  GError **error = &local_error;
+   GBusNameOwnerFlags flags;
+   g_autoptr(GError) local_error = NULL;
+   g_autoptr(GOptionContext) option_context = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(AuAtomupd1) atomupd = NULL;
+   const gchar *atomupd1_path = "/com/steampowered/Atomupd1";
+   const gchar *atomupd1_bus_name = "com.steampowered.Atomupd1";
+   GError **error = &local_error;
 
-  option_context = g_option_context_new ("");
-  g_option_context_add_main_entries (option_context, options, NULL);
+   option_context = g_option_context_new("");
+   g_option_context_add_main_entries(option_context, options, NULL);
 
-  if (!g_option_context_parse (option_context, &argc, &argv, &local_error))
-    {
+   if (!g_option_context_parse(option_context, &argc, &argv, &local_error)) {
       return EX_USAGE;
-    }
+   }
 
-  if (opt_version)
-    {
-      g_print ("%s:\n"
-               " Package: atomupd-daemon\n"
-               " Version: %s\n",
-               g_get_prgname (), VERSION);
+   if (opt_version) {
+      g_print("%s:\n"
+              " Package: atomupd-daemon\n"
+              " Version: %s\n",
+              g_get_prgname(), VERSION);
       return EXIT_SUCCESS;
-    }
+   }
 
-  main_loop = g_main_loop_new (NULL, FALSE);
-  g_unix_signal_add (SIGINT, on_sigint, NULL);
-  g_unix_signal_add (SIGTERM, on_sigterm, NULL);
+   main_loop = g_main_loop_new(NULL, FALSE);
+   g_unix_signal_add(SIGINT, on_sigint, NULL);
+   g_unix_signal_add(SIGTERM, on_sigterm, NULL);
 
-  flags = G_BUS_NAME_OWNER_FLAGS_ALLOW_REPLACEMENT;
+   flags = G_BUS_NAME_OWNER_FLAGS_ALLOW_REPLACEMENT;
 
-  if (opt_replace)
-    flags |= G_BUS_NAME_OWNER_FLAGS_REPLACE;
+   if (opt_replace)
+      flags |= G_BUS_NAME_OWNER_FLAGS_REPLACE;
 
-  atomupd = au_atomupd1_impl_new (opt_config, opt_manifest, error);
-  if (atomupd == NULL)
-    {
-      g_warning ("An error occurred while initializing the daemon: %s",
-                 local_error->message);
+   atomupd = au_atomupd1_impl_new(opt_config, opt_manifest, error);
+   if (atomupd == NULL) {
+      g_warning("An error occurred while initializing the daemon: %s",
+                local_error->message);
       return EXIT_FAILURE;
-    }
+   }
 
-  bus = g_bus_get_sync (opt_session ? G_BUS_TYPE_SESSION : G_BUS_TYPE_SYSTEM,
-                        NULL,
-                        error);
+   bus =
+      g_bus_get_sync(opt_session ? G_BUS_TYPE_SESSION : G_BUS_TYPE_SYSTEM, NULL, error);
 
-  if (bus == NULL)
-    {
-      g_warning ("An error occurred while connecting to the bus: %s",
-                 local_error->message);
+   if (bus == NULL) {
+      g_warning("An error occurred while connecting to the bus: %s",
+                local_error->message);
       return EXIT_FAILURE;
-    }
+   }
 
-  if (!g_dbus_interface_skeleton_export (G_DBUS_INTERFACE_SKELETON (atomupd),
-                                         bus, atomupd1_path, error))
-    {
-      g_warning ("An error occurred while registering the D-Bus object '%s': %s",
-                 atomupd1_path, local_error->message);
+   if (!g_dbus_interface_skeleton_export(G_DBUS_INTERFACE_SKELETON(atomupd), bus,
+                                         atomupd1_path, error)) {
+      g_warning("An error occurred while registering the D-Bus object '%s': %s",
+                atomupd1_path, local_error->message);
       return EXIT_FAILURE;
-    }
+   }
 
-  g_bus_own_name_on_connection (bus,
-                                atomupd1_bus_name,
-                                flags,
-                                name_acquired_cb,
-                                name_lost_cb,
-                                NULL,
-                                NULL);
+   g_bus_own_name_on_connection(bus, atomupd1_bus_name, flags, name_acquired_cb,
+                                name_lost_cb, NULL, NULL);
 
-  g_debug ("Starting the main loop");
+   g_debug("Starting the main loop");
 
-  g_main_loop_run (main_loop);
+   g_main_loop_run(main_loop);
 
-  g_free (opt_config);
-  g_free (opt_manifest);
+   g_free(opt_config);
+   g_free(opt_manifest);
 
-  return EXIT_SUCCESS;
+   return EXIT_SUCCESS;
 }

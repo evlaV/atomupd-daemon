@@ -38,26 +38,23 @@
  * @AU_UPDATE_STATUS_CANCELLED: A special case of FAILED where the update attempt
  *  has been cancelled
  */
-typedef enum
-{
-  AU_UPDATE_STATUS_IDLE = 0,
-  AU_UPDATE_STATUS_IN_PROGRESS = 1,
-  AU_UPDATE_STATUS_PAUSED = 2,
-  AU_UPDATE_STATUS_SUCCESSFUL = 3,
-  AU_UPDATE_STATUS_FAILED = 4,
-  AU_UPDATE_STATUS_CANCELLED = 5,
+typedef enum {
+   AU_UPDATE_STATUS_IDLE = 0,
+   AU_UPDATE_STATUS_IN_PROGRESS = 1,
+   AU_UPDATE_STATUS_PAUSED = 2,
+   AU_UPDATE_STATUS_SUCCESSFUL = 3,
+   AU_UPDATE_STATUS_FAILED = 4,
+   AU_UPDATE_STATUS_CANCELLED = 5,
 } AuUpdateStatus;
-
 
 /**
  * AuUpdateType:
  * @AU_UPDATE_TYPE_MINOR: A minor update
  * @AU_UPDATE_TYPE_MAJOR: A major update
  */
-typedef enum
-{
-  AU_UPDATE_TYPE_MINOR = 0,
-  AU_UPDATE_TYPE_MAJOR = 1,
+typedef enum {
+   AU_UPDATE_TYPE_MINOR = 0,
+   AU_UPDATE_TYPE_MAJOR = 1,
 } AuUpdateType;
 
 extern const gchar *AU_DEFAULT_CONFIG;
