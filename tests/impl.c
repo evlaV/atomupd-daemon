@@ -41,7 +41,7 @@
    g_assert_null(_send_atomupd_message(_bus, _method, _type, _content))
 
 #define _send_atomupd_message(_bus, _method, _format, ...)                               \
-   _send_message(_bus, "com.steampowered.Atomupd1", _method, _format, __VA_ARGS__)
+   _send_message(_bus, AU_ATOMUPD1_INTERFACE, _method, _format, __VA_ARGS__)
 
 #define _send_properties_message(_bus, _method, _format, ...)                            \
    _send_message(_bus, "org.freedesktop.DBus.Properties", _method, _format, __VA_ARGS__)
@@ -283,8 +283,8 @@ _send_message(GDBusConnection *bus,
    g_autoptr(GDBusMessage) reply = NULL;
    g_autoptr(GError) error = NULL;
 
-   message = g_dbus_message_new_method_call(
-      "com.steampowered.Atomupd1", "/com/steampowered/Atomupd1", interface, method);
+   message = g_dbus_message_new_method_call(AU_ATOMUPD1_BUS_NAME, AU_ATOMUPD1_PATH,
+                                            interface, method);
 
    if (format_message != NULL) {
       va_start(ap, format_message);
@@ -359,8 +359,7 @@ _get_atomupd_property(GDBusConnection *bus, const gchar *property)
    g_autoptr(GVariant) reply_variant = NULL;
 
    g_debug("Getting the \"%s\" property", property);
-   reply =
-      _send_properties_message(bus, "Get", "(ss)", "com.steampowered.Atomupd1", property);
+   reply = _send_properties_message(bus, "Get", "(ss)", AU_ATOMUPD1_INTERFACE, property);
    g_variant_get(reply, "(v)", &reply_variant);
 
    return g_steal_pointer(&reply_variant);
@@ -486,7 +485,7 @@ _get_atomupd_properties(GDBusConnection *bus)
    g_assert_true(g_variant_dict_lookup(&dict, _variant, "a{?*}", &_variant_iter));       \
    atomupd_properties->_member = g_variant_iter_n_children(_variant_iter)
 
-   reply = _send_properties_message(bus, "GetAll", "(s)", "com.steampowered.Atomupd1");
+   reply = _send_properties_message(bus, "GetAll", "(s)", AU_ATOMUPD1_INTERFACE);
    g_variant_get(reply, "(@a{sv})", &properties);
    g_variant_dict_init(&dict, properties);
 

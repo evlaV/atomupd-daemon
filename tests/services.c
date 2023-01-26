@@ -45,8 +45,8 @@ au_tests_is_daemon_service_running(GDBusConnection *bus, GError **error)
    g_assert_nonnull(bus);
 
    ping_reply = g_dbus_connection_call_sync(
-      bus, "com.steampowered.Atomupd1", "/com/steampowered/Atomupd1",
-      "org.freedesktop.DBus.Peer", "Ping", g_variant_new("()"), /* consumed */
+      bus, AU_ATOMUPD1_BUS_NAME, AU_ATOMUPD1_PATH, "org.freedesktop.DBus.Peer", "Ping",
+      g_variant_new("()"), /* consumed */
       NULL, G_DBUS_CALL_FLAGS_NONE, 1000, NULL, error);
 
    return ping_reply != NULL;
