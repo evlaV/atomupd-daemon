@@ -1,4 +1,4 @@
-# Copyright © 2021 Collabora Ltd.
+# Copyright © 2021-2023 Collabora Ltd.
 #
 # SPDX-License-Identifier: MIT
 #
@@ -58,17 +58,16 @@ install_data(
 
 executable(
   'atomupd-daemon',
-  sources: [
-    'au-atomupd1-impl.c',
-    'main.c',
-    atomupd1,
-  ],
-  dependencies : [
-    glib,
-    gio,
-    gio_unix,
-    json_glib,
-  ],
+  sources: ['au-atomupd1-impl.c', 'main.c', atomupd1],
+  dependencies : [glib, gio, gio_unix, json_glib],
+  install : true,
+  install_dir : get_option('prefix') / get_option('libexecdir'),
+)
+
+executable(
+  'atomupd-manager',
+  sources: ['atomupd-manager.c', 'au-atomupd1-impl.c', atomupd1],
+  dependencies : [glib, gio, gio_unix, json_glib],
   install : true,
   install_dir : get_option('prefix') / get_option('libexecdir'),
 )
