@@ -35,3 +35,10 @@ option(
   value : '/com/steampowered/Atomupd1',
   description : 'Path of the Atomupd1 API',
 )
+
+option(
+  'atomupd1_interface',
+  type : 'string',
+  value : 'com.steampowered.Atomupd1',
+  description : 'Interface of the Atomupd1 API. Usually this is the same value as the bus name.',
+)

@@ -108,6 +108,7 @@ conf_data.set_quoted('VERSION', version)
 conf_data.set('project_name', meson.project_name())
 conf_data.set('atomupd1_bus_name', get_option('atomupd1_bus_name'))
 conf_data.set('atomupd1_path', get_option('atomupd1_path'))
+conf_data.set('atomupd1_interface', get_option('atomupd1_interface'))
 
 configure_file(
   input : 'config.h.in',
