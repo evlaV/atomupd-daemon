@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2022 Collabora Ltd.
+ * Copyright © 2021-2023 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -38,6 +38,7 @@
 #include <json-glib/json-glib.h>
 
 const gchar *AU_DEFAULT_CONFIG = "/etc/steamos-atomupd/client.conf";
+const gchar *AU_DEFAULT_DEV_CONFIG = "/etc/steamos-atomupd/client-dev.conf";
 const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
 const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json";
 
@@ -1541,6 +1542,8 @@ au_atomupd1_impl_new(const gchar *config_preference,
 
    if (config_preference != NULL)
       atomupd->config_path = g_strdup(config_preference);
+   else if (g_file_test(AU_DEFAULT_DEV_CONFIG, G_FILE_TEST_EXISTS))
+      atomupd->config_path = g_strdup(AU_DEFAULT_DEV_CONFIG);
    else
       atomupd->config_path = g_strdup(AU_DEFAULT_CONFIG);
 
