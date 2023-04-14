@@ -48,6 +48,11 @@ const gchar *AU_DEFAULT_BRANCH_PATH = "/var/lib/steamos-branch";
 /* Please keep this in sync with steamos-customizations common.mk */
 const gchar *AU_REBOOT_FOR_UPDATE = "/run/steamos-atomupd/reboot_for_update";
 
+/* Please keep this in sync with steamos-customizations rauc/system.conf */
+const gchar *AU_DESYNC_CONFIG_PATH = "/etc/desync/config.json";
+
+const gchar *AU_NETRC_PATH = "/root/.netrc";
+
 struct _AuAtomupd1Impl {
    AuAtomupd1Skeleton parent_instance;
 
@@ -342,6 +347,103 @@ _au_get_manifest_path_from_config(GKeyFile *client_config)
    g_return_val_if_fail(client_config != NULL, NULL);
 
    return g_key_file_get_string(client_config, "Host", "Manifest", NULL);
+}
+
+/*
+ * _au_get_http_auth_from_config:
+ * @client_config: (not nullable): Object that holds the configuration key file
+ * @username_out: (out): Used to return the required username
+ * @password_out: (out): Used to return the required password
+ * @encoded_out: (out): Used to return the auth type, followed by the base64
+ *  encoded `@username_out:@password_out`
+ *
+ * Returns: %TRUE if the configuration has the HTTP authentication info.
+ */
+gboolean
+_au_get_http_auth_from_config(GKeyFile *client_config,
+                              gchar **username_out,
+                              gchar **password_out,
+                              gchar **encoded_out)
+{
+   g_autofree gchar *username = NULL;
+   g_autofree gchar *password = NULL;
+   g_autoptr(GError) local_error = NULL;
+
+   g_return_val_if_fail(client_config != NULL, FALSE);
+   g_return_val_if_fail(username_out == NULL || *username_out == NULL, FALSE);
+   g_return_val_if_fail(password_out == NULL || *password_out == NULL, FALSE);
+   g_return_val_if_fail(encoded_out == NULL || *encoded_out == NULL, FALSE);
+
+   username = g_key_file_get_string(client_config, "Server", "Username", &local_error);
+   if (username == NULL) {
+      g_debug("Assuming no authentication required for this config: %s",
+              local_error->message);
+      return FALSE;
+   }
+
+   password = g_key_file_get_string(client_config, "Server", "Password", &local_error);
+   if (password == NULL) {
+      g_debug("Assuming no authentication required for this config: %s",
+              local_error->message);
+      return FALSE;
+   }
+
+   if (encoded_out != NULL) {
+      g_autofree gchar *user_pass = NULL;
+      g_autofree gchar *user_pass_base64 = NULL;
+
+      user_pass = g_strdup_printf("%s:%s", username, password);
+      user_pass_base64 = g_base64_encode((guchar *)user_pass, strlen(user_pass));
+      *encoded_out = g_strdup_printf("Basic %s", user_pass_base64);
+   }
+
+   if (username_out != NULL)
+      *username_out = g_steal_pointer(&username);
+
+   if (password_out != NULL)
+      *password_out = g_steal_pointer(&password);
+
+   return TRUE;
+}
+
+/*
+ * _au_get_urls_from_config:
+ * @client_config: (not nullable): Object that holds the configuration key file
+ * @error: Used to raise an error on failure
+ *
+ * Get the keys from the "Server" section of @client_config that specify the
+ * URLs to use.
+ *
+ * Returns: A GHashTable, free with `g_hash_table_unref()`
+ */
+static GHashTable *
+_au_get_urls_from_config(GKeyFile *client_config, GError **error)
+{
+   g_autoptr(GHashTable) urls = NULL;
+   g_auto(GStrv) keys = NULL;
+   gsize i;
+
+   g_return_val_if_fail(client_config != NULL, FALSE);
+
+   urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+   keys = g_key_file_get_keys(client_config, "Server", NULL, error);
+
+   if (keys == NULL)
+      return NULL;
+
+   for (i = 0; keys[i] != NULL; i++) {
+      if (g_str_has_suffix(keys[i], "Url")) {
+         g_autofree gchar *url_value = NULL;
+         url_value = g_key_file_get_string(client_config, "Server", keys[i], error);
+
+         if (url_value == NULL)
+            return NULL;
+
+         g_hash_table_insert(urls, g_strdup(keys[i]), g_steal_pointer(&url_value));
+      }
+   }
+
+   return g_steal_pointer(&urls);
 }
 
 /*
@@ -1529,6 +1631,9 @@ au_atomupd1_impl_new(const gchar *config_preference,
    g_autofree gchar *system_version = NULL;
    g_autofree gchar *manifest_from_config = NULL;
    g_autofree gchar *installed_version = NULL;
+   g_autofree gchar *username = NULL;
+   g_autofree gchar *password = NULL;
+   g_autofree gchar *auth_encoded = NULL;
    g_auto(GStrv) known_variants = NULL;
    g_autoptr(GFile) updates_json_parent = NULL;
    g_autoptr(GFile) branch_file = NULL;
@@ -1575,6 +1680,42 @@ au_atomupd1_impl_new(const gchar *config_preference,
    } else {
       au_atomupd1_set_known_variants((AuAtomupd1 *)atomupd,
                                      (const gchar *const *)known_variants);
+   }
+
+   /* If the config has an HTTP auth, we need to ensure that netrc and Desync
+    * have it too */
+   if (_au_get_http_auth_from_config(client_config, &username, &password,
+                                     &auth_encoded)) {
+      g_autoptr(GHashTable) url_table = NULL;
+      g_autoptr(GList) urls = NULL;
+      const gchar *images_url;
+
+      url_table = _au_get_urls_from_config(client_config, error);
+      if (url_table == NULL) {
+         /* The config file is malformed, bail out */
+         g_warning("Failed to get the list of URLs from %s", atomupd->config_path);
+         return NULL;
+      }
+      urls = g_hash_table_get_values(url_table);
+
+      if (!_au_ensure_urls_in_netrc(AU_NETRC_PATH, urls, username, password, error))
+         return NULL;
+
+      images_url = g_hash_table_lookup(url_table, "ImagesUrl");
+      if (images_url == NULL) {
+         /* The ImagesUrl entry is mandatory for a valid config file */
+         if (error != NULL) {
+            *error = g_error_new(
+               G_IO_ERROR, G_IO_ERROR_FAILED,
+               "The config file \"%s\" doesn't have the expected \"ImagesUrl\" entry",
+               atomupd->config_path);
+         }
+         return NULL;
+      }
+
+      if (!_au_ensure_url_in_desync_conf(AU_DESYNC_CONFIG_PATH, images_url, auth_encoded,
+                                         error))
+         return NULL;
    }
 
    /* This environment variable is used for debugging and automated tests */

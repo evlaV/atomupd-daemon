@@ -69,11 +69,11 @@ executable(
   install_dir: tests_dir
 )
 
-foreach test_name : ['impl', 'manager']
+foreach test_name : ['au-atomupd1-impl', 'impl', 'manager', 'utils']
   exe = executable(
     'test-' + test_name,
-    sources : [test_name + '.c', 'fixture.c', 'services.c'],
-    dependencies : [glib, gio, json_glib],
+    sources : [test_name + '.c', 'fixture.c', 'services.c', atomupd1],
+    dependencies : [glib, gio, gio_unix, json_glib, atomupd1_impl_dep],
     include_directories : project_include_dirs,
     install : get_option('install_tests'),
     install_dir : tests_dir,

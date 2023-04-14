@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2022 Collabora Ltd.
+ * Copyright © 2021-2023 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -41,3 +41,8 @@ G_DECLARE_FINAL_TYPE(
 
 AuAtomupd1 *
 au_atomupd1_impl_new(const gchar *config, const gchar *manifest, GError **error);
+
+gboolean _au_get_http_auth_from_config(GKeyFile *client_config,
+                                       gchar **username_out,
+                                       gchar **password_out,
+                                       gchar **encoded_out);

@@ -56,10 +56,14 @@ install_data(
   install_dir : join_paths(get_option('prefix'), get_option('datadir'), 'dbus-1/system.d')
 )
 
+atomupd1_impl_dep = declare_dependency(
+  sources : ['utils.c', 'au-atomupd1-impl.c'],
+)
+
 executable(
   'atomupd-daemon',
-  sources: ['au-atomupd1-impl.c', 'main.c', atomupd1],
-  dependencies : [glib, gio, gio_unix, json_glib],
+  sources: ['main.c', atomupd1],
+  dependencies : [glib, gio, gio_unix, json_glib, atomupd1_impl_dep],
   install : true,
   install_dir : get_option('prefix') / get_option('libexecdir'),
 )
@@ -67,7 +71,7 @@ executable(
 executable(
   'atomupd-manager',
   sources: ['atomupd-manager.c', 'au-atomupd1-impl.c', atomupd1],
-  dependencies : [glib, gio, gio_unix, json_glib],
+  dependencies : [glib, gio, gio_unix, json_glib, atomupd1_impl_dep],
   install : true,
   install_dir : get_option('prefix') / get_option('libexecdir'),
 )
