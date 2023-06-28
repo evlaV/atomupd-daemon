@@ -343,7 +343,7 @@ static const LaunchCommands launch_commands[] = {
    {
       .command = "switch-variant",
       .argument = "VARIANT",
-      .description = "Check for available OS updates",
+      .description = "Select a different variant",
       .command_function = switch_variant,
    },
 };
@@ -351,7 +351,7 @@ static const LaunchCommands launch_commands[] = {
 /*
  * Creates a string with the commands and their description, e.g.:
  *
- * switch-variant VARIANT    Check for available OS updates
+ * switch-variant VARIANT    Select a different variant
  * [...]
  */
 static gchar *
