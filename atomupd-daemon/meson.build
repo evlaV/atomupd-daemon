@@ -73,5 +73,4 @@ executable(
   sources: ['atomupd-manager.c', 'au-atomupd1-impl.c', atomupd1],
   dependencies : [glib, gio, gio_unix, json_glib, atomupd1_impl_dep],
   install : true,
-  install_dir : get_option('prefix') / get_option('libexecdir'),
 )
