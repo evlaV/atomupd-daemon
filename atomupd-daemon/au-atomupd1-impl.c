@@ -801,8 +801,8 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
       /* In theory when no updates are available we should receive an empty
        * JSON object (i.e. {}). Is it okay to assume no updates or should we
        * throw an error here? */
-      available = g_variant_new("a{sa{sv}}", NULL);
-      available_later = g_variant_new("a{sa{sv}}", NULL);
+      available = g_variant_ref_sink(g_variant_new("a{sa{sv}}", NULL));
+      available_later = g_variant_ref_sink(g_variant_new("a{sa{sv}}", NULL));
       goto success;
    }
 
@@ -819,8 +819,8 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
    if (json_node == NULL) {
       if (error == NULL) {
          /* The helper returned an empty JSON, there are no available updates */
-         available = g_variant_new("a{sa{sv}}", NULL);
-         available_later = g_variant_new("a{sa{sv}}", NULL);
+         available = g_variant_ref_sink(g_variant_new("a{sa{sv}}", NULL));
+         available_later = g_variant_ref_sink(g_variant_new("a{sa{sv}}", NULL));
          goto success;
       } else {
          g_dbus_method_invocation_return_error(
