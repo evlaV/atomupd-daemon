@@ -1733,12 +1733,9 @@ au_atomupd1_impl_new(const gchar *config_preference,
       images_url = g_hash_table_lookup(url_table, "ImagesUrl");
       if (images_url == NULL) {
          /* The ImagesUrl entry is mandatory for a valid config file */
-         if (error != NULL) {
-            *error = g_error_new(
-               G_IO_ERROR, G_IO_ERROR_FAILED,
-               "The config file \"%s\" doesn't have the expected \"ImagesUrl\" entry",
-               atomupd->config_path);
-         }
+         au_throw_error(
+            error, "The config file \"%s\" doesn't have the expected \"ImagesUrl\" entry",
+            atomupd->config_path);
          return NULL;
       }
 
