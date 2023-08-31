@@ -28,6 +28,28 @@
 
 #include "utils.h"
 
+/*
+ * Convenience function that sets @error, if not %NULL.
+ *
+ * Returns: %FALSE, to allow writing the compact `return au_throw_error()`
+ */
+gboolean
+au_throw_error(GError **error, const gchar *format, ...)
+{
+   va_list args;
+
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+   g_return_val_if_fail(format != NULL, FALSE);
+
+   if (error == NULL)
+      return FALSE;
+
+   va_start(args, format);
+   *error = g_error_new_valist(G_IO_ERROR, G_IO_ERROR_FAILED, format, args);
+   va_end(args);
+   return FALSE;
+}
+
 gchar *
 _au_get_host_from_url(const gchar *url)
 {
@@ -103,12 +125,7 @@ _au_ensure_urls_in_netrc(const gchar *netrc_path,
       if (errno == ENOENT) {
          g_debug ("There isn't a netrc file");
       } else {
-         if (error != NULL) {
-            *error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
-                                 "Failed to open the netrc file: %s",
-                                 g_strerror(saved_errno));
-         }
-         return FALSE;
+         return au_throw_error(error, "Failed to open the netrc file: %s", g_strerror(saved_errno));
       }
    }
 
