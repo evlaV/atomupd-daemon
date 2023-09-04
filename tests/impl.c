@@ -653,6 +653,10 @@ test_unexpected_methods(Fixture *f, gconstpointer context)
    _check_message_reply(
       bus, "StartUpdate", "(s)", "20220120.1",
       "It is not possible to start an update before calling \"CheckForUpdates\"");
+   _check_message_reply(bus, "StartUpdate", "(s)", "",
+                        "The provided Buildid is either NULL or empty");
+   _check_message_reply(bus, "StartUpdate", "(s)", "2023",
+                        "Buildid '2023' doesn't follow the expected YYYYMMDD[.N] format");
    _check_message_reply(bus, "PauseUpdate", NULL, NULL,
                         "There isn't an update in progress that can be paused");
    _check_message_reply(bus, "ResumeUpdate", NULL, NULL,

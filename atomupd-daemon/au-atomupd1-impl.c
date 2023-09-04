@@ -1539,6 +1539,13 @@ au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
    AuUpdateStatus current_status;
    gint client_stdout;
 
+   if (!_is_buildid_valid(arg_id, NULL, NULL, &error)) {
+      g_dbus_method_invocation_return_error_literal(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS,
+         error->message);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+   }
+
    current_status = au_atomupd1_get_update_status(object);
    if (current_status == AU_UPDATE_STATUS_IN_PROGRESS ||
        current_status == AU_UPDATE_STATUS_PAUSED) {
