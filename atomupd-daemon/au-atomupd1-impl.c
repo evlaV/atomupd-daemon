@@ -1287,9 +1287,10 @@ cancel_callback(GObject *source_object, GAsyncResult *result, gpointer user_data
    }
 }
 
-static gboolean
-au_atomupd1_impl_handle_cancel_update(AuAtomupd1 *object,
-                                      GDBusMethodInvocation *invocation)
+static void
+au_cancel_update_authorized_cb(AuAtomupd1 *object,
+                               GDBusMethodInvocation *invocation,
+                               gpointer data_pointer)
 {
    g_autoptr(RequestData) data = g_slice_new0(RequestData);
    g_autoptr(GTask) task = NULL;
@@ -1300,7 +1301,7 @@ au_atomupd1_impl_handle_cancel_update(AuAtomupd1 *object,
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "There isn't an update in progress that can be cancelled");
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    /* Remove the previous child watch callback */
@@ -1316,6 +1317,14 @@ au_atomupd1_impl_handle_cancel_update(AuAtomupd1 *object,
 
    g_task_set_task_data(task, GINT_TO_POINTER(self->install_pid), NULL);
    g_task_run_in_thread(task, _au_cancel_async);
+}
+
+static gboolean
+au_atomupd1_impl_handle_cancel_update(AuAtomupd1 *object,
+                                      GDBusMethodInvocation *invocation)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.manage-pending-update",
+                  au_cancel_update_authorized_cb, invocation, NULL, NULL);
 
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
@@ -1376,9 +1385,10 @@ _au_send_signal_to_install_procs(AuAtomupd1Impl *self, int sig, GError **error)
    return TRUE;
 }
 
-static gboolean
-au_atomupd1_impl_handle_pause_update(AuAtomupd1 *object,
-                                     GDBusMethodInvocation *invocation)
+static void
+au_pause_update_authorized_cb(AuAtomupd1 *object,
+                              GDBusMethodInvocation *invocation,
+                              gpointer data_pointer)
 {
    g_autoptr(GError) error = NULL;
    AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
@@ -1387,7 +1397,7 @@ au_atomupd1_impl_handle_pause_update(AuAtomupd1 *object,
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "There isn't an update in progress that can be paused");
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    if (!_au_send_signal_to_install_procs(self, SIGSTOP, &error)) {
@@ -1395,11 +1405,19 @@ au_atomupd1_impl_handle_pause_update(AuAtomupd1 *object,
          g_steal_pointer(&invocation), error->domain, error->code,
          "An error occurred while attempting to pause the installation process: %s",
          error->message);
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    au_atomupd1_set_update_status(object, AU_UPDATE_STATUS_PAUSED);
    au_atomupd1_complete_pause_update(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_pause_update(AuAtomupd1 *object,
+                                     GDBusMethodInvocation *invocation)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.manage-pending-update",
+                  au_pause_update_authorized_cb, invocation, NULL, NULL);
 
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
@@ -1726,9 +1744,10 @@ au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
-static gboolean
-au_atomupd1_impl_handle_resume_update(AuAtomupd1 *object,
-                                      GDBusMethodInvocation *invocation)
+static void
+au_resume_update_authorized_cb(AuAtomupd1 *object,
+                               GDBusMethodInvocation *invocation,
+                               gpointer data_pointer)
 {
    g_autoptr(GError) error = NULL;
    AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
@@ -1737,7 +1756,7 @@ au_atomupd1_impl_handle_resume_update(AuAtomupd1 *object,
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "There isn't a paused update that can be resumed");
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    if (!_au_send_signal_to_install_procs(self, SIGCONT, &error)) {
@@ -1745,11 +1764,19 @@ au_atomupd1_impl_handle_resume_update(AuAtomupd1 *object,
          g_steal_pointer(&invocation), error->domain, error->code,
          "An error occurred while attempting to resume the installation process: %s",
          error->message);
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    au_atomupd1_set_update_status(object, AU_UPDATE_STATUS_IN_PROGRESS);
    au_atomupd1_complete_resume_update(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_resume_update(AuAtomupd1 *object,
+                                      GDBusMethodInvocation *invocation)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.manage-pending-update",
+                  au_resume_update_authorized_cb, invocation, NULL, NULL);
 
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
