@@ -1423,6 +1423,81 @@ child_watch_cb(GPid pid, gint wait_status, gpointer user_data)
    au_start_update_clear((AuAtomupd1Impl *)object);
 }
 
+/*
+ * @buildid: The build ID to validate
+ * @date_out: (out) (optional): Used to return the date of @buildid
+ * @inc_out: (out) (optional): Used to return the incremental number of @buildid
+ * @error: (out) (optional): Used to return an error on failure
+ *
+ * Parse @buildid and perform some sanity checks.
+ * @buildid is expected to have a "date" part that follows the ISO-8601
+ * standard, without hyphens. Optionally, after the date, there is a dot and
+ * an increment. I.e. YYYYMMDD[.N]
+ *
+ * If this standard will ever change, please keep it in sync with the
+ * BuildId class in `steamos-atomupd.git`
+ *
+ * Returns: %TRUE if the @buildid has the expected form
+ */
+gboolean
+_is_buildid_valid(const gchar *buildid, gint64 *date_out, gint64 *inc_out, GError **error)
+{
+   gint64 month = 0;
+   gint64 day = 0;
+   gint64 inc = 0;
+   gint64 date = 0;
+   char *endptr;
+   g_auto(GStrv) requested_parts = NULL;
+   const gchar *date_str;
+   gsize i;
+
+   if (buildid == NULL || g_strcmp0(buildid, "") == 0)
+      return au_throw_error(error, "The provided Buildid is either NULL or empty");
+
+   requested_parts = g_strsplit(buildid, ".", 2);
+   date_str = requested_parts[0];
+
+   /* The date is expected to be in the form of YYYYMMDD, which
+    * g_date_time_new_from_iso8601() doesn't cover because without the time part.
+    * Instead, we parse it ourselves. */
+
+   date = g_ascii_strtoll(date_str, &endptr, 10);
+   if (date < 0 || date > G_MAXINT || endptr == date_str || *endptr != '\0') {
+      return au_throw_error(
+         error, "Buildid '%s' doesn't follow the expected YYYYMMDD[.N] format", buildid);
+   }
+
+   if (strlen(date_str) != 8) {
+      return au_throw_error(
+         error, "Buildid '%s' doesn't follow the expected YYYYMMDD[.N] format", buildid);
+   }
+   for (i = 4; i < 6; i++) {
+      month = month * 10 + (date_str[i] - '0');
+   }
+   for (i = 6; i < 8; i++) {
+      day = day * 10 + (date_str[i] - '0');
+   }
+
+   if (month > 12 || day > 31)
+      return au_throw_error(error, "The date in the buildid '%s' is not valid", buildid);
+
+   if (requested_parts[1] != NULL) {
+      inc = g_ascii_strtoll(requested_parts[1], &endptr, 10);
+
+      if (inc < 0 || inc > G_MAXINT || endptr == requested_parts[1] || *endptr != '\0') {
+         return au_throw_error(
+            error, "The increment part of the buildid is unexpected: '%s'", buildid);
+      }
+   }
+
+   if (date_out != NULL)
+      *date_out = date;
+   if (inc_out != NULL)
+      *inc_out = inc;
+
+   return TRUE;
+}
+
 static gboolean
 au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
                                      GDBusMethodInvocation *invocation,
@@ -1752,7 +1827,10 @@ au_atomupd1_impl_new(const gchar *config_preference,
    au_atomupd1_set_variant((AuAtomupd1 *)atomupd, expanded_variant);
 
    system_version = _au_get_current_system_version(atomupd->manifest_path, error);
+   /* Quit early if the current system has an unexpected build ID */
    if (system_version == NULL)
+      return NULL;
+   if (!_is_buildid_valid(system_version, NULL, NULL, error))
       return NULL;
 
    au_atomupd1_set_current_version((AuAtomupd1 *)atomupd, system_version);
