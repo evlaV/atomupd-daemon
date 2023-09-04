@@ -35,6 +35,7 @@
 
 #include "atomupd-daemon/utils.h"
 #include "fixture.h"
+#include "mock-defines.h"
 #include "services.h"
 
 #define _skip_if_daemon_is_running(_bus, _error)                                         \
@@ -238,7 +239,7 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    g_clear_pointer(&output, g_free);
 
    g_debug("Starting an update that is expected to complete in 1.5 seconds");
-   output = _au_execute_manager("update", "mock-success", f->test_envp, &error);
+   output = _au_execute_manager("update", MOCK_SUCCESS, f->test_envp, &error);
    g_assert_no_error(error);
    g_assert_nonnull(strstr(output, "Update completed"));
 

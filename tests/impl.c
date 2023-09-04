@@ -35,6 +35,7 @@
 
 #include "atomupd-daemon/utils.h"
 #include "fixture.h"
+#include "mock-defines.h"
 #include "services.h"
 
 #define _send_atomupd_message_with_null_reply(_bus, _method, _type, _content)            \
@@ -680,7 +681,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    rauc_proc = au_tests_launch_rauc_service(f->rauc_pid_path);
 
    g_debug("Starting an update that is expected to complete in 1.5 seconds");
-   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", "mock-success");
+   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_SUCCESS);
 
    /* The update is expected to complete in 1.5 seconds. Wait for 2x as much because
     * there might be a slight delay before the mock process actually receives this
@@ -693,11 +694,11 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    g_variant_get(reply, "u", &status);
    g_assert_cmpuint(status, ==, AU_UPDATE_STATUS_SUCCESSFUL);
 
-   /* With "mock-infinite" we simulate an update that is in progress.
+   /* With MOCK_INFINITE we simulate an update that is in progress.
     * To make it more predictable, it will always print a progress of
     * "16.08% 06m35s" until we cancel it with a SIGTERM. */
    g_debug("Starting infinite update");
-   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", "mock-infinite");
+   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_INFINITE);
 
    g_usleep(2 * default_wait);
    time_now = g_date_time_new_now_utc();
@@ -706,7 +707,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    g_assert_cmpuint(atomupd_properties->estimated_completion_time, >,
                     g_date_time_to_unix(time_now));
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_IN_PROGRESS);
-   g_assert_cmpstr(atomupd_properties->update_version, ==, "mock-infinite");
+   g_assert_cmpstr(atomupd_properties->update_version, ==, MOCK_INFINITE);
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
 
    _send_atomupd_message_with_null_reply(bus, "PauseUpdate", NULL, NULL);
@@ -729,7 +730,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    g_assert_cmpuint(atomupd_properties->estimated_completion_time, >,
                     g_date_time_to_unix(time_now));
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_CANCELLED);
-   g_assert_cmpstr(atomupd_properties->update_version, ==, "mock-infinite");
+   g_assert_cmpstr(atomupd_properties->update_version, ==, MOCK_INFINITE);
    /* Assert that the CancelUpdate successfully killed the rauc service */
    g_assert_true(g_subprocess_get_if_exited(rauc_proc));
 
@@ -759,7 +760,7 @@ test_progress_default(Fixture *f, gconstpointer context)
    _call_check_for_updates(bus, NULL, NULL);
 
    g_debug("Starting an update that is expected to complete in 1.5 seconds");
-   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", "mock-success");
+   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_SUCCESS);
    /* Wait for 2x as much to ensure it really finished */
    g_usleep(3 * G_USEC_PER_SEC);
 
@@ -768,10 +769,10 @@ test_progress_default(Fixture *f, gconstpointer context)
    g_assert_true(progress == 100);
    g_clear_pointer(&reply, g_variant_unref);
 
-   /* With "mock-stuck" we simulate an update that is stuck and never prints progress
+   /* With MOCK_STUCK we simulate an update that is stuck and never prints progress
     * updates. */
    g_debug("Starting stuck update");
-   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", "mock-stuck");
+   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_STUCK);
    g_usleep(default_wait);
 
    reply = _get_atomupd_property(bus, "ProgressPercentage");
@@ -808,7 +809,7 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    reply = _send_atomupd_message(bus, "CheckForUpdates", "(a{sv})", NULL);
    g_assert_nonnull(reply);
 
-   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", "mock-infinite");
+   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_INFINITE);
    _send_atomupd_message_with_null_reply(bus, "PauseUpdate", NULL, NULL);
    /* Pausing again should not be allowed */
    _check_message_reply(bus, "PauseUpdate", NULL, NULL,

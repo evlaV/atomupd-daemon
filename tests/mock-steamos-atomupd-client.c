@@ -31,6 +31,8 @@
 #include <glib.h>
 #include <json-glib/json-glib.h>
 
+#include "mock-defines.h"
+
 static volatile sig_atomic_t stopped = FALSE;
 
 static gchar *opt_config = NULL;
@@ -105,7 +107,7 @@ main(int argc, char **argv)
 
    setbuf(stdout, NULL);
 
-   if (g_str_equal("mock-success", opt_update_version)) {
+   if (g_str_equal(opt_update_version, MOCK_SUCCESS)) {
       /* Simulates an update that after 1.5 seconds successfully completes */
       printf("0.00%%\n");
       g_usleep(delay);
@@ -116,7 +118,7 @@ main(int argc, char **argv)
       printf("100%%\n");
 
       return EXIT_SUCCESS;
-   } else if (g_str_equal("mock-infinite", opt_update_version)) {
+   } else if (g_str_equal(opt_update_version, MOCK_INFINITE)) {
       /* Simulate a very long update. To make it consistent for the testing
        * it always prints the same progress percentage and estimation. */
       while (!stopped) {
@@ -125,7 +127,7 @@ main(int argc, char **argv)
       }
       printf("17.50%% 05m50s\n");
       return EXIT_SUCCESS;
-   } else if (g_str_equal("mock-stuck", opt_update_version)) {
+   } else if (g_str_equal(opt_update_version, MOCK_STUCK)) {
       /* Simulate an update that takes a very long time to start.
        * To make it consistent for the testing, we never print a single
        * progress update */
