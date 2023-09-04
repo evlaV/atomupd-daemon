@@ -36,6 +36,7 @@ typedef struct {
    /* Text file where we store the mock RAUC service pid */
    gchar *rauc_pid_path;
    GStrv test_envp;
+   GPid polkit_pid;
 } Fixture;
 
 void

@@ -56,6 +56,11 @@ install_data(
   install_dir : join_paths(get_option('prefix'), get_option('datadir'), 'dbus-1/system.d')
 )
 
+install_data(
+  'com.steampowered.Atomupd1.policy',
+  install_dir : join_paths(get_option('prefix'), get_option('datadir'), 'polkit-1/actions')
+)
+
 atomupd1_impl_dep = declare_dependency(
   sources : ['utils.c', 'au-atomupd1-impl.c'],
 )
@@ -63,7 +68,7 @@ atomupd1_impl_dep = declare_dependency(
 executable(
   'atomupd-daemon',
   sources: ['main.c', atomupd1],
-  dependencies : [glib, gio, gio_unix, json_glib, atomupd1_impl_dep],
+  dependencies : [glib, gio, gio_unix, json_glib, polkit_gobject, atomupd1_impl_dep],
   install : true,
   install_dir : get_option('prefix') / get_option('libexecdir'),
 )
@@ -71,6 +76,6 @@ executable(
 executable(
   'atomupd-manager',
   sources: ['atomupd-manager.c', 'au-atomupd1-impl.c', atomupd1],
-  dependencies : [glib, gio, gio_unix, json_glib, atomupd1_impl_dep],
+  dependencies : [glib, gio, gio_unix, json_glib, polkit_gobject, atomupd1_impl_dep],
   install : true,
 )

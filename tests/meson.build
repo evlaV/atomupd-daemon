@@ -73,7 +73,7 @@ foreach test_name : ['au-atomupd1-impl', 'impl', 'manager', 'utils']
   exe = executable(
     'test-' + test_name,
     sources : [test_name + '.c', 'fixture.c', 'mock-defines.h', 'services.c', atomupd1],
-    dependencies : [glib, gio, gio_unix, json_glib, atomupd1_impl_dep],
+    dependencies : [glib, gio, gio_unix, json_glib, polkit_gobject, atomupd1_impl_dep],
     include_directories : project_include_dirs,
     install : get_option('install_tests'),
     install_dir : tests_dir,
@@ -81,7 +81,9 @@ foreach test_name : ['au-atomupd1-impl', 'impl', 'manager', 'utils']
 
   if get_option('using_valgrind')
     # Increase the timeout because valgrind considerably slows down the execution time
-    test_timeout = 500
+    # Empirically, a 5x the normal timeout should be enough, but we triple that to
+    # account for the very slow mock polkit start time
+    test_timeout = 1500
   else
     test_timeout = 100
   endif

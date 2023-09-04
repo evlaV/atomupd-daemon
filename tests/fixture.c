@@ -30,12 +30,102 @@
 
 #include "fixture.h"
 
+static GPid
+_start_mock_polkit(GDBusConnection *system_bus)
+{
+   g_autoptr(GVariant) ping_reply = NULL;
+   g_autoptr(GError) error = NULL;
+   gsize i = 0;
+   gulong wait_for_polkit = 0.2 * G_USEC_PER_SEC;
+   GPid polkit_pid = -1;
+
+   /* When using Valgrind we increase the wait time 20x because the execution
+    * is much slower, especially when running with the Gitlab CI. */
+   if (g_getenv("AU_TEST_VALGRIND") != NULL)
+      wait_for_polkit = 20 * wait_for_polkit;
+
+   const gchar *polkit_argv[] = {
+      "/usr/bin/python3", "-m", "dbusmock", "--template", "polkitd", NULL,
+   };
+
+   g_spawn_async(NULL, (gchar **)polkit_argv, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+                 &polkit_pid, &error);
+
+   g_assert_no_error(error);
+
+   /* Wait for the mock polkit D-Bus object to start */
+   while (ping_reply == NULL && i < 15) {
+      g_usleep(wait_for_polkit);
+
+      if (i > 0)
+         g_debug("Waiting for for the mock polkit to start: %li", i);
+
+      ping_reply = g_dbus_connection_call_sync(
+         system_bus, "org.freedesktop.PolicyKit1",
+         "/org/freedesktop/PolicyKit1/Authority", "org.freedesktop.DBus.Peer", "Ping",
+         g_variant_new("()"), /* consumed */
+         NULL, G_DBUS_CALL_FLAGS_NO_AUTO_START, 1000, NULL, NULL);
+
+      i++;
+   }
+
+   g_assert(ping_reply != NULL);
+
+   g_debug("Mock Polkit started");
+
+   return polkit_pid;
+}
+
+static void
+_stop_mock_polkit(GPid polkit_pid)
+{
+   if (polkit_pid < 1)
+      return;
+
+   kill(polkit_pid, SIGTERM);
+   g_usleep(0.5 * G_USEC_PER_SEC);
+   /* Ensure that the polkit service is really dead */
+   kill(polkit_pid, SIGKILL);
+   waitpid(polkit_pid, NULL, 0);
+}
+
+static void
+_mock_polkit_set_allowed(const gchar **allowed, gsize n_elements)
+{
+   g_autoptr(GDBusMessage) message = NULL;
+   g_autoptr(GDBusMessage) reply = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+   GVariant *elements_input = NULL; /* floating */
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
+   g_assert_no_error(error);
+
+   message = g_dbus_message_new_method_call("org.freedesktop.PolicyKit1",
+                                            "/org/freedesktop/PolicyKit1/Authority",
+                                            "org.freedesktop.DBus.Mock", "SetAllowed");
+
+   elements_input = g_variant_new_strv(allowed, n_elements);
+
+   g_dbus_message_set_body(message, g_variant_new_tuple(&elements_input, 1));
+
+   reply = g_dbus_connection_send_message_with_reply_sync(
+      bus, message, G_DBUS_SEND_MESSAGE_FLAGS_NONE, 3000, NULL, NULL, &error);
+   g_assert_no_error(error);
+}
+
+
 void
 au_tests_setup(Fixture *f, gconstpointer context)
 {
    int fd;
    const char *argv0 = context;
+   g_autoptr(GDBusConnection) system_bus = NULL;
    g_autoptr(GError) error = NULL;
+
+   const gchar *polkit_allow_all[] = {
+      "com.steampowered.atomupd1.check-for-updates",
+   };
 
    f->srcdir = g_strdup(g_getenv("G_TEST_SRCDIR"));
    f->builddir = g_strdup(g_getenv("G_TEST_BUILDDIR"));
@@ -66,6 +156,11 @@ au_tests_setup(Fixture *f, gconstpointer context)
       g_environ_setenv(f->test_envp, "AU_UPDATES_JSON_FILE", f->updates_json, TRUE);
    f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_MOCK_RAUC_SERVICE_PID",
                                    f->rauc_pid_path, TRUE);
+
+   system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
+   g_assert_no_error(error);
+   f->polkit_pid = _start_mock_polkit(system_bus);
+   _mock_polkit_set_allowed(polkit_allow_all, G_N_ELEMENTS(polkit_allow_all));
 }
 
 void
@@ -82,4 +177,6 @@ au_tests_teardown(Fixture *f, gconstpointer context)
 
    g_unlink(f->rauc_pid_path);
    g_free(f->rauc_pid_path);
+
+   _stop_mock_polkit(f->polkit_pid);
 }

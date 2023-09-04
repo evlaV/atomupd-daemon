@@ -31,6 +31,7 @@
 #include <glib-unix.h>
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <polkit/polkit.h>
 
 #include "au-atomupd1-impl.h"
 #include "utils.h"
@@ -59,6 +60,7 @@ const gchar *AU_NETRC_PATH = "/root/.netrc";
 struct _AuAtomupd1Impl {
    AuAtomupd1Skeleton parent_instance;
 
+   PolkitAuthority *authority;
    GPid install_pid;
    guint install_event_source;
    gchar *config_path;
@@ -567,6 +569,112 @@ _au_get_current_system_build_id(const gchar *manifest, GError **error)
    return _au_get_string_from_manifest(manifest, "buildid", error);
 }
 
+typedef void (*AuthorizedCallback) (AuAtomupd1 *object,
+                                    GDBusMethodInvocation *invocation,
+                                    gpointer data);
+
+typedef struct {
+   AuAtomupd1 *object;
+   AuthorizedCallback authorized_cb;
+   GDBusMethodInvocation *invocation;
+   gpointer data;
+   GDestroyNotify destroy_notify;
+} CheckAuthData;
+
+static CheckAuthData *
+_au_check_auth_data_new(AuAtomupd1 *object,
+                        AuthorizedCallback authorized_cb,
+                        GDBusMethodInvocation *invocation,
+                        gpointer authorized_cb_data,
+                        GDestroyNotify destroy_notify)
+{
+   CheckAuthData *data = g_slice_new0(CheckAuthData);
+   data->object = g_object_ref(object);
+   data->invocation = invocation;
+   data->authorized_cb = authorized_cb;
+   data->data = authorized_cb_data;
+   data->destroy_notify = destroy_notify;
+
+   return data;
+}
+
+static void
+_au_check_auth_data_free(CheckAuthData *self)
+{
+   g_object_unref(self->object);
+
+   if (self->invocation != NULL)
+      g_dbus_method_invocation_return_error(g_steal_pointer(&self->invocation),
+                                            G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                                            "Request was freed without being handled");
+
+   if (self->destroy_notify)
+      (*self->destroy_notify)(self->data);
+
+   g_slice_free(CheckAuthData, self);
+}
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(CheckAuthData, _au_check_auth_data_free)
+
+static void
+_check_auth_cb(PolkitAuthority *authority, GAsyncResult *res, gpointer data)
+{
+   g_autoptr(CheckAuthData) check_auth_data = data;
+   g_autoptr(GError) error = NULL;
+   PolkitAuthorizationResult *authorization;
+
+   authorization = polkit_authority_check_authorization_finish(authority, res, &error);
+
+   if (authorization == NULL) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&check_auth_data->invocation), G_DBUS_ERROR, G_DBUS_ERROR_ACCESS_DENIED,
+         "An error occurred while checking for authorizations: %s", error->message);
+      return;
+   }
+
+   if (!polkit_authorization_result_get_is_authorized(authorization)) {
+      g_dbus_method_invocation_return_error(g_steal_pointer(&check_auth_data->invocation),
+                                            G_DBUS_ERROR, G_DBUS_ERROR_ACCESS_DENIED,
+                                            "User is not allowed to execute this method");
+      return;
+   }
+
+   (*check_auth_data->authorized_cb)(check_auth_data->object,
+                                     g_steal_pointer(&check_auth_data->invocation),
+                                     check_auth_data->data);
+}
+
+static void
+_au_check_auth(AuAtomupd1 *object,
+               const gchar *action_id,
+               AuthorizedCallback authorized_cb,
+               GDBusMethodInvocation *invocation,
+               gpointer authorized_cb_data,
+               GDestroyNotify destroy_notify)
+{
+   GDBusMessage *message = NULL; /* borrowed */
+   GDBusMessageFlags message_flags;
+   PolkitCheckAuthorizationFlags flags = POLKIT_CHECK_AUTHORIZATION_FLAGS_NONE;
+   g_autoptr(PolkitSubject) subject = NULL;
+   g_autoptr(CheckAuthData) data = NULL;
+   AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
+
+   data = _au_check_auth_data_new(object, authorized_cb, invocation, authorized_cb_data,
+                                  destroy_notify);
+
+   subject = polkit_system_bus_name_new(g_dbus_method_invocation_get_sender(invocation));
+
+   message = g_dbus_method_invocation_get_message(invocation);
+   message_flags = g_dbus_message_get_flags(message);
+
+   if (message_flags & G_DBUS_MESSAGE_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION)
+      flags |= POLKIT_CHECK_AUTHORIZATION_FLAGS_ALLOW_USER_INTERACTION;
+
+   polkit_authority_check_authorization(self->authority, subject, action_id, NULL, flags,
+                                        NULL, (GAsyncReadyCallback)_check_auth_cb,
+                                        g_steal_pointer(&data));
+}
+
 /*
  * _au_get_current_system_version:
  * @manifest: (not nullable): Path to the JSON manifest file
@@ -911,11 +1019,12 @@ au_atomupd1_impl_handle_switch_to_variant(AuAtomupd1 *object,
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
-static gboolean
-au_atomupd1_impl_handle_check_for_updates(AuAtomupd1 *object,
-                                          GDBusMethodInvocation *invocation,
-                                          GVariant *arg_options)
+static void
+au_check_for_updates_authorized_cb(AuAtomupd1 *object,
+                                   GDBusMethodInvocation *invocation,
+                                   gpointer arg_options_pointer)
 {
+   GVariant *arg_options = arg_options_pointer;
    const gchar *variant = NULL;
    const gchar *key = NULL;
    GVariant *value = NULL;
@@ -926,8 +1035,8 @@ au_atomupd1_impl_handle_check_for_updates(AuAtomupd1 *object,
    g_autoptr(GError) error = NULL;
    AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
 
-   g_return_val_if_fail(self->config_path != NULL, FALSE);
-   g_return_val_if_fail(self->manifest_path != NULL, FALSE);
+   g_return_if_fail(self->config_path != NULL);
+   g_return_if_fail(self->manifest_path != NULL);
 
    g_variant_iter_init(&iter, arg_options);
 
@@ -936,7 +1045,7 @@ au_atomupd1_impl_handle_check_for_updates(AuAtomupd1 *object,
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "The argument '%s' is not a valid option", key);
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    variant = au_atomupd1_get_variant(object);
@@ -965,12 +1074,22 @@ au_atomupd1_impl_handle_check_for_updates(AuAtomupd1 *object,
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "An error occurred calling the 'steamos-atomupd-client' helper: %s",
          error->message);
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    data->req->invocation = g_steal_pointer(&invocation);
    data->req->object = g_object_ref(object);
    g_child_watch_add(child_pid, on_query_completed, g_steal_pointer(&data));
+}
+
+static gboolean
+au_atomupd1_impl_handle_check_for_updates(AuAtomupd1 *object,
+                                          GDBusMethodInvocation *invocation,
+                                          GVariant *arg_options)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.check-for-updates",
+                  au_check_for_updates_authorized_cb, invocation,
+                  g_variant_ref(arg_options), (GDestroyNotify)g_variant_unref);
 
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
@@ -1686,6 +1805,7 @@ au_atomupd1_impl_finalize(GObject *object)
 
    g_free(self->config_path);
    g_free(self->manifest_path);
+   g_clear_object(&self->authority);
 
    // Keep the update file, to be able to reuse it later on
    g_clear_object(&self->updates_json_file);
@@ -1755,6 +1875,10 @@ au_atomupd1_impl_new(const gchar *config_preference,
    gint64 rauc_pid = -1;
    AuAtomupd1Impl *atomupd = g_object_new(AU_TYPE_ATOMUPD1_IMPL, NULL);
    g_autoptr(GKeyFile) client_config = g_key_file_new();
+
+   atomupd->authority = polkit_authority_get_sync(NULL, error);
+   if (atomupd->authority == NULL)
+      return NULL;
 
    if (config_preference != NULL)
       atomupd->config_path = g_strdup(config_preference);
