@@ -5,7 +5,9 @@ variables:
     json-glib
     meson
     ninja
+    polkit
     valgrind
+    python-dbusmock
 
 stages:
   - build
@@ -25,6 +27,8 @@ stages:
 
       # By setting this env var we can start new D-Bus services
       export DBUS_SESSION_BUS_ADDRESS=`dbus-daemon --fork --config-file=/usr/share/dbus-1/session.conf --print-address`
+      # A new system bus is needed for the mock polkit
+      export DBUS_SYSTEM_BUS_ADDRESS=`dbus-daemon --fork --config-file=ci/dbus_system.conf --print-address`
 
       export CC=${COMPILER}
       export CXX=${COMPILER}++

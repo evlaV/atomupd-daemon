@@ -138,6 +138,8 @@ json_glib = dependency(
   version : '>= 1.6.0',
 )
 
+polkit_gobject = dependency('polkit-gobject-1')
+
 project_include_dirs = include_directories(
   '.',
 )
