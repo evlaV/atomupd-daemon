@@ -30,6 +30,7 @@ atomupd1 = gnome.gdbus_codegen(
 
 conf_data = configuration_data()
 conf_data.set('libexecdir', get_option('prefix') / get_option('libexecdir'))
+conf_data.set_quoted('authorized_user', get_option('authorized_user'))
 
 systemdsystemunitdir = get_option('systemdsystemunitdir')
 if systemdsystemunitdir == ''
@@ -49,6 +50,13 @@ configure_file(
   output : 'atomupd.service',
   configuration : conf_data,
   install_dir : systemdsystemunitdir,
+)
+
+configure_file(
+  input : 'com.steampowered.Atomupd1.rules.in',
+  output : 'com.steampowered.Atomupd1.rules',
+  configuration : conf_data,
+  install_dir : join_paths(get_option('prefix'), get_option('datadir'), 'polkit-1/rules.d')
 )
 
 install_data(

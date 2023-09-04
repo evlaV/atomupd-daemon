@@ -126,6 +126,7 @@ au_tests_setup(Fixture *f, gconstpointer context)
    const gchar *polkit_allow_all[] = {
       "com.steampowered.atomupd1.check-for-updates",
       "com.steampowered.atomupd1.manage-pending-update",
+      "com.steampowered.atomupd1.switch-to-variant",
    };
 
    f->srcdir = g_strdup(g_getenv("G_TEST_SRCDIR"));

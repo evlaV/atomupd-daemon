@@ -1,0 +1,12 @@
+polkit.addRule(function(action, subject) {
+    if (
+        subject.user === @authorized_user@
+        && subject.active == true
+        && subject.local == true
+        && action.id === "com.steampowered.atomupd1.switch-to-variant"
+    ) {
+        return polkit.Result.YES;
+   }
+
+    return polkit.Result.NOT_HANDLED;
+});

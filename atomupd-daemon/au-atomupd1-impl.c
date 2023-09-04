@@ -966,11 +966,12 @@ success:
                                           available, available_later);
 }
 
-static gboolean
-au_atomupd1_impl_handle_switch_to_variant(AuAtomupd1 *object,
-                                          GDBusMethodInvocation *invocation,
-                                          const gchar *arg_variant)
+static void
+au_switch_update_authorized_cb(AuAtomupd1 *object,
+                               GDBusMethodInvocation *invocation,
+                               gpointer arg_variant_pointer)
 {
+   gchar *arg_variant = arg_variant_pointer;
    g_autofree gchar *contracted_variant = NULL;
    g_autoptr(GError) error = NULL;
 
@@ -981,12 +982,22 @@ au_atomupd1_impl_handle_switch_to_variant(AuAtomupd1 *object,
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "An error occurred while storing the chosen variant: %s", error->message);
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    _au_set_variant(object, arg_variant);
 
    au_atomupd1_complete_switch_to_variant(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_switch_to_variant(AuAtomupd1 *object,
+                                          GDBusMethodInvocation *invocation,
+                                          const gchar *arg_variant)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.switch-to-variant",
+                  au_switch_update_authorized_cb, invocation, g_strdup(arg_variant),
+                  g_free);
 
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }

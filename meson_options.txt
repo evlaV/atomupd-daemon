@@ -42,3 +42,10 @@ option(
   value : 'com.steampowered.Atomupd1',
   description : 'Interface of the Atomupd1 API. Usually this is the same value as the bus name.',
 )
+
+option(
+  'authorized_user',
+  type : 'string',
+  value : 'deck',
+  description : 'User that will be authorized to fully interact with the API without admin authentication',
+)
