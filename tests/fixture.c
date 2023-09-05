@@ -89,8 +89,8 @@ _stop_mock_polkit(GPid polkit_pid)
    waitpid(polkit_pid, NULL, 0);
 }
 
-static void
-_mock_polkit_set_allowed(const gchar **allowed, gsize n_elements)
+void
+mock_polkit_set_allowed(const gchar **allowed, gsize n_elements)
 {
    g_autoptr(GDBusMessage) message = NULL;
    g_autoptr(GDBusMessage) reply = NULL;
@@ -164,7 +164,7 @@ au_tests_setup(Fixture *f, gconstpointer context)
    system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
    g_assert_no_error(error);
    f->polkit_pid = _start_mock_polkit(system_bus);
-   _mock_polkit_set_allowed(polkit_allow_all, G_N_ELEMENTS(polkit_allow_all));
+   mock_polkit_set_allowed(polkit_allow_all, G_N_ELEMENTS(polkit_allow_all));
 }
 
 void

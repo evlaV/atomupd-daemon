@@ -43,3 +43,5 @@ void
 au_tests_setup(Fixture *f, gconstpointer context);
 void
 au_tests_teardown(Fixture *f, gconstpointer context);
+void
+mock_polkit_set_allowed(const gchar **allowed, gsize n_elements);

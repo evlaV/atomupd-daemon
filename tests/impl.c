@@ -1054,6 +1054,37 @@ test_switch_variant(Fixture *f, gconstpointer context)
    }
 }
 
+/*
+ * When the user is not authorized by polkit we should not be able
+ * to call the API methods.
+ */
+static void
+test_unauthorized(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   const gchar *allowed[] = {};
+   const gchar *expected_reply = "User is not allowed to execute this method";
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   daemon_proc =
+      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+
+   mock_polkit_set_allowed(allowed, 0);
+
+   _check_message_reply(bus, "CheckForUpdates", "(a{sv})", NULL, expected_reply);
+   _check_message_reply(bus, "SwitchToVariant", "(s)", "rel", expected_reply);
+   _check_message_reply(bus, "StartUpdate", "(s)", MOCK_SUCCESS, expected_reply);
+   _check_message_reply(bus, "PauseUpdate", NULL, NULL, expected_reply);
+   _check_message_reply(bus, "ResumeUpdate", NULL, NULL, expected_reply);
+   _check_message_reply(bus, "CancelUpdate", NULL, NULL, expected_reply);
+
+   au_tests_stop_daemon_service(daemon_proc);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1077,6 +1108,7 @@ main(int argc, char **argv)
    test_add("/daemon/restarted_service", test_restarted_service);
    test_add("/daemon/pending_reboot_check", test_pending_reboot_check);
    test_add("/daemon/switch_variant", test_switch_variant);
+   test_add("/daemon/test_unauthorized", test_unauthorized);
 
    ret = g_test_run();
    return ret;
