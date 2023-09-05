@@ -67,6 +67,8 @@ struct _AuAtomupd1Impl {
    GFileMonitor *variant_monitor;
    gulong changed_id;
    GDataInputStream *start_update_stdout_stream;
+   gint64 buildid_date;
+   gint64 buildid_increment;
 };
 
 typedef struct {
@@ -566,9 +568,9 @@ _au_get_current_system_version(const gchar *manifest, GError **error)
    return _au_get_string_from_manifest(manifest, "buildid", error);
 }
 
-typedef void (*AuthorizedCallback) (AuAtomupd1 *object,
-                                    GDBusMethodInvocation *invocation,
-                                    gpointer data);
+typedef void (*AuthorizedCallback)(AuAtomupd1 *object,
+                                   GDBusMethodInvocation *invocation,
+                                   gpointer data);
 
 typedef struct {
    AuAtomupd1 *object;
@@ -624,7 +626,8 @@ _check_auth_cb(PolkitAuthority *authority, GAsyncResult *res, gpointer data)
 
    if (authorization == NULL) {
       g_dbus_method_invocation_return_error(
-         g_steal_pointer(&check_auth_data->invocation), G_DBUS_ERROR, G_DBUS_ERROR_ACCESS_DENIED,
+         g_steal_pointer(&check_auth_data->invocation), G_DBUS_ERROR,
+         G_DBUS_ERROR_ACCESS_DENIED,
          "An error occurred while checking for authorizations: %s", error->message);
       return;
    }
@@ -1646,11 +1649,12 @@ _is_buildid_valid(const gchar *buildid, gint64 *date_out, gint64 *inc_out, GErro
    return TRUE;
 }
 
-static gboolean
-au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
-                                     GDBusMethodInvocation *invocation,
-                                     const gchar *arg_id)
+static void
+au_start_update_authorized_cb(AuAtomupd1 *object,
+                              GDBusMethodInvocation *invocation,
+                              gpointer arg_id_pointer)
 {
+   const gchar *arg_id = arg_id_pointer;
    AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
    g_autoptr(GPtrArray) argv = NULL;
    g_autoptr(GFileIOStream) stream = NULL;
@@ -1659,13 +1663,6 @@ au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
    AuUpdateStatus current_status;
    gint client_stdout;
 
-   if (!_is_buildid_valid(arg_id, NULL, NULL, &error)) {
-      g_dbus_method_invocation_return_error_literal(
-         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS,
-         error->message);
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
-   }
-
    current_status = au_atomupd1_get_update_status(object);
    if (current_status == AU_UPDATE_STATUS_IN_PROGRESS ||
        current_status == AU_UPDATE_STATUS_PAUSED) {
@@ -1673,7 +1670,7 @@ au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
                                             G_DBUS_ERROR_FAILED,
                                             "Failed to start a new update because one "
                                             "is already in progress");
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    if (!g_file_query_exists(self->updates_json_file, NULL)) {
@@ -1681,7 +1678,7 @@ au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
                                             G_DBUS_ERROR_FAILED,
                                             "It is not possible to start an update "
                                             "before calling \"CheckForUpdates\"");
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    au_atomupd1_set_update_version(object, arg_id);
@@ -1701,14 +1698,14 @@ au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "Failed to create a copy of the JSON update file %s", error->message);
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
    if (!g_file_copy(self->updates_json_file, self->updates_json_copy,
                     G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, &error)) {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "Failed to create a copy of the JSON update file %s", error->message);
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    argv = g_ptr_array_new_with_free_func(g_free);
@@ -1733,7 +1730,7 @@ au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "Failed to launch the \"steamos-atomupd-client\" helper: %s", error->message);
-      return G_DBUS_METHOD_INVOCATION_HANDLED;
+      return;
    }
 
    unix_stream = g_unix_input_stream_new(client_stdout, TRUE);
@@ -1751,6 +1748,35 @@ au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
                                             NULL);
 
    au_atomupd1_complete_start_update(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
+                                     GDBusMethodInvocation *invocation,
+                                     const gchar *arg_id)
+{
+   AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
+   gint64 request_buildid_date;
+   gint64 request_buildid_increment;
+   const gchar *action_id = "com.steampowered.atomupd1.start-upgrade";
+   g_autoptr(GError) error = NULL;
+
+   if (!_is_buildid_valid(arg_id, &request_buildid_date, &request_buildid_increment,
+                          &error)) {
+      g_dbus_method_invocation_return_error_literal(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS,
+         error->message);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+   }
+
+   if (request_buildid_date < self->buildid_date ||
+       (request_buildid_date == self->buildid_date &&
+        request_buildid_increment < self->buildid_increment)) {
+      action_id = "com.steampowered.atomupd1.start-downgrade";
+   }
+
+   _au_check_auth(object, action_id, au_start_update_authorized_cb, invocation,
+                  g_strdup(arg_id), g_free);
 
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
@@ -1999,7 +2025,8 @@ au_atomupd1_impl_new(const gchar *config_preference,
    /* Quit early if the current system has an unexpected build ID */
    if (system_version == NULL)
       return NULL;
-   if (!_is_buildid_valid(system_version, NULL, NULL, error))
+   if (!_is_buildid_valid(system_version, &atomupd->buildid_date,
+                          &atomupd->buildid_increment, error))
       return NULL;
 
    au_atomupd1_set_current_version((AuAtomupd1 *)atomupd, system_version);

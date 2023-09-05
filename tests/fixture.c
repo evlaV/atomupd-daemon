@@ -126,6 +126,8 @@ au_tests_setup(Fixture *f, gconstpointer context)
    const gchar *polkit_allow_all[] = {
       "com.steampowered.atomupd1.check-for-updates",
       "com.steampowered.atomupd1.manage-pending-update",
+      "com.steampowered.atomupd1.start-downgrade",
+      "com.steampowered.atomupd1.start-upgrade",
       "com.steampowered.atomupd1.switch-to-variant",
    };
 

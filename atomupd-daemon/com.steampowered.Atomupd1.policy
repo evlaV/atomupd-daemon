@@ -27,6 +27,26 @@
     </defaults>
   </action>
 
+  <action id="com.steampowered.atomupd1.start-downgrade">
+    <description>Apply an update that downgrades the system build</description>
+    <icon_name>package-x-generic</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="com.steampowered.atomupd1.start-upgrade">
+    <description>Apply a system update</description>
+    <icon_name>package-x-generic</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
   <action id="com.steampowered.atomupd1.manage-pending-update">
     <description>Pause, resume or cancel an update that is in progress</description>
     <icon_name>package-x-generic</icon_name>
