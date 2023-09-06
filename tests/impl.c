@@ -59,25 +59,27 @@ typedef struct {
    guint32 version;
    gdouble progress_percentage;
    guint64 estimated_completion_time;
-   gsize versions_available_n;
-   gsize versions_available_later_n;
+   gsize updates_available_n;
+   gsize updates_available_later_n;
    AuUpdateStatus status;
-   gchar *update_version;
+   gchar *update_build_id;
    gchar *variant;
    gchar *failure_code;
    gchar *failure_message;
    gchar *current_version;
+   gchar *current_build_id;
    GStrv known_variants;
 } AtomupdProperties;
 
 static void
 atomupd_properties_free(AtomupdProperties *atomupd_properties)
 {
-   g_clear_pointer(&atomupd_properties->update_version, g_free);
+   g_clear_pointer(&atomupd_properties->update_build_id, g_free);
    g_clear_pointer(&atomupd_properties->variant, g_free);
    g_clear_pointer(&atomupd_properties->failure_code, g_free);
    g_clear_pointer(&atomupd_properties->failure_message, g_free);
    g_clear_pointer(&atomupd_properties->current_version, g_free);
+   g_clear_pointer(&atomupd_properties->current_build_id, g_free);
    g_clear_pointer(&atomupd_properties->known_variants, g_strfreev);
 
    g_free(atomupd_properties);
@@ -91,20 +93,20 @@ typedef struct {
    guint64 estimated_size;
    AuUpdateType update_type; /* Defaults to AU_UPDATE_TYPE_MINOR */
    const gchar *requires_buildid;
-} VersionsTest;
+} UpdatesTest;
 
 typedef struct {
    const gchar *update_json;
    const gchar *reboot_for_update;
-   VersionsTest versions_available[3];
-   VersionsTest versions_available_later[3];
-} UpdatesTest;
+   UpdatesTest updates_available[3];
+   UpdatesTest updates_available_later[3];
+} CheckUpdatesTest;
 
-static const UpdatesTest updates_test[] =
+static const CheckUpdatesTest updates_test[] =
 {
   {
     .update_json = "update_one_minor.json",
-    .versions_available =
+    .updates_available =
     {
       {
         .buildid = "20220227.3",
@@ -120,7 +122,7 @@ static const UpdatesTest updates_test[] =
 
   {
     .update_json = "update_one_minor_one_major.json",
-    .versions_available =
+    .updates_available =
     {
       {
         .buildid = "20220120.1",
@@ -136,7 +138,7 @@ static const UpdatesTest updates_test[] =
 
   {
     .update_json = "update_three_minors.json",
-    .versions_available =
+    .updates_available =
     {
       {
         .buildid = "20211225.1",
@@ -144,7 +146,7 @@ static const UpdatesTest updates_test[] =
         .estimated_size = 40310422,
       },
     },
-    .versions_available_later =
+    .updates_available_later =
     {
       {
         .buildid = "20220101.1",
@@ -162,7 +164,7 @@ static const UpdatesTest updates_test[] =
 
   {
     .update_json = "update_two_minors_two_majors.json",
-    .versions_available =
+    .updates_available =
     {
       {
         .buildid = "20220110.1",
@@ -175,7 +177,7 @@ static const UpdatesTest updates_test[] =
         .update_type = AU_UPDATE_TYPE_MAJOR,
       },
     },
-    .versions_available_later =
+    .updates_available_later =
     {
       {
         .buildid = "20220120.1",
@@ -192,13 +194,13 @@ static const UpdatesTest updates_test[] =
   },
 };
 
-static const UpdatesTest pending_reboot_test[] =
+static const CheckUpdatesTest pending_reboot_test[] =
 {
   {
     .update_json = "update_one_minor.json",
-    /* Pending a different version than the proposed update */
+    /* Pending a different ID than the proposed update */
     .reboot_for_update = "20220222.1",
-    .versions_available =
+    .updates_available =
     {
       {
         .buildid = "20220227.3",
@@ -218,7 +220,7 @@ static const UpdatesTest pending_reboot_test[] =
     .update_json = "update_one_minor_one_major.json",
     /* The proposed minor update has already been applied */
     .reboot_for_update = "20220120.1",
-    .versions_available =
+    .updates_available =
     {
       {
         .buildid = "20220202.1",
@@ -237,11 +239,11 @@ static const UpdatesTest pending_reboot_test[] =
   {
     .update_json = "update_three_minors.json",
     /* This could probably happen when a downgrade is requested.
-     * In this situation the daemon shows the available versions as-is,
-     * given that the "later" versions cannot be installed without
+     * In this situation the daemon shows the available updates as-is,
+     * given that the "later" updates cannot be installed without
      * first fulfilling their requirements */
     .reboot_for_update = "20220101.1",
-    .versions_available =
+    .updates_available =
     {
       {
         .buildid = "20211225.1",
@@ -249,7 +251,7 @@ static const UpdatesTest pending_reboot_test[] =
         .estimated_size = 40310422,
       },
     },
-    .versions_available_later =
+    .updates_available_later =
     {
       {
         .buildid = "20220101.1",
@@ -310,8 +312,8 @@ _send_message(GDBusConnection *bus,
 }
 
 static void
-_check_available_versions(GVariantIter *available_iter,
-                          const VersionsTest *versions_available)
+_check_available_updates(GVariantIter *available_iter,
+                         const UpdatesTest *updates_available)
 {
    gchar *buildid;          /* borrowed */
    GVariant *values = NULL; /* borrowed */
@@ -328,7 +330,7 @@ _check_available_versions(GVariantIter *available_iter,
          requires
       = NULL;
       const gchar *requires_str = NULL;
-      const VersionsTest *expected_update = &versions_available[i];
+      const UpdatesTest *expected_update = &updates_available[i];
 
       g_assert_cmpstr(expected_update->buildid, ==, buildid);
 
@@ -349,7 +351,7 @@ _check_available_versions(GVariantIter *available_iter,
                      NULL ? NULL : g_variant_get_string(requires, NULL);
       g_assert_cmpstr(expected_update->requires_buildid, ==, requires_str);
    }
-   g_assert_cmpstr(versions_available[i].buildid, ==, NULL);
+   g_assert_cmpstr(updates_available[i].buildid, ==, NULL);
 }
 
 static GVariant *
@@ -366,17 +368,17 @@ _get_atomupd_property(GDBusConnection *bus, const gchar *property)
 }
 
 static void
-_check_versions_property(GDBusConnection *bus,
-                         const gchar *property,
-                         const VersionsTest *versions_available)
+_check_updates_property(GDBusConnection *bus,
+                        const gchar *property,
+                        const UpdatesTest *updates_available)
 {
    g_autoptr(GVariant) reply = NULL;
-   g_autoptr(GVariantIter) versions_iter = NULL;
+   g_autoptr(GVariantIter) updates_iter = NULL;
 
    reply = _get_atomupd_property(bus, property);
-   g_variant_get(reply, "a{?*}", &versions_iter);
+   g_variant_get(reply, "a{?*}", &updates_iter);
 
-   _check_available_versions(versions_iter, versions_available);
+   _check_available_updates(updates_iter, updates_available);
 }
 
 static void
@@ -395,8 +397,8 @@ _check_string_property(GDBusConnection *bus,
 
 static void
 _call_check_for_updates(GDBusConnection *bus,
-                        const VersionsTest *versions_available,
-                        const VersionsTest *versions_available_later)
+                        const UpdatesTest *updates_available,
+                        const UpdatesTest *updates_available_later)
 {
    g_autoptr(GVariant) reply = NULL;
    g_autoptr(GVariantIter) available_iter = NULL;
@@ -409,15 +411,15 @@ _call_check_for_updates(GDBusConnection *bus,
 
    g_variant_get(reply, "(a{?*}a{?*})", &available_iter, &available_later_iter);
 
-   if (versions_available != NULL)
-      _check_available_versions(available_iter, versions_available);
+   if (updates_available != NULL)
+      _check_available_updates(available_iter, updates_available);
 
-   if (versions_available_later != NULL)
-      _check_available_versions(available_later_iter, versions_available_later);
+   if (updates_available_later != NULL)
+      _check_available_updates(available_later_iter, updates_available_later);
 }
 
 static void
-_query_for_updates(Fixture *f, GDBusConnection *bus, const UpdatesTest *test)
+_query_for_updates(Fixture *f, GDBusConnection *bus, const CheckUpdatesTest *test)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
    g_autofree gchar *update_file_path = NULL;
@@ -444,11 +446,10 @@ _query_for_updates(Fixture *f, GDBusConnection *bus, const UpdatesTest *test)
    daemon_proc =
       au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
-   _call_check_for_updates(bus, test->versions_available, test->versions_available_later);
+   _call_check_for_updates(bus, test->updates_available, test->updates_available_later);
 
-   _check_versions_property(bus, "VersionsAvailable", test->versions_available);
-   _check_versions_property(bus, "VersionsAvailableLater",
-                            test->versions_available_later);
+   _check_updates_property(bus, "UpdatesAvailable", test->updates_available);
+   _check_updates_property(bus, "UpdatesAvailableLater", test->updates_available_later);
 
    au_tests_stop_daemon_service(daemon_proc);
 }
@@ -493,16 +494,17 @@ _get_atomupd_properties(GDBusConnection *bus)
    assert_variant("ProgressPercentage", "d", progress_percentage);
    assert_variant("EstimatedCompletionTime", "t", estimated_completion_time);
    assert_variant("UpdateStatus", "u", status);
-   assert_variant("UpdateVersion", "s", update_version);
+   assert_variant("UpdateBuildID", "s", update_build_id);
    assert_variant("Variant", "s", variant);
    assert_variant("FailureCode", "s", failure_code);
    assert_variant("FailureMessage", "s", failure_message);
    assert_variant("CurrentVersion", "s", current_version);
+   assert_variant("CurrentBuildID", "s", current_build_id);
    assert_variant("KnownVariants", "^as", known_variants);
 
-   assert_variant_dict("VersionsAvailable", available_iter, versions_available_n);
-   assert_variant_dict("VersionsAvailableLater", available_later_iter,
-                       versions_available_later_n);
+   assert_variant_dict("UpdatesAvailable", available_iter, updates_available_n);
+   assert_variant_dict("UpdatesAvailableLater", available_later_iter,
+                       updates_available_later_n);
 
    return g_steal_pointer(&atomupd_properties);
 }
@@ -564,20 +566,21 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
       au_tests_start_daemon_service(bus, f->manifest_path, config_path, f->test_envp);
 
    atomupd_properties = _get_atomupd_properties(bus);
-   /* The version of this interface is the number 1 */
-   g_assert_cmpuint(atomupd_properties->version, ==, 1);
+   /* The version of this interface is the number 2 */
+   g_assert_cmpuint(atomupd_properties->version, ==, 2);
    g_assert_true(atomupd_properties->progress_percentage == 0);
    g_assert_cmpuint(atomupd_properties->estimated_completion_time, ==, 0);
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_IDLE);
-   g_assert_cmpstr(atomupd_properties->update_version, ==, "");
+   g_assert_cmpstr(atomupd_properties->update_build_id, ==, "");
    /* Variant parsed from "manifest.json" */
    g_assert_cmpstr(atomupd_properties->variant, ==, "steamdeck");
    g_assert_cmpstr(atomupd_properties->failure_code, ==, "");
    g_assert_cmpstr(atomupd_properties->failure_message, ==, "");
-   g_assert_cmpuint(atomupd_properties->versions_available_n, ==, 0);
-   g_assert_cmpuint(atomupd_properties->versions_available_later_n, ==, 0);
+   g_assert_cmpuint(atomupd_properties->updates_available_n, ==, 0);
+   g_assert_cmpuint(atomupd_properties->updates_available_later_n, ==, 0);
    /* Version buildid parsed from "manifest.json" */
-   g_assert_cmpstr(atomupd_properties->current_version, ==, "20220205.2");
+   g_assert_cmpstr(atomupd_properties->current_build_id, ==, "20220205.2");
+   g_assert_cmpstr(atomupd_properties->current_version, ==, "snapshot");
    g_assert_cmpstrv(atomupd_properties->known_variants, test->variants);
 
    au_tests_stop_daemon_service(daemon_proc);
@@ -706,7 +709,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    g_assert_cmpuint(atomupd_properties->estimated_completion_time, >,
                     g_date_time_to_unix(time_now));
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_IN_PROGRESS);
-   g_assert_cmpstr(atomupd_properties->update_version, ==, "mock-infinite");
+   g_assert_cmpstr(atomupd_properties->update_build_id, ==, "mock-infinite");
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
 
    _send_atomupd_message_with_null_reply(bus, "PauseUpdate", NULL, NULL);
@@ -729,7 +732,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    g_assert_cmpuint(atomupd_properties->estimated_completion_time, >,
                     g_date_time_to_unix(time_now));
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_CANCELLED);
-   g_assert_cmpstr(atomupd_properties->update_version, ==, "mock-infinite");
+   g_assert_cmpstr(atomupd_properties->update_build_id, ==, "mock-infinite");
    /* Assert that the CancelUpdate successfully killed the rauc service */
    g_assert_true(g_subprocess_get_if_exited(rauc_proc));
 
@@ -825,37 +828,37 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
 
 typedef struct {
    const gchar *file_content;
-   const gchar *expected_update_version;
+   const gchar *expected_update_build_id;
    AuUpdateStatus expected_status;
 } RebootForUpdateTest;
 
 static const RebootForUpdateTest reboot_for_update_test[] = {
    {
-      .expected_update_version = "",
+      .expected_update_build_id = "",
       .expected_status = AU_UPDATE_STATUS_IDLE,
    },
 
    {
       .file_content = "20220914.1",
-      .expected_update_version = "20220914.1",
+      .expected_update_build_id = "20220914.1",
       .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
    },
 
    {
       .file_content = "20220911.1\n",
-      .expected_update_version = "20220911.1",
+      .expected_update_build_id = "20220911.1",
       .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
    },
 
    {
       .file_content = "20220915.100\n\n",
-      .expected_update_version = "20220915.100",
+      .expected_update_build_id = "20220915.100",
       .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
    },
 
    {
       .file_content = "",
-      .expected_update_version = "",
+      .expected_update_build_id = "",
       .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
    },
 };
@@ -898,8 +901,8 @@ test_restarted_service(Fixture *f, gconstpointer context)
          au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
       atomupd_properties = _get_atomupd_properties(bus);
-      g_assert_cmpstr(atomupd_properties->update_version, ==,
-                      test->expected_update_version);
+      g_assert_cmpstr(atomupd_properties->update_build_id, ==,
+                      test->expected_update_build_id);
       g_assert_cmpuint(atomupd_properties->status, ==, test->expected_status);
 
       au_tests_stop_daemon_service(daemon_proc);

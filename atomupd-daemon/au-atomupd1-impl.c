@@ -37,6 +37,9 @@
 
 #include <json-glib/json-glib.h>
 
+/* The version of this interface, exposed in the "Version" property */
+guint ATOMUPD_VERSION = 2;
+
 const gchar *AU_DEFAULT_CONFIG = "/etc/steamos-atomupd/client.conf";
 const gchar *AU_DEFAULT_DEV_CONFIG = "/etc/steamos-atomupd/client-dev.conf";
 const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
@@ -298,8 +301,8 @@ _au_set_variant(AuAtomupd1 *object, const gchar *variant)
 
    available = g_variant_new("a{sa{sv}}", NULL);
    available_later = g_variant_new("a{sa{sv}}", NULL);
-   au_atomupd1_set_versions_available(object, g_steal_pointer(&available));
-   au_atomupd1_set_versions_available_later(object, g_steal_pointer(&available_later));
+   au_atomupd1_set_updates_available(object, g_steal_pointer(&available));
+   au_atomupd1_set_updates_available_later(object, g_steal_pointer(&available_later));
    au_atomupd1_set_variant(object, expanded_variant);
 }
 
@@ -551,17 +554,31 @@ _au_get_default_variant(const gchar *manifest, GError **error)
 }
 
 /*
+ * _au_get_current_system_build_id:
+ * @manifest: (not nullable): Path to the JSON manifest file
+ * @error: Used to raise an error on failure
+ *
+ * Returns: (type filename) (transfer full): The system build ID, taken
+ *  from the manifest file.
+ */
+static gchar *
+_au_get_current_system_build_id(const gchar *manifest, GError **error)
+{
+   return _au_get_string_from_manifest(manifest, "buildid", error);
+}
+
+/*
  * _au_get_current_system_version:
  * @manifest: (not nullable): Path to the JSON manifest file
  * @error: Used to raise an error on failure
  *
- * Returns: (type filename) (transfer full): The system version buildid, taken
+ * Returns: (type filename) (transfer full): The system version, taken
  *  from the manifest file.
  */
 static gchar *
 _au_get_current_system_version(const gchar *manifest, GError **error)
 {
-   return _au_get_string_from_manifest(manifest, "buildid", error);
+   return _au_get_string_from_manifest(manifest, "version", error);
 }
 
 /*
@@ -720,7 +737,7 @@ _au_get_json_array_candidates(JsonObject *json_object,
 
 /*
  * @json_node: (not nullable): The JsonNode of the steamos-atomupd-client output
- * @updated_version: Update buildid that has been already installed and is
+ * @updated_build_id: Update build ID that has been already installed and is
  *  waiting a reboot, or %NULL if there isn't such update
  * @available: (out) (not optional): Map of available updates that can be installed
  * @available_later: (out) (not optional): Map of available updates that require
@@ -729,7 +746,7 @@ _au_get_json_array_candidates(JsonObject *json_object,
  */
 static gboolean
 _au_parse_candidates(JsonNode *json_node,
-                     const gchar *updated_version,
+                     const gchar *updated_build_id,
                      GVariant **available,
                      GVariant **available_later,
                      GError **error)
@@ -748,12 +765,12 @@ _au_parse_candidates(JsonNode *json_node,
 
    json_object = json_node_get_object(json_node);
 
-   if (!_au_get_json_array_candidates(json_object, AU_UPDATE_TYPE_MINOR, updated_version,
+   if (!_au_get_json_array_candidates(json_object, AU_UPDATE_TYPE_MINOR, updated_build_id,
                                       &available_builder, &available_later_builder,
                                       error))
       return FALSE;
 
-   if (!_au_get_json_array_candidates(json_object, AU_UPDATE_TYPE_MAJOR, updated_version,
+   if (!_au_get_json_array_candidates(json_object, AU_UPDATE_TYPE_MAJOR, updated_build_id,
                                       &available_builder, &available_later_builder,
                                       error))
       return FALSE;
@@ -774,7 +791,7 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
    g_autoptr(JsonNode) json_node = NULL;
    g_autoptr(GError) error = NULL;
    g_autofree gchar *output = NULL;
-   const gchar *updated_version = NULL;
+   const gchar *updated_build_id = NULL;
    gsize out_length;
    AuUpdateStatus current_status;
    AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(data->req->object);
@@ -832,9 +849,9 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
 
    current_status = au_atomupd1_get_update_status(data->req->object);
    if (current_status == AU_UPDATE_STATUS_SUCCESSFUL)
-      updated_version = au_atomupd1_get_update_version(data->req->object);
+      updated_build_id = au_atomupd1_get_update_build_id(data->req->object);
 
-   if (!_au_parse_candidates(json_node, updated_version, &available, &available_later,
+   if (!_au_parse_candidates(json_node, updated_build_id, &available, &available_later,
                              &error)) {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
@@ -851,8 +868,8 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
    }
 
 success:
-   au_atomupd1_set_versions_available(data->req->object, available);
-   au_atomupd1_set_versions_available_later(data->req->object, available_later);
+   au_atomupd1_set_updates_available(data->req->object, available);
+   au_atomupd1_set_updates_available_later(data->req->object, available_later);
    au_atomupd1_complete_check_for_updates(data->req->object,
                                           g_steal_pointer(&data->req->invocation),
                                           available, available_later);
@@ -1454,7 +1471,7 @@ au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
       return G_DBUS_METHOD_INVOCATION_HANDLED;
    }
 
-   au_atomupd1_set_update_version(object, arg_id);
+   au_atomupd1_set_update_build_id(object, arg_id);
 
    /* Create a copy of the json file because we will pass that to the
     * 'steamos-atomupd-client' helper and, if in the meantime we check again
@@ -1628,9 +1645,10 @@ au_atomupd1_impl_new(const gchar *config_preference,
 {
    g_autofree gchar *variant = NULL;
    g_autofree gchar *expanded_variant = NULL;
+   g_autofree gchar *system_build_id = NULL;
    g_autofree gchar *system_version = NULL;
    g_autofree gchar *manifest_from_config = NULL;
-   g_autofree gchar *installed_version = NULL;
+   g_autofree gchar *installed_build_id = NULL;
    g_autofree gchar *username = NULL;
    g_autofree gchar *password = NULL;
    g_autofree gchar *auth_encoded = NULL;
@@ -1754,14 +1772,17 @@ au_atomupd1_impl_new(const gchar *config_preference,
    g_debug("Tracking the variant %s", expanded_variant);
    au_atomupd1_set_variant((AuAtomupd1 *)atomupd, expanded_variant);
 
+   system_build_id = _au_get_current_system_build_id(atomupd->manifest_path, error);
+   if (system_build_id == NULL)
+      return NULL;
    system_version = _au_get_current_system_version(atomupd->manifest_path, error);
    if (system_version == NULL)
       return NULL;
 
+   au_atomupd1_set_current_build_id((AuAtomupd1 *)atomupd, system_build_id);
    au_atomupd1_set_current_version((AuAtomupd1 *)atomupd, system_version);
 
-   /* We currently only have the version 1 of this interface */
-   au_atomupd1_set_version((AuAtomupd1 *)atomupd, 1);
+   au_atomupd1_set_version((AuAtomupd1 *)atomupd, ATOMUPD_VERSION);
 
    client_pid = _au_get_process_pid("steamos-atomupd-client", &local_error);
    if (client_pid > -1) {
@@ -1782,20 +1803,20 @@ au_atomupd1_impl_new(const gchar *config_preference,
    if (reboot_for_update == NULL)
       reboot_for_update = AU_REBOOT_FOR_UPDATE;
 
-   if (g_file_get_contents(reboot_for_update, &installed_version, NULL, NULL)) {
+   if (g_file_get_contents(reboot_for_update, &installed_build_id, NULL, NULL)) {
       gssize i;
 
       g_debug("An update has already been successfully installed, it will be applied at "
               "the next reboot");
-      installed_version = g_strstrip(installed_version);
-      for (i = strlen(installed_version) - 1; i > 0; i--) {
-         if (installed_version[i] == '\n')
-            installed_version[i] = '\0';
+      installed_build_id = g_strstrip(installed_build_id);
+      for (i = strlen(installed_build_id) - 1; i > 0; i--) {
+         if (installed_build_id[i] == '\n')
+            installed_build_id[i] = '\0';
          else
             break;
       }
 
-      au_atomupd1_set_update_version((AuAtomupd1 *)atomupd, installed_version);
+      au_atomupd1_set_update_build_id((AuAtomupd1 *)atomupd, installed_build_id);
       au_atomupd1_set_update_status((AuAtomupd1 *)atomupd, AU_UPDATE_STATUS_SUCCESSFUL);
    }
 

@@ -336,7 +336,7 @@ static const LaunchCommands launch_commands[] = {
    {
       .command = "update",
       .argument = "ID",
-      .description = "Apply the update ID (i.e. version number)",
+      .description = "Apply the update build ID",
       .command_function = launch_update,
    },
 
