@@ -89,6 +89,7 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(AtomupdProperties, atomupd_properties_free)
 
 typedef struct {
    const gchar *buildid;
+   const gchar *version;
    const gchar *variant;
    guint64 estimated_size;
    AuUpdateType update_type; /* Defaults to AU_UPDATE_TYPE_MINOR */
@@ -110,6 +111,7 @@ static const CheckUpdatesTest updates_test[] =
     {
       {
         .buildid = "20220227.3",
+        .version = "snapshot",
         .variant = "steamdeck",
         .estimated_size = 70910463,
       },
@@ -126,10 +128,12 @@ static const CheckUpdatesTest updates_test[] =
     {
       {
         .buildid = "20220120.1",
+        .version = "snapshot",
         .variant = "steamdeck",
       },
       {
         .buildid = "20220202.1",
+        .version = "snapshot",
         .variant = "steamdeck",
         .update_type = AU_UPDATE_TYPE_MAJOR,
       },
@@ -142,6 +146,7 @@ static const CheckUpdatesTest updates_test[] =
     {
       {
         .buildid = "20211225.1",
+        .version = "snapshot",
         .variant = "steamdeck",
         .estimated_size = 40310422,
       },
@@ -150,11 +155,13 @@ static const CheckUpdatesTest updates_test[] =
     {
       {
         .buildid = "20220101.1",
+        .version = "snapshot",
         .variant = "steamdeck",
         .requires_buildid = "20211225.1",
       },
       {
         .buildid = "20220227.3",
+        .version = "3.4.6",
         .variant = "steamdeck",
         .estimated_size = 30410461,
         .requires_buildid = "20220101.1",
@@ -168,11 +175,13 @@ static const CheckUpdatesTest updates_test[] =
     {
       {
         .buildid = "20220110.1",
+        .version = "3.5.1",
         .variant = "steamdeck",
         .estimated_size = 4815162342,
       },
       {
         .buildid = "20220201.5",
+        .version = "3.5.3",
         .variant = "steamdeck",
         .update_type = AU_UPDATE_TYPE_MAJOR,
       },
@@ -181,11 +190,13 @@ static const CheckUpdatesTest updates_test[] =
     {
       {
         .buildid = "20220120.1",
+        .version = "3.5.1",
         .variant = "steamdeck",
         .requires_buildid = "20220110.1",
       },
       {
         .buildid = "20220202.1",
+        .version = "3.6.0",
         .variant = "steamdeck",
         .requires_buildid = "20220201.5",
         .update_type = AU_UPDATE_TYPE_MAJOR,
@@ -204,6 +215,7 @@ static const CheckUpdatesTest pending_reboot_test[] =
     {
       {
         .buildid = "20220227.3",
+        .version = "snapshot",
         .variant = "steamdeck",
         .estimated_size = 70910463,
       },
@@ -224,6 +236,7 @@ static const CheckUpdatesTest pending_reboot_test[] =
     {
       {
         .buildid = "20220202.1",
+        .version = "snapshot",
         .variant = "steamdeck",
         .update_type = AU_UPDATE_TYPE_MAJOR,
       },
@@ -247,6 +260,7 @@ static const CheckUpdatesTest pending_reboot_test[] =
     {
       {
         .buildid = "20211225.1",
+        .version = "snapshot",
         .variant = "steamdeck",
         .estimated_size = 40310422,
       },
@@ -255,11 +269,13 @@ static const CheckUpdatesTest pending_reboot_test[] =
     {
       {
         .buildid = "20220101.1",
+        .version = "snapshot",
         .variant = "steamdeck",
         .requires_buildid = "20211225.1",
       },
       {
         .buildid = "20220227.3",
+        .version = "3.4.6",
         .variant = "steamdeck",
         .estimated_size = 30410461,
         .requires_buildid = "20220101.1",
@@ -323,6 +339,7 @@ _check_available_updates(GVariantIter *available_iter,
    gsize i;
 
    for (i = 0; g_variant_iter_loop(available_iter, "{s@a{sv}}", &buildid, &values); i++) {
+      g_autoptr(GVariant) version = NULL;
       g_autoptr(GVariant) variant = NULL;
       g_autoptr(GVariant) estimated_size = NULL;
       g_autoptr(GVariant) update_type = NULL;
@@ -333,6 +350,9 @@ _check_available_updates(GVariantIter *available_iter,
       const UpdatesTest *expected_update = &updates_available[i];
 
       g_assert_cmpstr(expected_update->buildid, ==, buildid);
+
+      version = g_variant_lookup_value(values, "version", type_string);
+      g_assert_cmpstr(expected_update->version, ==, g_variant_get_string(version, NULL));
 
       variant = g_variant_lookup_value(values, "variant", type_string);
       g_assert_cmpstr(expected_update->variant, ==, g_variant_get_string(variant, NULL));

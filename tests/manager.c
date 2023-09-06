@@ -103,6 +103,7 @@ static const CheckTest check_test[] =
     {
       "Updates available:",
       "20220227.3",
+      "snapshot",
     },
     .output_does_not_contain =
     {
@@ -118,6 +119,7 @@ static const CheckTest check_test[] =
       "Updates available:",
       "20220120.1",
       "20220202.1",
+      "snapshot",
     },
     .output_does_not_contain =
     {
@@ -132,11 +134,13 @@ static const CheckTest check_test[] =
     {
       "Updates available:",
       "20211225.1",
+      "snapshot",
       "steamdeck",
       "40310422",
       "Updates available later:",
       "20220101.1",
       "20220227.3",
+      "3.4.6",
     },
     .output_does_not_contain =
     {

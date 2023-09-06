@@ -8,7 +8,7 @@
           "release": "holo",
           "variant": "steamdeck",
           "arch": "amd64",
-          "version": "snapshot",
+          "version": "3.5.1",
           "buildid": "20220110.1",
           "checkpoint": true,
           "estimated_size": 4815162342
@@ -21,7 +21,7 @@
           "release": "holo",
           "variant": "steamdeck",
           "arch": "amd64",
-          "version": "snapshot",
+          "version": "3.5.1",
           "buildid": "20220120.1",
           "checkpoint": false,
           "estimated_size": 0
@@ -39,7 +39,7 @@
           "release": "holo",
           "variant": "steamdeck",
           "arch": "amd64",
-          "version": "snapshot",
+          "version": "3.5.3",
           "buildid": "20220201.5",
           "checkpoint": true,
           "estimated_size": 0
@@ -52,7 +52,7 @@
           "release": "holo",
           "variant": "steamdeck",
           "arch": "amd64",
-          "version": "snapshot",
+          "version": "3.6.0",
           "buildid": "20220202.1",
           "checkpoint": false,
           "estimated_size": 0

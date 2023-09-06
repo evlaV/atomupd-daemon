@@ -583,23 +583,30 @@ _au_get_current_system_version(const gchar *manifest, GError **error)
 
 /*
  * @candidate_obj: (not nullable): A JSON object representing the image update
- * @id: (inout) (not nullable):
- * @variant: (inout) (not nullable):
- * @size: (inout) (not nullable):
+ * @id: (out) (not optional):
+ * @version: (out) (not optional):
+ * @variant: (out) (not optional):
+ * @size: (out) (not optional):
  * @error: Used to raise an error on failure
  */
 static gboolean
-_au_parse_image(
-   JsonObject *candidate_obj, gchar **id, gchar **variant, gint64 *size, GError **error)
+_au_parse_image(JsonObject *candidate_obj,
+                gchar **id,
+                gchar **version,
+                gchar **variant,
+                gint64 *size,
+                GError **error)
 {
    JsonObject *img_obj = NULL; /* borrowed */
    JsonNode *img_node = NULL;  /* borrowed */
    const gchar *local_id = NULL;
+   const gchar *local_version = NULL;
    const gchar *local_variant = NULL;
    gint64 local_size;
 
    g_return_val_if_fail(candidate_obj != NULL, FALSE);
    g_return_val_if_fail(id != NULL, FALSE);
+   g_return_val_if_fail(version != NULL, FALSE);
    g_return_val_if_fail(variant != NULL, FALSE);
    g_return_val_if_fail(size != NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
@@ -609,6 +616,7 @@ _au_parse_image(
 
    local_size = json_object_get_int_member_with_default(img_obj, "estimated_size", 0);
    local_id = json_object_get_string_member_with_default(img_obj, "buildid", NULL);
+   local_version = json_object_get_string_member_with_default(img_obj, "version", NULL);
    local_variant = json_object_get_string_member_with_default(img_obj, "variant", NULL);
    if (local_id == NULL || local_variant == NULL) {
       g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -617,6 +625,7 @@ _au_parse_image(
    }
 
    *id = g_strdup(local_id);
+   *version = g_strdup(local_version);
    *variant = g_strdup(local_variant);
    *size = local_size;
 
@@ -697,11 +706,12 @@ _au_get_json_array_candidates(JsonObject *json_object,
    for (i = 0; i < array_size; i++) {
       g_autofree gchar *id = NULL;
       g_autofree gchar *variant = NULL;
+      g_autofree gchar *version = NULL;
       gint64 size;
       GVariantBuilder builder;
 
-      if (!_au_parse_image(json_array_get_object_element(array, i), &id, &variant, &size,
-                           error))
+      if (!_au_parse_image(json_array_get_object_element(array, i), &id, &version,
+                           &variant, &size, error))
          return FALSE;
 
       if (i == 0 && g_strcmp0(id, updated_version) == 0) {
@@ -717,6 +727,7 @@ _au_get_json_array_candidates(JsonObject *json_object,
 
       g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
 
+      g_variant_builder_add(&builder, "{sv}", "version", g_variant_new_string(version));
       g_variant_builder_add(&builder, "{sv}", "variant", g_variant_new_string(variant));
       g_variant_builder_add(&builder, "{sv}", "estimated_size",
                             g_variant_new_uint64(size));

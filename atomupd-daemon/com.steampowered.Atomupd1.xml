@@ -141,6 +141,12 @@
             </para></listitem>
           </varlistentry>
           <varlistentry>
+            <term>version s</term>
+            <listitem><para>
+              The version of this update. E.g. "3.5.1".
+            </para></listitem>
+          </varlistentry>
+          <varlistentry>
             <term>estimated_size t</term>
             <listitem><para>
               Estimated download size, in Bytes, to perform the update.
