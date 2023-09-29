@@ -1904,6 +1904,29 @@ au_atomupd1_impl_init(AuAtomupd1Impl *self)
 {
 }
 
+/*
+ * _str_rstrip_newline:
+ * @string:
+ *
+ * Remove trailing newlines. @string is modified in place.
+ */
+static gchar *
+_str_rstrip_newline(gchar *string)
+{
+   gssize i;
+
+   g_return_val_if_fail(string != NULL, NULL);
+
+   for (i = strlen(string) - 1; i > 0; i--) {
+      if (string[i] == '\n')
+         string[i] = '\0';
+      else
+         break;
+   }
+
+   return string;
+}
+
 /**
  * au_atomupd1_impl_new:
  * @config_preference: (transfer none) (nullable): Path to the configuration
@@ -2087,17 +2110,9 @@ au_atomupd1_impl_new(const gchar *config_preference,
       reboot_for_update = AU_REBOOT_FOR_UPDATE;
 
    if (g_file_get_contents(reboot_for_update, &installed_build_id, NULL, NULL)) {
-      gssize i;
-
       g_debug("An update has already been successfully installed, it will be applied at "
               "the next reboot");
-      installed_build_id = g_strstrip(installed_build_id);
-      for (i = strlen(installed_build_id) - 1; i > 0; i--) {
-         if (installed_build_id[i] == '\n')
-            installed_build_id[i] = '\0';
-         else
-            break;
-      }
+      installed_build_id = _str_rstrip_newline(g_strstrip(installed_build_id));
 
       au_atomupd1_set_update_build_id((AuAtomupd1 *)atomupd, installed_build_id);
       au_atomupd1_set_update_status((AuAtomupd1 *)atomupd, AU_UPDATE_STATUS_SUCCESSFUL);
