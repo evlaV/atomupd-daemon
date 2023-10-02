@@ -729,7 +729,7 @@ _au_parse_image(JsonObject *candidate_obj,
    local_id = json_object_get_string_member_with_default(img_obj, "buildid", NULL);
    local_version = json_object_get_string_member_with_default(img_obj, "version", NULL);
    local_variant = json_object_get_string_member_with_default(img_obj, "variant", NULL);
-   if (local_id == NULL || local_variant == NULL) {
+   if (local_id == NULL || local_version == NULL || local_variant == NULL) {
       g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                   "The \"image\" JSON object doesn't have the expected members");
       return FALSE;
