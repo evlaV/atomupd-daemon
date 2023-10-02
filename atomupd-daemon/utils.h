@@ -57,6 +57,8 @@ typedef enum {
    AU_UPDATE_TYPE_MAJOR = 1,
 } AuUpdateType;
 
+extern guint ATOMUPD_VERSION;
+
 extern const gchar *AU_DEFAULT_CONFIG;
 extern const gchar *AU_DEFAULT_MANIFEST;
 extern const gchar *AU_DEFAULT_UPDATE_JSON;

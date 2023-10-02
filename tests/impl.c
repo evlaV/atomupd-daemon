@@ -587,8 +587,7 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
       au_tests_start_daemon_service(bus, f->manifest_path, config_path, f->test_envp);
 
    atomupd_properties = _get_atomupd_properties(bus);
-   /* The version of this interface is the number 2 */
-   g_assert_cmpuint(atomupd_properties->version, ==, 2);
+   g_assert_cmpuint(atomupd_properties->version, ==, ATOMUPD_VERSION);
    g_assert_true(atomupd_properties->progress_percentage == 0);
    g_assert_cmpuint(atomupd_properties->estimated_completion_time, ==, 0);
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_IDLE);
