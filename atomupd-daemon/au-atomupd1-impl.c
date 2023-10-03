@@ -2118,5 +2118,38 @@ au_atomupd1_impl_new(const gchar *config_preference,
       au_atomupd1_set_update_status((AuAtomupd1 *)atomupd, AU_UPDATE_STATUS_SUCCESSFUL);
    }
 
+   if (g_file_query_exists(atomupd->updates_json_file, NULL)) {
+      g_autoptr(JsonParser) parser = json_parser_new();
+
+      json_parser_load_from_file(parser, updates_json_path, &local_error);
+      if (local_error != NULL) {
+         /* This is not a critical issue. We try to continue because the next time
+          * CheckForUpdates is called we will replace this unexpected file */
+         g_warning("Unable to parse the existing updates JSON file: %s",
+                   local_error->message);
+         g_clear_error(&local_error);
+      } else {
+         const gchar *updated_build_id;
+         g_autoptr(GVariant) available = NULL;
+         g_autoptr(GVariant) available_later = NULL;
+         g_autoptr(JsonNode) root = json_parser_get_root(parser);
+
+         updated_build_id = au_atomupd1_get_update_build_id((AuAtomupd1 *)atomupd);
+
+         if (root == NULL) {
+            g_info("The existing JSON file seems to be empty");
+         } else if (!_au_parse_candidates(root, updated_build_id, &available,
+                                          &available_later, &local_error)) {
+            g_warning("Unable to parse the existing updates JSON file: %s",
+                      local_error->message);
+            g_clear_error(&local_error);
+         } else {
+            au_atomupd1_set_updates_available((AuAtomupd1 *)atomupd, available);
+            au_atomupd1_set_updates_available_later((AuAtomupd1 *)atomupd,
+                                                    available_later);
+         }
+      }
+   }
+
    return (AuAtomupd1 *)atomupd;
 }

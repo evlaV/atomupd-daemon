@@ -104,6 +104,17 @@ typedef struct {
    UpdatesTest updates_available_later[3];
 } CheckUpdatesTest;
 
+static const UpdatesTest mock_infinite_update[] = {
+   {
+      .buildid = MOCK_INFINITE,
+      .version = "3.6.0",
+      .variant = "steamdeck",
+      .estimated_size = 60112233,
+   },
+
+   { },
+};
+
 static const CheckUpdatesTest updates_test[] =
 {
   {
@@ -682,7 +693,8 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
 
    _skip_if_daemon_is_running(bus, NULL);
 
-   update_file_path = g_build_filename(f->srcdir, "data", "update_one_minor.json", NULL);
+   update_file_path =
+      g_build_filename(f->srcdir, "data", "update_mock_infinite.json", NULL);
    f->test_envp =
       g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
 
@@ -705,6 +717,9 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
 
    g_clear_object(&rauc_proc);
    rauc_proc = au_tests_launch_rauc_service(f->rauc_pid_path);
+
+   /* Assert that the daemon successfully loaded the previous state of available updates */
+   _check_updates_property(bus, "UpdatesAvailable", mock_infinite_update);
 
    g_debug("Starting an update that is expected to complete in 1.5 seconds");
    _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_SUCCESS);
@@ -1107,6 +1122,180 @@ test_unauthorized(Fixture *f, gconstpointer context)
    au_tests_stop_daemon_service(daemon_proc);
 }
 
+typedef struct {
+   const gchar *file_content;
+   UpdatesTest updates_available[3];
+   UpdatesTest updates_available_later[3];
+} ExistingUpdatesJson;
+
+static const ExistingUpdatesJson existing_updates_json_test[] = {
+   {
+      .file_content = NULL,
+   },
+
+   {
+      .file_content = "",
+   },
+
+   {
+      .file_content = "{}",
+   },
+
+   {
+      .file_content = "{ \
+  \"minor\": { \
+    \"release\": \"holo\", \
+    \"candidates\": [ \
+      { \
+        \"image\": { \
+          \"product\": \"steamos\", \
+          \"release\": \"holo\", \
+          \"variant\": \"steamdeck\", \
+          \"arch\": \"amd64\", \
+          \"version\": \"3.6.0\", \
+          \"buildid\": \"20300101.100\", \
+          \"checkpoint\": false, \
+          \"estimated_size\": 60112233 \
+        }, \
+        \"update_path\": \"steamdeck/20300101.100/foo-3.6.0.raucb\" \
+      } \
+    ] \
+  } \
+}",
+      .updates_available =
+      {
+         {
+            .buildid = "20300101.100",
+            .version = "3.6.0",
+            .variant = "steamdeck",
+            .estimated_size = 60112233,
+         },
+      },
+   },
+
+   {
+      .file_content = "{ \
+  \"minor\": { \
+    \"release\": \"holo\", \
+    \"candidates\": [ \
+      { \
+        \"image\": { \
+          \"product\": \"steamos\", \
+          \"release\": \"holo\", \
+          \"variant\": \"steamdeck\", \
+          \"arch\": \"amd64\", \
+          \"version\": \"snapshot\", \
+          \"buildid\": \"20230810.1\", \
+          \"checkpoint\": true, \
+          \"estimated_size\": 4815162342 \
+        }, \
+        \"update_path\": \"steamdeck-20230810.1-snapshot.raucb\" \
+      }, \
+      { \
+        \"image\": { \
+          \"product\": \"steamos\", \
+          \"release\": \"holo\", \
+          \"variant\": \"steamdeck\", \
+          \"arch\": \"amd64\", \
+          \"version\": \"3.7.1\", \
+          \"buildid\": \"20231120.1\" \
+        }, \
+        \"update_path\": \"20231120.1/steamdeck-20231120.1-3.7.1.raucb\" \
+      } \
+    ] \
+  }, \
+  \"major\": { \
+    \"release\": \"holo\", \
+    \"candidates\": [ \
+      { \
+        \"image\": { \
+          \"product\": \"steamos\", \
+          \"release\": \"holo\", \
+          \"variant\": \"steamdeck\", \
+          \"arch\": \"amd64\", \
+          \"version\": \"4.0.0\", \
+          \"buildid\": \"20231212.5\", \
+          \"estimated_size\": 12312340 \
+        }, \
+        \"update_path\": \"foo/steamdeck-20231212.5-4.0.0.raucb\" \
+      } \
+    ] \
+  } \
+}",
+      .updates_available =
+      {
+         {
+            .buildid = "20230810.1",
+            .version = "snapshot",
+            .variant = "steamdeck",
+            .estimated_size = 4815162342,
+         },
+         {
+            .buildid = "20231212.5",
+            .version = "4.0.0",
+            .variant = "steamdeck",
+            .estimated_size = 12312340,
+            .update_type = AU_UPDATE_TYPE_MAJOR,
+         },
+      },
+      .updates_available_later =
+      {
+         {
+            .buildid = "20231120.1",
+            .version = "3.7.1",
+            .variant = "steamdeck",
+            .requires_buildid = "20230810.1"
+         },
+      },
+   },
+};
+
+static void
+test_parsing_existing_updates_json(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+   gsize i;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   for (i = 0; i < G_N_ELEMENTS(existing_updates_json_test); i++) {
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      gint fd;
+      const ExistingUpdatesJson *test = &existing_updates_json_test[i];
+      g_autofree gchar *atomupd_updates = NULL;
+
+      if (test->file_content != NULL) {
+         fd = g_file_open_tmp("atomupd-udpates-XXXXXX", &atomupd_updates, &error);
+         g_assert_no_error(error);
+         g_assert_cmpint(fd, !=, -1);
+         close(fd);
+
+         g_file_set_contents(atomupd_updates, test->file_content, -1, &error);
+         g_assert_no_error(error);
+
+         f->test_envp =
+            g_environ_setenv(f->test_envp, "AU_UPDATES_JSON_FILE", atomupd_updates, TRUE);
+      } else {
+         f->test_envp =
+            g_environ_setenv(f->test_envp, "AU_UPDATES_JSON_FILE", "/missing_file", TRUE);
+      }
+
+      daemon_proc =
+         au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+
+      _check_updates_property(bus, "UpdatesAvailable", test->updates_available);
+      _check_updates_property(bus, "UpdatesAvailableLater",
+                              test->updates_available_later);
+
+      au_tests_stop_daemon_service(daemon_proc);
+      if (atomupd_updates != NULL)
+         g_unlink(atomupd_updates);
+   }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1131,6 +1320,8 @@ main(int argc, char **argv)
    test_add("/daemon/pending_reboot_check", test_pending_reboot_check);
    test_add("/daemon/switch_variant", test_switch_variant);
    test_add("/daemon/test_unauthorized", test_unauthorized);
+   test_add("/daemon/test_parsing_existing_updates_json",
+            test_parsing_existing_updates_json);
 
    ret = g_test_run();
    return ret;

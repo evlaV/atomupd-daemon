@@ -1,0 +1,20 @@
+{
+  "minor": {
+    "release": "holo",
+    "candidates": [
+      {
+        "image": {
+          "product": "steamos",
+          "release": "holo",
+          "variant": "steamdeck",
+          "arch": "amd64",
+          "version": "3.6.0",
+          "buildid": "20300101.100",
+          "checkpoint": false,
+          "estimated_size": 60112233
+        },
+        "update_path": "steamdeck/20300101.100/steamdeck-20300101.100-3.6.0.raucb"
+      }
+    ]
+  }
+}
