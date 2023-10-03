@@ -39,7 +39,7 @@
 #include <json-glib/json-glib.h>
 
 /* The version of this interface, exposed in the "Version" property */
-guint ATOMUPD_VERSION = 2;
+guint ATOMUPD_VERSION = 3;
 
 const gchar *AU_DEFAULT_CONFIG = "/etc/steamos-atomupd/client.conf";
 const gchar *AU_DEFAULT_DEV_CONFIG = "/etc/steamos-atomupd/client-dev.conf";
@@ -1687,6 +1687,9 @@ au_start_update_authorized_cb(AuAtomupd1 *object,
    g_autoptr(GPtrArray) argv = NULL;
    g_autoptr(GFileIOStream) stream = NULL;
    g_autoptr(GInputStream) unix_stream = NULL;
+   GVariant *updates_available = NULL; /* borrowed */
+   g_autoptr(GVariantIter) updates_iter = NULL;
+   gboolean found_buildid = FALSE;
    g_autoptr(GError) error = NULL;
    AuUpdateStatus current_status;
    gint client_stdout;
@@ -1710,6 +1713,33 @@ au_start_update_authorized_cb(AuAtomupd1 *object,
    }
 
    au_atomupd1_set_update_build_id(object, arg_id);
+
+   updates_available = au_atomupd1_get_updates_available(object);
+   if (updates_available != NULL) {
+      gchar *buildid = NULL;   /* borrowed */
+      GVariant *values = NULL; /* borrowed */
+
+      g_variant_get(updates_available, "a{?*}", &updates_iter);
+      while (g_variant_iter_loop(updates_iter, "{s@a{sv}}", &buildid, &values)) {
+         if (g_str_equal(arg_id, buildid)) {
+            g_autoptr(GVariant) version = NULL;
+
+            version = g_variant_lookup_value(values, "version", G_VARIANT_TYPE_STRING);
+            au_atomupd1_set_update_version(object, g_variant_get_string(version, NULL));
+            found_buildid = TRUE;
+            break;
+         }
+      }
+   }
+
+   if (!found_buildid) {
+      g_warning("The chosen buildid '%s' doesn't seem to be available, the update "
+                "is expected to fail",
+                arg_id);
+
+      /* Clear any previous value we might have */
+      au_atomupd1_set_update_version(object, NULL);
+   }
 
    /* Create a copy of the json file because we will pass that to the
     * 'steamos-atomupd-client' helper and, if in the meantime we check again
@@ -1948,7 +1978,7 @@ au_atomupd1_impl_new(const gchar *config_preference,
    g_autofree gchar *system_build_id = NULL;
    g_autofree gchar *system_version = NULL;
    g_autofree gchar *manifest_from_config = NULL;
-   g_autofree gchar *installed_build_id = NULL;
+   g_autofree gchar *reboot_content = NULL;
    g_autofree gchar *username = NULL;
    g_autofree gchar *password = NULL;
    g_autofree gchar *auth_encoded = NULL;
@@ -2109,12 +2139,23 @@ au_atomupd1_impl_new(const gchar *config_preference,
    if (reboot_for_update == NULL)
       reboot_for_update = AU_REBOOT_FOR_UPDATE;
 
-   if (g_file_get_contents(reboot_for_update, &installed_build_id, NULL, NULL)) {
+   if (g_file_get_contents(reboot_for_update, &reboot_content, NULL, NULL)) {
+      g_auto(GStrv) splitted = NULL;
+
       g_debug("An update has already been successfully installed, it will be applied at "
               "the next reboot");
-      installed_build_id = _str_rstrip_newline(g_strstrip(installed_build_id));
 
-      au_atomupd1_set_update_build_id((AuAtomupd1 *)atomupd, installed_build_id);
+      splitted = g_strsplit(reboot_content, "-", 2);
+      if (splitted[0] != NULL) {
+         splitted[0] = _str_rstrip_newline(g_strstrip(splitted[0]));
+         au_atomupd1_set_update_build_id((AuAtomupd1 *)atomupd, splitted[0]);
+      }
+
+      if (splitted[0] != NULL && splitted[1] != NULL) {
+         splitted[1] = _str_rstrip_newline(g_strstrip(splitted[1]));
+         au_atomupd1_set_update_version((AuAtomupd1 *)atomupd, splitted[1]);
+      }
+
       au_atomupd1_set_update_status((AuAtomupd1 *)atomupd, AU_UPDATE_STATUS_SUCCESSFUL);
    }
 

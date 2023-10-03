@@ -38,7 +38,7 @@
         Version:
 
         The version of this interface implemented by this object.
-        This file documents version 2 of the interface.
+        This file documents version 3 of the interface.
     -->
     <property name="Version" type="u" access="read"/>
 
@@ -88,6 +88,16 @@
         Build ID can be interpreted.
     -->
     <property name="UpdateBuildID" type="s" access="read"/>
+
+    <!--
+        UpdateVersion:
+
+        String that represents the user-facing OS version of the image update
+        that has been chosen when `StartUpdate` method was executed.
+        This is suitable for display in user interfaces.
+        It is the empty string if `StartUpdate` has not been called yet.
+    -->
+    <property name="UpdateVersion" type="s" access="read"/>
 
     <!--
         Variant:

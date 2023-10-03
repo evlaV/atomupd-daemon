@@ -64,6 +64,7 @@ typedef struct {
    gsize updates_available_later_n;
    AuUpdateStatus status;
    gchar *update_build_id;
+   gchar *update_version;
    gchar *variant;
    gchar *failure_code;
    gchar *failure_message;
@@ -76,6 +77,7 @@ static void
 atomupd_properties_free(AtomupdProperties *atomupd_properties)
 {
    g_clear_pointer(&atomupd_properties->update_build_id, g_free);
+   g_clear_pointer(&atomupd_properties->update_version, g_free);
    g_clear_pointer(&atomupd_properties->variant, g_free);
    g_clear_pointer(&atomupd_properties->failure_code, g_free);
    g_clear_pointer(&atomupd_properties->failure_message, g_free);
@@ -527,6 +529,7 @@ _get_atomupd_properties(GDBusConnection *bus)
    assert_variant("EstimatedCompletionTime", "t", estimated_completion_time);
    assert_variant("UpdateStatus", "u", status);
    assert_variant("UpdateBuildID", "s", update_build_id);
+   assert_variant("UpdateVersion", "s", update_version);
    assert_variant("Variant", "s", variant);
    assert_variant("FailureCode", "s", failure_code);
    assert_variant("FailureMessage", "s", failure_message);
@@ -603,6 +606,7 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
    g_assert_cmpuint(atomupd_properties->estimated_completion_time, ==, 0);
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_IDLE);
    g_assert_cmpstr(atomupd_properties->update_build_id, ==, "");
+   g_assert_cmpstr(atomupd_properties->update_version, ==, "");
    /* Variant parsed from "manifest.json" */
    g_assert_cmpstr(atomupd_properties->variant, ==, "steamdeck");
    g_assert_cmpstr(atomupd_properties->failure_code, ==, "");
@@ -749,6 +753,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
                     g_date_time_to_unix(time_now));
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_IN_PROGRESS);
    g_assert_cmpstr(atomupd_properties->update_build_id, ==, MOCK_INFINITE);
+   g_assert_cmpstr(atomupd_properties->update_version, ==, mock_infinite_update->version);
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
 
    _send_atomupd_message_with_null_reply(bus, "PauseUpdate", NULL, NULL);
@@ -772,6 +777,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
                     g_date_time_to_unix(time_now));
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_CANCELLED);
    g_assert_cmpstr(atomupd_properties->update_build_id, ==, MOCK_INFINITE);
+   g_assert_cmpstr(atomupd_properties->update_version, ==, mock_infinite_update->version);
    /* Assert that the CancelUpdate successfully killed the rauc service */
    g_assert_true(g_subprocess_get_if_exited(rauc_proc));
 
@@ -868,36 +874,70 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
 typedef struct {
    const gchar *file_content;
    const gchar *expected_update_build_id;
+   const gchar *expected_update_version;
    AuUpdateStatus expected_status;
 } RebootForUpdateTest;
 
 static const RebootForUpdateTest reboot_for_update_test[] = {
    {
       .expected_update_build_id = "",
+      .expected_update_version = "",
       .expected_status = AU_UPDATE_STATUS_IDLE,
    },
 
    {
       .file_content = "20220914.1",
       .expected_update_build_id = "20220914.1",
+      .expected_update_version = "",
       .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
    },
 
    {
       .file_content = "20220911.1\n",
       .expected_update_build_id = "20220911.1",
+      .expected_update_version = "",
       .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
    },
 
    {
       .file_content = "20220915.100\n\n",
       .expected_update_build_id = "20220915.100",
+      .expected_update_version = "",
+      .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
+   },
+
+   {
+      .file_content = "20230929.101-3.6.1",
+      .expected_update_build_id = "20230929.101",
+      .expected_update_version = "3.6.1",
+      .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
+   },
+
+   {
+      .file_content = "20230929.101-3.6.2 \n\n",
+      .expected_update_build_id = "20230929.101",
+      .expected_update_version = "3.6.2",
+      .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
+   },
+
+   {
+      .file_content = "20230929.101-3.6.2\n",
+      .expected_update_build_id = "20230929.101",
+      .expected_update_version = "3.6.2",
+      .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
+   },
+
+   {
+      .file_content = "\n",
+      .expected_update_build_id = "",
+      .expected_update_version = "",
       .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
    },
 
    {
       .file_content = "",
       .expected_update_build_id = "",
+      .expected_update_version = "",
       .expected_status = AU_UPDATE_STATUS_SUCCESSFUL,
    },
 };
@@ -942,6 +982,8 @@ test_restarted_service(Fixture *f, gconstpointer context)
       atomupd_properties = _get_atomupd_properties(bus);
       g_assert_cmpstr(atomupd_properties->update_build_id, ==,
                       test->expected_update_build_id);
+      g_assert_cmpstr(atomupd_properties->update_version, ==,
+                      test->expected_update_version);
       g_assert_cmpuint(atomupd_properties->status, ==, test->expected_status);
 
       au_tests_stop_daemon_service(daemon_proc);
