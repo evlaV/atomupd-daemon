@@ -6,6 +6,7 @@ polkit.addRule(function(action, subject) {
         && (
             action.id === "com.steampowered.atomupd1.switch-to-variant"
             || action.id === "com.steampowered.atomupd1.start-downgrade"
+        )
     ) {
         return polkit.Result.YES;
    }
