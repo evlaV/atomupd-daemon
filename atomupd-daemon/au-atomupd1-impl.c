@@ -2173,7 +2173,7 @@ au_atomupd1_impl_new(const gchar *config_preference,
          const gchar *updated_build_id;
          g_autoptr(GVariant) available = NULL;
          g_autoptr(GVariant) available_later = NULL;
-         g_autoptr(JsonNode) root = json_parser_get_root(parser);
+         JsonNode *root = json_parser_get_root(parser); /* borrowed */
 
          updated_build_id = au_atomupd1_get_update_build_id((AuAtomupd1 *)atomupd);
 
