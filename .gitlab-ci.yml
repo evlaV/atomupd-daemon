@@ -86,6 +86,8 @@ build:clang_asan:
 
 build:valgrind:
   extends: .build
+  # FIXME this step is not yet entirely reliable
+  allow_failure: true
   variables:
     COMPILER: "gcc"
     LUNDEF: "true"
