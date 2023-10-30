@@ -25,3 +25,8 @@ Variants = rel;beta;main
 Username = example
 Password = hunter2
 ```
+
+To preserve the config file across updates use:
+```shell
+echo "/etc/steamos-atomupd/client-dev.conf" > /etc/atomic-update.conf.d/dev.conf
+```
