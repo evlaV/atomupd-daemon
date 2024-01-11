@@ -40,6 +40,7 @@ static gchar *opt_manifest = NULL;
 static gchar *opt_update_file = NULL;
 static gchar *opt_update_version = NULL;
 static gchar *opt_variant = NULL;
+static gchar *opt_branch = NULL;
 static gboolean opt_query_only = FALSE;
 static gboolean opt_estimate_download_size = FALSE;
 
@@ -53,6 +54,7 @@ static GOptionEntry options[] = {
    { "update-version", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_update_version,
      NULL, NULL },
    { "variant", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_variant, NULL, NULL },
+   { "branch", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_branch, NULL, NULL },
    { "query-only", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &opt_query_only, NULL,
      NULL },
    { "estimate-download-size", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE,

@@ -4,7 +4,7 @@ polkit.addRule(function(action, subject) {
         && subject.active == true
         && subject.local == true
         && (
-            action.id === "com.steampowered.atomupd1.switch-to-variant"
+            action.id === "com.steampowered.atomupd1.switch-variant-or-branch"
             || action.id === "com.steampowered.atomupd1.start-downgrade"
         )
     ) {

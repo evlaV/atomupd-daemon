@@ -7,8 +7,8 @@
   <vendor>Valve SteamOS</vendor>
   <vendor_url>http://www.steampowered.com</vendor_url>
 
-  <action id="com.steampowered.atomupd1.switch-to-variant">
-    <description>Change the update variant</description>
+  <action id="com.steampowered.atomupd1.switch-variant-or-branch">
+    <description>Change the update variant or branch</description>
     <icon_name>package-x-generic</icon_name>
     <defaults>
       <allow_any>auth_admin</allow_any>

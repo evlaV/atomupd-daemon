@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2023 Collabora Ltd.
+ * Copyright © 2021-2024 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -39,7 +39,7 @@
 #include <json-glib/json-glib.h>
 
 /* The version of this interface, exposed in the "Version" property */
-guint ATOMUPD_VERSION = 3;
+guint ATOMUPD_VERSION = 4;
 
 const gchar *AU_DEFAULT_CONFIG = "/etc/steamos-atomupd/client.conf";
 const gchar *AU_DEFAULT_DEV_CONFIG = "/etc/steamos-atomupd/client-dev.conf";
@@ -48,6 +48,8 @@ const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json"
 
 /* Please keep this in sync with steamos-select-branch */
 const gchar *AU_DEFAULT_BRANCH_PATH = "/var/lib/steamos-branch";
+
+const gchar *AU_USER_PREFERENCES = "/etc/steamos-atomupd/preferences.conf";
 
 /* Please keep this in sync with steamos-customizations common.mk */
 const gchar *AU_REBOOT_FOR_UPDATE = "/run/steamos-atomupd/reboot_for_update";
@@ -67,8 +69,6 @@ struct _AuAtomupd1Impl {
    gchar *manifest_path;
    GFile *updates_json_file;
    GFile *updates_json_copy;
-   GFileMonitor *variant_monitor;
-   gulong changed_id;
    GDataInputStream *start_update_stdout_stream;
    gint64 buildid_date;
    gint64 buildid_increment;
@@ -185,38 +185,8 @@ _au_get_expanded_variant(const gchar *variant)
    return g_strdup(variant);
 }
 
-/*
- * _au_get_legacy_contracted_variant:
- * @variant: (not nullable): Variant to contract
- *
- * In Jupiter we historically stored the chosen variant in a contracted
- * form. This method will convert the canonical expanded variant into the
- * contracted version.
- *
- * If the variant isn't one that required to be contracted, a copy of
- * @variant will be returned.
- *
- * Returns: (transfer full): The contracted version of @variant, or a copy of
- *  @variant, if it doesn't need to be contracted.
- */
-static gchar *
-_au_get_legacy_contracted_variant(const gchar *variant)
-{
-   gsize i;
-
-   g_return_val_if_fail(variant != NULL, NULL);
-
-   for (i = 0; i < G_N_ELEMENTS(variant_conversions); i++) {
-      if (g_strcmp0(variant, variant_conversions[i].expanded) == 0)
-         return g_strdup(variant_conversions[i].contracted);
-   }
-
-   g_debug("The variant %s doesn't have a legacy contracted version", variant);
-   return g_strdup(variant);
-}
-
 static const gchar *
-_au_get_branch_file_path(void)
+_au_get_legacy_branch_file_path(void)
 {
    static const gchar *branch_file = NULL;
 
@@ -231,114 +201,237 @@ _au_get_branch_file_path(void)
    return branch_file;
 }
 
-static gchar *
-_au_get_default_variant(const gchar *manifest, GError **error);
-
-/*
- * _au_get_chosen_variant:
- * @manifest_path: (not nullable): Path to the configuration file
- * @error: Used to raise an error on failure
- *
- * Retrieve the variant that is currently being tracked. This value is taken
- * by parsing the branch file. If the file is empty or not available, it will
- * be returned the default variant from the JSON manifest file.
- *
- * Returns: (transfer full): The chosen variant that is currently being
- *  tracked
- */
-static gchar *
-_au_get_chosen_variant(const gchar *manifest_path, GError **error)
+static const gchar *
+_au_get_user_preferences_file_path(void)
 {
-   g_autofree gchar *variant = NULL;
-   g_autoptr(GError) local_error = NULL;
-   const char *search;
-   gsize len;
+   static const gchar *user_preferences_file = NULL;
 
-   if (!g_file_get_contents(_au_get_branch_file_path(), &variant, &len, &local_error)) {
-      if (local_error->code != G_FILE_ERROR_NOENT) {
-         g_propagate_error(error, g_steal_pointer(&local_error));
-         return NULL;
-      }
+   if (user_preferences_file == NULL) {
+      /* This environment variable is used for debugging and automated tests */
+      user_preferences_file = g_getenv("AU_USER_PREFERENCES_FILE");
 
-      g_clear_error(&local_error);
-      return _au_get_default_variant(manifest_path, error);
+      if (user_preferences_file == NULL)
+         user_preferences_file = AU_USER_PREFERENCES;
    }
 
-   if (len == 0)
-      return _au_get_default_variant(manifest_path, error);
-
-   /* Remove eventual trailing newline that might be added by steamos-select-branch */
-   if (variant[len - 1] == '\n')
-      variant[len - 1] = '\0';
-
-   search = strstr(variant, "\n");
-   if (search != NULL) {
-      /* If we have multiple newlines the file is likely malformed */
-      g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                  "Failed to parse the branch file path \"%s\"",
-                  _au_get_branch_file_path());
-      return NULL;
-   }
-
-   return g_steal_pointer(&variant);
+   return user_preferences_file;
 }
 
 /*
- * _au_set_variant:
+ * _au_update_user_preferences:
+ * @variant: Which variant to track
+ * @branch: Which branch to track
+ * @error: (out) (optional): Used to return an error on failure
  *
- * Update the Variant property with the expanded version of @variant and
- * clear the eventual available updates list.
+ * Returns: %TRUE if the user preferences were successfully written to a file
+ */
+static gboolean
+_au_update_user_preferences(const gchar *variant,
+                            const gchar *branch,
+                            GError **error)
+{
+   const gchar *user_prefs_path = _au_get_user_preferences_file_path();
+   g_autoptr(GKeyFile) preferences = g_key_file_new();
+   g_autoptr(GError) local_error = NULL;
+
+   if (!g_key_file_load_from_file(preferences, user_prefs_path,
+                                  G_KEY_FILE_KEEP_COMMENTS, &local_error)) {
+      if (g_error_matches (local_error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+         g_debug("'%s' is missing, creating a new one...", user_prefs_path);
+      } else {
+         g_warning("An error occurred while attempting to open the preferences file '%s'",
+                   user_prefs_path);
+         g_propagate_error(error, g_steal_pointer(&local_error));
+         return FALSE;
+      }
+   }
+
+   g_key_file_set_string(preferences, "Choices", "Variant", variant);
+   g_key_file_set_string(preferences, "Choices", "Branch", branch);
+
+   return g_key_file_save_to_file(preferences, user_prefs_path, error);
+}
+
+/*
+ * _au_convert_from_legacy_variant:
+ * @legacy_variant: Legacy variant to convert
+ * @variant_out: (out): Used to return the variant
+ * @branch_out: (out): Used to return the branch
+ * @error: (out) (optional): Used to return an error on failure
+ *
+ * Convert the legacy variant into the new variant and branch values.
+ * Adapted from steamos-atomupd `convert_from_legacy_variant()`
+ *
+ * Returns: %TRUE if it was possible to convert @legacy_variant.
+ */
+static gboolean
+_au_convert_from_legacy_variant(const gchar *legacy_variant,
+                                gchar **variant_out,
+                                gchar **branch_out,
+                                GError **error)
+{
+   g_autofree gchar *expanded_variant = NULL;
+
+   expanded_variant = _au_get_expanded_variant(legacy_variant);
+
+   if (g_str_equal(expanded_variant, "steamdeck")) {
+      *variant_out = g_strdup("steamdeck");
+      *branch_out = g_strdup("stable");
+   } else if (g_str_has_prefix(expanded_variant, "steamdeck-")) {
+      *variant_out = g_strdup("steamdeck");
+      *branch_out = g_strdup(expanded_variant + strlen("steamdeck-"));
+   } else {
+      return au_throw_error(error, "The legacy variant '%s' is unexpected",
+                            expanded_variant);
+   }
+
+   return TRUE;
+}
+
+static gchar *
+_au_get_default_variant(const gchar *manifest, GError **error);
+
+static gchar *
+_au_get_default_branch(const gchar *manifest, GError **error);
+
+/*
+ * _au_load_user_preferences:
+ * @manifest_path: (not nullable): Path to the image manifest file
+ * @variant_out: (out): Used to return the tracked variant
+ * @branch_out: (out): Used to return the tracked branch
+ * @error: Used to raise an error on failure
+ *
+ * Retrieve the variant and branch that are currently being tracked. These values
+ * are taken by parsing the user preference file. If the file is not available, the old
+ * legacy "steamos-branch" file will be used instead. If even that file is not available,
+ * the default values will be taken from the image JSON manifest file.
+ *
+ * Returns: %TRUE if the preferences are correctly retrieved
+ */
+static gboolean
+_au_load_user_preferences(const gchar *manifest_path,
+                          gchar **variant_out,
+                          gchar **branch_out,
+                          GError **error)
+{
+   g_autofree gchar *variant = NULL;
+   g_autofree gchar *branch = NULL;
+   const gchar *user_prefs_path = _au_get_user_preferences_file_path();
+
+   g_return_val_if_fail(manifest_path != NULL, FALSE);
+   g_return_val_if_fail(variant_out != NULL && *variant_out == NULL, FALSE);
+   g_return_val_if_fail(branch_out != NULL && *branch_out == NULL, FALSE);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   if (g_file_test(user_prefs_path, G_FILE_TEST_EXISTS)) {
+      g_autoptr(GKeyFile) user_prefs = g_key_file_new();
+
+      if (!g_key_file_load_from_file(user_prefs, user_prefs_path, G_KEY_FILE_NONE,
+                                     error)) {
+         g_debug("The user preferences config file '%s' is probably malformed",
+                 user_prefs_path);
+         return FALSE;
+      }
+
+      variant = g_key_file_get_string(user_prefs, "Choices", "Variant", error);
+      if (variant == NULL) {
+         g_debug("Failed to parse the chosen Variant from '%s'", user_prefs_path);
+         return FALSE;
+      }
+
+      branch = g_key_file_get_string(user_prefs, "Choices", "Branch", error);
+      if (branch == NULL) {
+         g_debug("Failed to parse the chosen Branch from '%s'", user_prefs_path);
+         return FALSE;
+      }
+
+   } else if (g_file_test(_au_get_legacy_branch_file_path(), G_FILE_TEST_EXISTS)) {
+      /* If there isn't the user preference file, we try the legacy "steamos-branch" file
+       * instead */
+
+      g_autofree gchar *legacy_variant = NULL;
+      const gchar *branch_file_path = _au_get_legacy_branch_file_path();
+      const char *search;
+      gsize len;
+
+      if (!g_file_get_contents(branch_file_path, &legacy_variant, &len, error)) {
+         g_debug("The legacy config file '%s' is probably malformed", branch_file_path);
+         return FALSE;
+      }
+
+      if (len != 0) {
+         /* Remove eventual trailing newline that could have been added by
+          * steamos-select-branch */
+         if (legacy_variant[len - 1] == '\n')
+            legacy_variant[len - 1] = '\0';
+
+         search = strstr(legacy_variant, "\n");
+         if (search != NULL) {
+            /* If we have multiple newlines the file is likely malformed */
+            return au_throw_error(error, "Failed to parse the legacy config file '%s'",
+                                  branch_file_path);
+         }
+      }
+
+      /* Extrapolate the variant and branch from the legacy variant value */
+      if (!_au_convert_from_legacy_variant(legacy_variant, &variant, &branch, error))
+         return FALSE;
+
+      if (!_au_update_user_preferences(variant, branch, error))
+         return FALSE;
+
+      g_debug("The user preferences have been migrated to the new '%s' file.",
+              user_prefs_path);
+
+      /* TODO: When all Jupiter images use the new variant+branch, we can also clean
+       * up the old branch file. */
+
+   } else {
+      /* As our last resort we try to parse the image manifest file */
+
+      variant = _au_get_default_variant(manifest_path, error);
+      if (variant == NULL) {
+         g_debug("Failed to parse the default variant from the image manifest");
+         return FALSE;
+      }
+
+      branch = _au_get_default_branch(manifest_path, NULL);
+      if (branch == NULL) {
+         g_autofree gchar *legacy_variant = g_steal_pointer(&variant);
+
+         g_debug(
+            "There isn't a default branch from the manifest, this is a legacy image");
+
+         /* Extrapolate the variant and branch from the legacy variant value */
+         if (!_au_convert_from_legacy_variant(legacy_variant, &variant, &branch, error))
+            return FALSE;
+      }
+
+      if (!_au_update_user_preferences(variant, branch, error))
+         return FALSE;
+   }
+
+   g_debug("Tracking the variant %s and branch %s", variant, branch);
+   *variant_out = g_steal_pointer(&variant);
+   *branch_out = g_steal_pointer(&branch);
+   return TRUE;
+}
+
+/*
+ * _au_clear_available_updates:
+ *
+ * Clear the eventual available updates list.
  */
 static void
-_au_set_variant(AuAtomupd1 *object, const gchar *variant)
+_au_clear_available_updates(AuAtomupd1 *object)
 {
    g_autoptr(GVariant) available = NULL;
    g_autoptr(GVariant) available_later = NULL;
-   g_autofree gchar *expanded_variant = _au_get_expanded_variant(variant);
-
-   if (g_strcmp0(expanded_variant, au_atomupd1_get_variant(object)) == 0) {
-      g_debug("We are already tracking the variant %s, nothing to do", expanded_variant);
-      return;
-   }
-
-   g_debug("%s is the new chosen variant", expanded_variant);
 
    available = g_variant_new("a{sa{sv}}", NULL);
    available_later = g_variant_new("a{sa{sv}}", NULL);
    au_atomupd1_set_updates_available(object, g_steal_pointer(&available));
    au_atomupd1_set_updates_available_later(object, g_steal_pointer(&available_later));
-   au_atomupd1_set_variant(object, expanded_variant);
-}
-
-/*
- * _au_variant_changed_cb:
- *
- * When the branch file changes, the new content is parsed and reflected
- * in the "Variant" property.
- */
-static void
-_au_variant_changed_cb(GFileMonitor *monitor,
-                       GFile *file,
-                       GFile *other_file,
-                       GFileMonitorEvent event_type,
-                       AuAtomupd1 *atomupd)
-{
-   AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(atomupd);
-   g_autoptr(GError) error = NULL;
-   g_autofree gchar *variant = NULL;
-
-   g_debug("The chosen branch file changed (monitor event %i)", event_type);
-
-   if (event_type == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT) {
-      variant = _au_get_chosen_variant(self->manifest_path, &error);
-      if (variant == NULL) {
-         g_warning("An error occurred while loading the updated chosen variant: %s",
-                   error->message);
-         return;
-      }
-
-      _au_set_variant(atomupd, variant);
-   }
 }
 
 /*
@@ -454,15 +547,55 @@ _au_get_urls_from_config(GKeyFile *client_config, GError **error)
 }
 
 /*
- * _au_get_known_variants_from_config:
+ * _au_get_list_from_config:
  * @client_config: (not nullable): Object that holds the configuration key file
+ * @key: (not nullable): The key to retrieve
  * @error: Used to raise an error on failure
  *
- * The only allowed symbols for the known variants are lowercase
- * and uppercase word characters, numbers, underscore, hyphen and the semicolon
- * as a separator.
- * Eventual variants that have symbols outside those allowed, will be
+ * The only allowed symbols are lowercase and uppercase word characters,
+ * numbers, underscore, hyphen and the semicolon as a separator.
+ * Eventual values that have symbols outside those allowed, will be
  * skipped.
+ *
+ * Returns: (array zero-terminated=1) (transfer full) (nullable): The values
+ *  list, or %NULL if the configuration doesn't have the @key field.
+ */
+static gchar **
+_au_get_list_from_config(GKeyFile *client_config, const gchar *key, GError **error)
+{
+   g_autoptr(GRegex) regex;
+   g_autoptr(GPtrArray) valid_entries = NULL;
+   g_auto(GStrv) entries = NULL;
+
+   g_return_val_if_fail(client_config != NULL, NULL);
+   g_return_val_if_fail(key != NULL, NULL);
+
+   regex = g_regex_new("^[a-zA-Z0-9_-]+$", 0, 0, NULL);
+   g_assert(regex != NULL); /* known to be valid at compile-time */
+
+   valid_entries = g_ptr_array_new_with_free_func(g_free);
+
+   entries = g_key_file_get_string_list(client_config, "Server", key, NULL, error);
+   if (entries == NULL)
+      return NULL;
+
+   /* Sanitize the input. This helps us to skip improper/unexpected user inputs */
+   for (gsize i = 0; entries[i] != NULL; i++) {
+      if (g_regex_match(regex, entries[i], 0, NULL))
+         g_ptr_array_add(valid_entries, g_strdup(entries[i]));
+      else
+         g_warning(
+            "The config value \"%s\" has characters that are not allowed, skipping...",
+            entries[i]);
+   }
+
+   g_ptr_array_add(valid_entries, NULL);
+
+   return (gchar **)g_ptr_array_free(g_steal_pointer(&valid_entries), FALSE);
+}
+
+/*
+ * _au_get_known_variants_from_config:
  *
  * Returns: (array zero-terminated=1) (transfer full) (nullable): The list
  *  of known variants, or %NULL if the configuration doesn't have the
@@ -471,33 +604,20 @@ _au_get_urls_from_config(GKeyFile *client_config, GError **error)
 static gchar **
 _au_get_known_variants_from_config(GKeyFile *client_config, GError **error)
 {
-   g_autoptr(GRegex) regex;
-   g_autoptr(GPtrArray) valid_variants = NULL;
-   g_auto(GStrv) variants = NULL;
-   g_return_val_if_fail(client_config != NULL, NULL);
+   return _au_get_list_from_config(client_config, "Variants", error);
+}
 
-   regex = g_regex_new("^[a-zA-Z0-9_-]+$", 0, 0, NULL);
-   g_assert(regex != NULL); /* known to be valid at compile-time */
-
-   valid_variants = g_ptr_array_new_with_free_func(g_free);
-
-   variants =
-      g_key_file_get_string_list(client_config, "Server", "Variants", NULL, error);
-   if (variants == NULL)
-      return NULL;
-
-   /* Sanitize the input. This helps us to skip improper/unexpected user inputs */
-   for (gsize i = 0; variants[i] != NULL; i++) {
-      if (g_regex_match(regex, variants[i], 0, NULL))
-         g_ptr_array_add(valid_variants, g_strdup(variants[i]));
-      else
-         g_warning("The variant \"%s\" has characters that are not allowed, skipping...",
-                   variants[i]);
-   }
-
-   g_ptr_array_add(valid_variants, NULL);
-
-   return (gchar **)g_ptr_array_free(g_steal_pointer(&valid_variants), FALSE);
+/*
+ * _au_get_known_branches_from_config:
+ *
+ * Returns: (array zero-terminated=1) (transfer full) (nullable): The list
+ *  of known branches, or %NULL if the configuration doesn't have the
+ *  "Branches" field.
+ */
+static gchar **
+_au_get_known_branches_from_config(GKeyFile *client_config, GError **error)
+{
+   return _au_get_list_from_config(client_config, "Branches", error);
 }
 
 /*
@@ -555,6 +675,20 @@ static gchar *
 _au_get_default_variant(const gchar *manifest, GError **error)
 {
    return _au_get_string_from_manifest(manifest, "variant", error);
+}
+
+/*
+ * _au_get_default_branch:
+ * @manifest: (not nullable): Path to the JSON manifest file
+ * @error: Used to raise an error on failure
+ *
+ * Returns: (type filename) (transfer full): The branch value taken from the
+ *  manifest file, or %NULL on failure
+ */
+static gchar *
+_au_get_default_branch(const gchar *manifest, GError **error)
+{
+   return _au_get_string_from_manifest(manifest, "branch", error);
 }
 
 /*
@@ -998,25 +1132,62 @@ success:
 }
 
 static void
-au_switch_update_authorized_cb(AuAtomupd1 *object,
-                               GDBusMethodInvocation *invocation,
-                               gpointer arg_variant_pointer)
+_au_update_legacy_branch_file(const gchar *variant, const gchar *branch)
 {
-   gchar *arg_variant = arg_variant_pointer;
-   g_autofree gchar *contracted_variant = NULL;
+   /* TODO This is used to maintain backward compatibility when downgrading to older
+    * images. When Jupiter images in all branches are using the new variant+branch
+    * concept, we can remove the legacy "steamos-branch" file entirely. */
+
+   const gchar *contracted_legacy_variant;
+   const gchar *legacy_branch_file = _au_get_legacy_branch_file_path();
    g_autoptr(GError) error = NULL;
 
-   contracted_variant = _au_get_legacy_contracted_variant(arg_variant);
+   if (!g_str_equal(variant, "steamdeck")) {
+      /* Only the variant "steamdeck" was supported by the old Jupiter images.
+       * By removing the file, in case of downgrades, steamos-atomupd will fallback
+       * to parse the image manifest. */
+      g_unlink(legacy_branch_file);
+      return;
+   }
 
-   /* Store the legacy contracted version to ensure compatibility with steamos-update */
-   if (!g_file_set_contents(_au_get_branch_file_path(), contracted_variant, -1, &error)) {
+   if (g_str_equal(branch, "stable"))
+      contracted_legacy_variant = "rel";
+   else
+      contracted_legacy_variant = branch;
+
+   if (!g_file_set_contents(legacy_branch_file, contracted_legacy_variant, -1, &error)) {
+      /* This is only for the legacy file, it is not a critical error */
+      g_warning("An error occurred while updating the legacy branch file: %s",
+                error->message);
+   }
+}
+
+static void
+au_switch_variant_authorized_cb(AuAtomupd1 *object,
+                                GDBusMethodInvocation *invocation,
+                                gpointer arg_variant_pointer)
+{
+   gchar *arg_variant = arg_variant_pointer;
+   const gchar *branch = au_atomupd1_get_branch(object);
+   g_autoptr(GError) error = NULL;
+
+   if (g_strcmp0(arg_variant, au_atomupd1_get_variant(object)) == 0) {
+      g_debug("We are already tracking the variant %s, nothing to do", arg_variant);
+      au_atomupd1_complete_switch_to_variant(object, g_steal_pointer(&invocation));
+      return;
+   }
+
+   _au_update_legacy_branch_file(arg_variant, branch);
+
+   if (!_au_update_user_preferences(arg_variant, branch, &error)) {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "An error occurred while storing the chosen variant: %s", error->message);
       return;
    }
 
-   _au_set_variant(object, arg_variant);
+   _au_clear_available_updates(object);
+   au_atomupd1_set_variant(object, arg_variant);
 
    au_atomupd1_complete_switch_to_variant(object, g_steal_pointer(&invocation));
 }
@@ -1026,8 +1197,50 @@ au_atomupd1_impl_handle_switch_to_variant(AuAtomupd1 *object,
                                           GDBusMethodInvocation *invocation,
                                           const gchar *arg_variant)
 {
-   _au_check_auth(object, "com.steampowered.atomupd1.switch-to-variant",
-                  au_switch_update_authorized_cb, invocation, g_strdup(arg_variant),
+   _au_check_auth(object, "com.steampowered.atomupd1.switch-variant-or-branch",
+                  au_switch_variant_authorized_cb, invocation, g_strdup(arg_variant),
+                  g_free);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static void
+au_switch_branch_authorized_cb(AuAtomupd1 *object,
+                               GDBusMethodInvocation *invocation,
+                               gpointer arg_branch_pointer)
+{
+   gchar *arg_branch = arg_branch_pointer;
+   const gchar *variant = au_atomupd1_get_variant(object);
+   g_autoptr(GError) error = NULL;
+
+   if (g_str_equal(arg_branch, au_atomupd1_get_branch(object))) {
+      g_debug("We are already tracking the branch %s, nothing to do", arg_branch);
+      au_atomupd1_complete_switch_to_branch(object, g_steal_pointer(&invocation));
+      return;
+   }
+
+   _au_update_legacy_branch_file(variant, arg_branch);
+
+   if (!_au_update_user_preferences(variant, arg_branch, &error)) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "An error occurred while storing the chosen branch: %s", error->message);
+      return;
+   }
+
+   _au_clear_available_updates(object);
+   au_atomupd1_set_branch(object, arg_branch);
+
+   au_atomupd1_complete_switch_to_branch(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_switch_to_branch(AuAtomupd1 *object,
+                                         GDBusMethodInvocation *invocation,
+                                         const gchar *arg_branch)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.switch-variant-or-branch",
+                  au_switch_branch_authorized_cb, invocation, g_strdup(arg_branch),
                   g_free);
 
    return G_DBUS_METHOD_INVOCATION_HANDLED;
@@ -1040,6 +1253,7 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
 {
    GVariant *arg_options = arg_options_pointer;
    const gchar *variant = NULL;
+   const gchar *branch = NULL;
    const gchar *key = NULL;
    GVariant *value = NULL;
    GVariantIter iter;
@@ -1063,6 +1277,7 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    }
 
    variant = au_atomupd1_get_variant(object);
+   branch = au_atomupd1_get_branch(object);
 
    argv = g_ptr_array_new_with_free_func(g_free);
    g_ptr_array_add(argv, g_strdup("steamos-atomupd-client"));
@@ -1072,6 +1287,8 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    g_ptr_array_add(argv, g_strdup(self->manifest_path));
    g_ptr_array_add(argv, g_strdup("--variant"));
    g_ptr_array_add(argv, g_strdup(variant));
+   g_ptr_array_add(argv, g_strdup("--branch"));
+   g_ptr_array_add(argv, g_strdup(branch));
    g_ptr_array_add(argv, g_strdup("--query-only"));
    g_ptr_array_add(argv, g_strdup("--estimate-download-size"));
    g_ptr_array_add(argv, NULL);
@@ -1885,6 +2102,7 @@ init_atomupd1_iface(AuAtomupd1Iface *iface)
    iface->handle_resume_update = au_atomupd1_impl_handle_resume_update;
    iface->handle_start_update = au_atomupd1_impl_handle_start_update;
    iface->handle_switch_to_variant = au_atomupd1_impl_handle_switch_to_variant;
+   iface->handle_switch_to_branch = au_atomupd1_impl_handle_switch_to_branch;
 }
 
 G_DEFINE_TYPE_WITH_CODE(AuAtomupd1Impl,
@@ -1908,13 +2126,6 @@ au_atomupd1_impl_finalize(GObject *object)
       g_file_delete(self->updates_json_copy, NULL, NULL);
       g_clear_object(&self->updates_json_copy);
    }
-
-   if (self->changed_id != 0) {
-      g_signal_handler_disconnect(self->variant_monitor, self->changed_id);
-      self->changed_id = 0;
-   }
-
-   g_clear_object(&self->variant_monitor);
 
    au_start_update_clear(self);
 
@@ -1974,7 +2185,7 @@ au_atomupd1_impl_new(const gchar *config_preference,
                      GError **error)
 {
    g_autofree gchar *variant = NULL;
-   g_autofree gchar *expanded_variant = NULL;
+   g_autofree gchar *branch = NULL;
    g_autofree gchar *system_build_id = NULL;
    g_autofree gchar *system_version = NULL;
    g_autofree gchar *manifest_from_config = NULL;
@@ -1983,8 +2194,8 @@ au_atomupd1_impl_new(const gchar *config_preference,
    g_autofree gchar *password = NULL;
    g_autofree gchar *auth_encoded = NULL;
    g_auto(GStrv) known_variants = NULL;
+   g_auto(GStrv) known_branches = NULL;
    g_autoptr(GFile) updates_json_parent = NULL;
-   g_autoptr(GFile) branch_file = NULL;
    const gchar *updates_json_path;
    const gchar *reboot_for_update;
    g_autoptr(GError) local_error = NULL;
@@ -2022,7 +2233,7 @@ au_atomupd1_impl_new(const gchar *config_preference,
          atomupd->manifest_path = g_strdup(AU_DEFAULT_MANIFEST);
    }
 
-   g_debug("Getting the list of known variants");
+   g_debug("Getting the list of known variants and branches");
    known_variants = _au_get_known_variants_from_config(client_config, &local_error);
    if (known_variants == NULL) {
       /* Log the error, leave "KnownVariants" as empty and try to continue */
@@ -2032,6 +2243,17 @@ au_atomupd1_impl_new(const gchar *config_preference,
    } else {
       au_atomupd1_set_known_variants((AuAtomupd1 *)atomupd,
                                      (const gchar *const *)known_variants);
+   }
+
+   known_branches = _au_get_known_branches_from_config(client_config, &local_error);
+   if (known_branches == NULL) {
+      /* Log the error, leave "KnownBranches" as empty and try to continue */
+      g_warning("Failed to get the list of known branches from %s: %s",
+                atomupd->config_path, local_error->message);
+      g_clear_error(&local_error);
+   } else {
+      au_atomupd1_set_known_branches((AuAtomupd1 *)atomupd,
+                                     (const gchar *const *)known_branches);
    }
 
    /* If the config has an HTTP auth, we need to ensure that netrc and Desync
@@ -2084,24 +2306,11 @@ au_atomupd1_impl_new(const gchar *config_preference,
       g_clear_error(&local_error);
    }
 
-   /* Monitor the file for changes to avoid an out of sync situation, e.g. in
-    * case the CLI steamos-select-branch is manually invoked. */
-   branch_file = g_file_new_for_path(_au_get_branch_file_path());
-   atomupd->variant_monitor =
-      g_file_monitor_file(branch_file, G_FILE_MONITOR_NONE, NULL, error);
-   if (atomupd->variant_monitor == NULL)
+   if (!_au_load_user_preferences(atomupd->manifest_path, &variant, &branch, error))
       return NULL;
 
-   atomupd->changed_id = g_signal_connect(atomupd->variant_monitor, "changed",
-                                          G_CALLBACK(_au_variant_changed_cb), atomupd);
-
-   variant = _au_get_chosen_variant(atomupd->manifest_path, error);
-   if (variant == NULL)
-      return NULL;
-   expanded_variant = _au_get_expanded_variant(variant);
-
-   g_debug("Tracking the variant %s", expanded_variant);
-   au_atomupd1_set_variant((AuAtomupd1 *)atomupd, expanded_variant);
+   au_atomupd1_set_variant((AuAtomupd1 *)atomupd, variant);
+   au_atomupd1_set_branch((AuAtomupd1 *)atomupd, branch);
 
    system_build_id = _au_get_current_system_build_id(atomupd->manifest_path, error);
    if (system_build_id == NULL)

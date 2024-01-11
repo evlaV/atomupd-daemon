@@ -128,7 +128,7 @@ au_tests_setup(Fixture *f, gconstpointer context)
       "com.steampowered.atomupd1.manage-pending-update",
       "com.steampowered.atomupd1.start-downgrade",
       "com.steampowered.atomupd1.start-upgrade",
-      "com.steampowered.atomupd1.switch-to-variant",
+      "com.steampowered.atomupd1.switch-variant-or-branch",
    };
 
    f->srcdir = g_strdup(g_getenv("G_TEST_SRCDIR"));
@@ -155,11 +155,19 @@ au_tests_setup(Fixture *f, gconstpointer context)
    /* Start with the mock RAUC service stopped */
    g_assert_cmpint(g_unlink(f->rauc_pid_path), ==, 0);
 
+   fd = g_file_open_tmp("preferences-XXXXXX", &f->preferences_path, &error);
+   g_assert_no_error(error);
+   close(fd);
+   /* Start with the preferences configuration file not available */
+   g_assert_cmpint(g_unlink(f->preferences_path), ==, 0);
+
    f->test_envp = g_get_environ();
    f->test_envp =
       g_environ_setenv(f->test_envp, "AU_UPDATES_JSON_FILE", f->updates_json, TRUE);
    f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_MOCK_RAUC_SERVICE_PID",
                                    f->rauc_pid_path, TRUE);
+   f->test_envp = g_environ_setenv(f->test_envp, "AU_USER_PREFERENCES_FILE",
+                                   f->preferences_path, TRUE);
 
    system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
    g_assert_no_error(error);
@@ -181,6 +189,9 @@ au_tests_teardown(Fixture *f, gconstpointer context)
 
    g_unlink(f->rauc_pid_path);
    g_free(f->rauc_pid_path);
+
+   g_unlink(f->preferences_path);
+   g_free(f->preferences_path);
 
    _stop_mock_polkit(f->polkit_pid);
 }

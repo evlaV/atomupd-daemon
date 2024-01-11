@@ -197,9 +197,8 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    g_autoptr(GError) error = NULL;
    g_autofree gchar *update_file_path = NULL;
    g_autofree gchar *output = NULL;
-   g_autofree gchar *steamos_branch = NULL;
    g_autofree gchar *parsed_variant = NULL;
-   int fd;
+   g_autoptr(GKeyFile) parsed_preferences = NULL;
 
    bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
 
@@ -209,30 +208,32 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    f->test_envp =
       g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
 
-   fd = g_file_open_tmp("steamos-branch-XXXXXX", &steamos_branch, &error);
-   g_assert_no_error(error);
-   close(fd);
-   f->test_envp =
-      g_environ_setenv(f->test_envp, "AU_CHOSEN_BRANCH_FILE", steamos_branch, TRUE);
-
    daemon_proc =
       au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
+   output = _au_execute_manager("switch-variant", "vanilla", f->test_envp, &error);
    g_assert_no_error(error);
-   output = _au_execute_manager("switch-variant", "steamdeck-beta", f->test_envp, &error);
+   parsed_preferences = g_key_file_new();
+   g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
+                             &error);
    g_assert_no_error(error);
-   g_file_get_contents(steamos_branch, &parsed_variant, NULL, &error);
+   parsed_variant = g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
    g_assert_no_error(error);
-   g_assert_cmpstr(parsed_variant, ==, "beta");
+   g_assert_cmpstr(parsed_variant, ==, "vanilla");
 
    g_clear_pointer(&output, g_free);
    g_clear_pointer(&parsed_variant, g_free);
+   g_clear_pointer(&parsed_preferences, g_key_file_free);
 
    output = _au_execute_manager("switch-variant", "steamdeck", f->test_envp, &error);
    g_assert_no_error(error);
-   g_file_get_contents(steamos_branch, &parsed_variant, NULL, &error);
+   parsed_preferences = g_key_file_new();
+   g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
+                             &error);
    g_assert_no_error(error);
-   g_assert_cmpstr(parsed_variant, ==, "rel");
+   parsed_variant = g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
+   g_assert_no_error(error);
+   g_assert_cmpstr(parsed_variant, ==, "steamdeck");
 
    g_clear_pointer(&output, g_free);
 

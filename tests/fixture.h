@@ -32,6 +32,7 @@ typedef struct {
    gchar *builddir;
    gchar *manifest_path;
    gchar *conf_path;
+   gchar *preferences_path;
    gchar *updates_json;
    /* Text file where we store the mock RAUC service pid */
    gchar *rauc_pid_path;

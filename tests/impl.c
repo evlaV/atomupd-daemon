@@ -71,6 +71,7 @@ typedef struct {
    gchar *current_version;
    gchar *current_build_id;
    GStrv known_variants;
+   GStrv known_branches;
 } AtomupdProperties;
 
 static void
@@ -84,6 +85,7 @@ atomupd_properties_free(AtomupdProperties *atomupd_properties)
    g_clear_pointer(&atomupd_properties->current_version, g_free);
    g_clear_pointer(&atomupd_properties->current_build_id, g_free);
    g_clear_pointer(&atomupd_properties->known_variants, g_strfreev);
+   g_clear_pointer(&atomupd_properties->known_branches, g_strfreev);
 
    g_free(atomupd_properties);
 }
@@ -114,7 +116,7 @@ static const UpdatesTest mock_infinite_update[] = {
       .estimated_size = 60112233,
    },
 
-   { },
+   {},
 };
 
 static const CheckUpdatesTest updates_test[] =
@@ -536,6 +538,7 @@ _get_atomupd_properties(GDBusConnection *bus)
    assert_variant("CurrentVersion", "s", current_version);
    assert_variant("CurrentBuildID", "s", current_build_id);
    assert_variant("KnownVariants", "^as", known_variants);
+   assert_variant("KnownBranches", "^as", known_branches);
 
    assert_variant_dict("UpdatesAvailable", available_iter, updates_available_n);
    assert_variant_dict("UpdatesAvailableLater", available_later_iter,
@@ -546,7 +549,8 @@ _get_atomupd_properties(GDBusConnection *bus)
 
 typedef struct {
    const gchar *config_name;
-   const gchar *variants[10];
+   const gchar *variants[5];
+   const gchar *branches[10];
 } PropertiesTest;
 
 static const PropertiesTest properties_test[] = {
@@ -557,33 +561,40 @@ static const PropertiesTest properties_test[] = {
 
    {
       .config_name = "client.conf",
-      .variants = { "rel", "rc", "beta", "bc", "main", NULL },
+      .variants = { "steamdeck", NULL },
+      .branches = { "stable", "rc", "beta", "bc", "main", NULL },
    },
 
    {
       .config_name = "client_empty_variants.conf",
       .variants = { NULL },
+      .branches = { "stable", "beta", NULL },
    },
 
    {
-      .config_name = "client_no_variants.conf", /* "Variants" missing from the config */
+      .config_name = "client_no_variants_empty_branches.conf",
+      /* "Variants" missing from the config */
       .variants = { NULL },
+      .branches = { NULL },
    },
 
    {
-      .config_name = "client_one_variant.conf",
-      .variants = { "rel", NULL },
+      .config_name = "client_no_branches.conf", /* "Branches" missing */
+      .variants = { "steamdeck", "vanilla", NULL },
+      .branches = { NULL },
    },
 
    {
-      .config_name = "client_invalid_variant.conf", /* The invalid variants are skipped */
-      .variants = { "rel", "Anoth3r-one", "valid", NULL },
+      .config_name = "client_invalid_variants_and_branches.conf",
+      /* The invalid variants and branches are skipped */
+      .variants = { "steamdeck", "Anoth3r-one", "valid", NULL },
+      .branches = { "stable", "S3cret-branch-", NULL },
    },
 
    {
-      .config_name =
-         "client_two_variants.conf", /* "Variants" list ending with a semicolon */
-      .variants = { "rel", "beta", NULL },
+      .config_name = "client_semicolon.conf", /* The lists end with a semicolon */
+      .variants = { "steamdeck", "vanilla", NULL },
+      .branches = { "beta", "bc", NULL },
    },
 };
 
@@ -617,6 +628,7 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
    g_assert_cmpstr(atomupd_properties->current_build_id, ==, "20220205.2");
    g_assert_cmpstr(atomupd_properties->current_version, ==, "snapshot");
    g_assert_cmpstrv(atomupd_properties->known_variants, test->variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, test->branches);
 
    au_tests_stop_daemon_service(daemon_proc);
 }
@@ -1007,69 +1019,103 @@ test_pending_reboot_check(Fixture *f, gconstpointer context)
 }
 
 typedef struct {
-   const gchar *initial_file_content; /* Initial content of the file used to store the
-                                         chosen branch */
-   const gchar *initial_expected_variant;
-   const gchar *edited_file_content; /* Simulate a variant change as if this was done with
-                                        steamos-select-branch */
-   const gchar *edited_expected_variant;
+   const gchar *variant;
+   const gchar *branch;
+} PrefsEntries;
+
+typedef struct {
+   const gchar *legacy_conf_file_content; /* Content of the legacy "steamos-branch" file */
+   PrefsEntries
+      initial_file; /* Initial variant and branch values in the preferences file */
+   gboolean preferences_file_missing;
+   PrefsEntries initial_expected;
    const gchar *switch_to_variant; /* Change variant with the SwitchToVariant method */
-   const gchar *switch_expected_variant; /* Expected value in the branch file */
-} VariantTest;
+   const gchar *switch_to_branch;  /* Change branch with the SwitchToBranch method */
+   PrefsEntries switch_expected;   /* Expected values in the preferences file */
+} PreferencesTest;
 
-static const VariantTest variant_test[] = {
+static const PreferencesTest preferences_test[] = {
    {
-      .initial_file_content = NULL, /* File missing */
-      .initial_expected_variant =
-         "steamdeck",                        /* Default value from the f->manifest_path */
-      .switch_to_variant = "steamdeck-main", /* This should create the missing file */
-      .switch_expected_variant =
-         "main", /* Assume "steamdeck-main" is stored in its contracted form */
+      .preferences_file_missing = TRUE,
+      .initial_expected = {
+         /* Default values from the f->manifest_path */
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+      .switch_expected = {
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
    },
 
    {
-      .initial_file_content = "rel",
-      .initial_expected_variant = "steamdeck",
-      .edited_file_content = "bc",
-      .edited_expected_variant = "steamdeck-bc",
+      .legacy_conf_file_content = "beta\n",
+      .preferences_file_missing = TRUE,
+      .initial_expected = {
+         .variant = "steamdeck",
+         .branch = "beta",
+      },
+      .switch_expected = {
+         .variant = "steamdeck",
+         .branch = "beta",
+      },
+   },
+
+   {
+      .legacy_conf_file_content = "steamdeck-main\n",
+      .preferences_file_missing = TRUE,
+      .initial_expected = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .switch_to_variant = "vanilla",
+      .switch_expected = {
+         .variant = "vanilla",
+         .branch = "main",
+      },
+   },
+
+   {
+      .legacy_conf_file_content = "rel",
+      /* We have both the new preferences file and the legacy one.
+       * In this situation we expect the new file to take precedence */
+      .initial_file = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .initial_expected = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .switch_to_variant = "vanilla",
+      .switch_to_branch = "bc",
+      .switch_expected = {
+         .variant = "vanilla",
+         .branch = "bc",
+      },
+   },
+
+   {
+      .initial_file = {
+         .variant = "vanilla",
+         .branch = "stable",
+      },
+      .initial_expected = {
+         .variant = "vanilla",
+         .branch = "stable",
+      },
       .switch_to_variant = "steamdeck",
-      .switch_expected_variant = "rel",
-   },
-
-   {
-      .initial_file_content = "beta\n",
-      .initial_expected_variant = "steamdeck-beta",
-      .edited_file_content = "rel",
-      .edited_expected_variant = "steamdeck",
-      .switch_to_variant = "steamdeck-beta",
-      .switch_expected_variant = "beta",
-   },
-
-   {
-      .initial_file_content = "steamdeck-main\n",
-      .initial_expected_variant = "steamdeck-main",
-      .edited_file_content = "staging",
-      .edited_expected_variant = "steamdeck-staging",
-      .switch_to_variant = "steamdeck-newer-future-variant",
-      .switch_expected_variant = "steamdeck-newer-future-variant",
-   },
-
-   {
-      .initial_file_content = "",
-      .initial_expected_variant =
-         "steamdeck", /* Default value from the f->manifest_path */
-      .edited_file_content = "steamdeck-main",
-      .edited_expected_variant = "steamdeck-main",
-      .switch_to_variant = "holo-another-beta",
-      .switch_expected_variant = "holo-another-beta",
+      .switch_to_branch = "beta",
+      .switch_expected = {
+         .variant = "steamdeck",
+         .branch = "beta",
+      },
    },
 };
 
 static void
-test_switch_variant(Fixture *f, gconstpointer context)
+test_preferences(Fixture *f, gconstpointer context)
 {
-   gulong wait = 0.3 * G_USEC_PER_SEC;
-
    gsize i;
    g_autoptr(GDBusConnection) bus = NULL;
    g_autoptr(GError) error = NULL;
@@ -1078,58 +1124,88 @@ test_switch_variant(Fixture *f, gconstpointer context)
 
    _skip_if_daemon_is_running(bus, NULL);
 
-   for (i = 0; i < G_N_ELEMENTS(variant_test); i++) {
+   for (i = 0; i < G_N_ELEMENTS(preferences_test); i++) {
       g_autoptr(GSubprocess) daemon_proc = NULL;
-      VariantTest test = variant_test[i];
-      g_autofree gchar *steamos_branch = NULL;
+      PreferencesTest test = preferences_test[i];
+      g_autofree gchar *legacy_steamos_branch = NULL;
+      g_autofree gchar *preferences_path = NULL;
+      g_autofree gchar *parsed_variant = NULL;
+      g_autofree gchar *parsed_branch = NULL;
+      g_autoptr(GKeyFile) parsed_preferences = NULL;
       int fd;
-      fd = g_file_open_tmp("steamos-branch-XXXXXX", &steamos_branch, &error);
+
+      fd = g_file_open_tmp("steamos-branch-XXXXXX", &legacy_steamos_branch, &error);
       g_assert_no_error(error);
       close(fd);
-      f->test_envp =
-         g_environ_setenv(f->test_envp, "AU_CHOSEN_BRANCH_FILE", steamos_branch, TRUE);
+      f->test_envp = g_environ_setenv(f->test_envp, "AU_CHOSEN_BRANCH_FILE",
+                                      legacy_steamos_branch, TRUE);
 
-      if (test.initial_file_content != NULL) {
-         g_file_set_contents(steamos_branch, test.initial_file_content, -1, &error);
+      fd = g_file_open_tmp("preferences-XXXXXX", &preferences_path, &error);
+      g_assert_no_error(error);
+      close(fd);
+      f->test_envp = g_environ_setenv(f->test_envp, "AU_USER_PREFERENCES_FILE",
+                                      preferences_path, TRUE);
+
+      if (test.legacy_conf_file_content != NULL) {
+         g_file_set_contents(legacy_steamos_branch, test.legacy_conf_file_content, -1,
+                             &error);
+         g_assert_no_error(error);
+      } else {
+         g_unlink(legacy_steamos_branch);
+      }
+
+      if (!test.preferences_file_missing) {
+         g_autoptr(GKeyFile) preferences = g_key_file_new();
+
+         if (test.initial_file.variant != NULL)
+            g_key_file_set_string(preferences, "Choices", "Variant",
+                                  test.initial_file.variant);
+
+         if (test.initial_file.branch != NULL)
+            g_key_file_set_string(preferences, "Choices", "Branch",
+                                  test.initial_file.branch);
+
+         g_key_file_save_to_file(preferences, preferences_path, &error);
          g_assert_no_error(error);
 
       } else {
-         g_unlink(steamos_branch);
+         g_unlink(preferences_path);
       }
 
       daemon_proc =
          au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
-      _check_string_property(bus, "Variant", test.initial_expected_variant);
+      _check_string_property(bus, "Variant", test.initial_expected.variant);
+      _check_string_property(bus, "Branch", test.initial_expected.branch);
 
-      if (test.edited_file_content != NULL) {
-         g_file_set_contents(steamos_branch, test.edited_file_content, -1, &error);
-         g_assert_no_error(error);
+      /* The daemon should always create the preferences file */
+      g_assert_true(g_file_test(preferences_path, G_FILE_TEST_EXISTS));
 
-         /* Wait a few milliseconds to ensure the inotify kicked in */
-         g_usleep(wait);
-
-         _check_string_property(bus, "Variant", test.edited_expected_variant);
-      }
-
-      if (test.switch_to_variant != NULL) {
-         g_autofree gchar *parsed_variant = NULL;
-
+      if (test.switch_to_variant != NULL)
          _send_atomupd_message_with_null_reply(bus, "SwitchToVariant", "(s)",
                                                test.switch_to_variant);
 
-         /* No need to wait here because we expect the new property to take immediate
-          * effect */
+      if (test.switch_to_branch != NULL)
+         _send_atomupd_message_with_null_reply(bus, "SwitchToBranch", "(s)",
+                                               test.switch_to_branch);
 
-         _check_string_property(bus, "Variant", test.switch_to_variant);
+      parsed_preferences = g_key_file_new();
+      g_key_file_load_from_file(parsed_preferences, preferences_path, G_KEY_FILE_NONE,
+                                &error);
+      g_assert_no_error(error);
+      parsed_variant =
+         g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
+      g_assert_no_error(error);
+      parsed_branch =
+         g_key_file_get_string(parsed_preferences, "Choices", "Branch", &error);
+      g_assert_no_error(error);
 
-         g_file_get_contents(steamos_branch, &parsed_variant, NULL, &error);
-         g_assert_no_error(error);
-         g_assert_cmpstr(parsed_variant, ==, test.switch_expected_variant);
-      }
+      g_assert_cmpstr(parsed_variant, ==, test.switch_expected.variant);
+      g_assert_cmpstr(parsed_branch, ==, test.switch_expected.branch);
 
       au_tests_stop_daemon_service(daemon_proc);
-      g_unlink(steamos_branch);
+      g_unlink(legacy_steamos_branch);
+      g_unlink(preferences_path);
    }
 }
 
@@ -1155,7 +1231,8 @@ test_unauthorized(Fixture *f, gconstpointer context)
    mock_polkit_set_allowed(allowed, 0);
 
    _check_message_reply(bus, "CheckForUpdates", "(a{sv})", NULL, expected_reply);
-   _check_message_reply(bus, "SwitchToVariant", "(s)", "rel", expected_reply);
+   _check_message_reply(bus, "SwitchToVariant", "(s)", "steamdeck", expected_reply);
+   _check_message_reply(bus, "SwitchToBranch", "(s)", "stable", expected_reply);
    _check_message_reply(bus, "StartUpdate", "(s)", MOCK_SUCCESS, expected_reply);
    _check_message_reply(bus, "PauseUpdate", NULL, NULL, expected_reply);
    _check_message_reply(bus, "ResumeUpdate", NULL, NULL, expected_reply);
@@ -1360,7 +1437,7 @@ main(int argc, char **argv)
    test_add("/daemon/multiple_method_calls", test_multiple_method_calls);
    test_add("/daemon/restarted_service", test_restarted_service);
    test_add("/daemon/pending_reboot_check", test_pending_reboot_check);
-   test_add("/daemon/switch_variant", test_switch_variant);
+   test_add("/daemon/preferences", test_preferences);
    test_add("/daemon/test_unauthorized", test_unauthorized);
    test_add("/daemon/test_parsing_existing_updates_json",
             test_parsing_existing_updates_json);
