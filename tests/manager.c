@@ -196,9 +196,6 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    g_autoptr(GDBusConnection) bus = NULL;
    g_autoptr(GError) error = NULL;
    g_autofree gchar *update_file_path = NULL;
-   g_autofree gchar *output = NULL;
-   g_autofree gchar *parsed_variant = NULL;
-   g_autoptr(GKeyFile) parsed_preferences = NULL;
 
    bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
 
@@ -211,42 +208,56 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    daemon_proc =
       au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
 
-   output = _au_execute_manager("switch-variant", "vanilla", f->test_envp, &error);
-   g_assert_no_error(error);
-   parsed_preferences = g_key_file_new();
-   g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
-                             &error);
-   g_assert_no_error(error);
-   parsed_variant = g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
-   g_assert_no_error(error);
-   g_assert_cmpstr(parsed_variant, ==, "vanilla");
+   {
+      g_autofree gchar *output = NULL;
+      g_autofree gchar *parsed_variant = NULL;
+      g_autoptr(GKeyFile) parsed_preferences = NULL;
 
-   g_clear_pointer(&output, g_free);
-   g_clear_pointer(&parsed_variant, g_free);
-   g_clear_pointer(&parsed_preferences, g_key_file_free);
+      output = _au_execute_manager("switch-variant", "vanilla", f->test_envp, &error);
+      g_assert_no_error(error);
+      parsed_preferences = g_key_file_new();
+      g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
+                                &error);
+      g_assert_no_error(error);
+      parsed_variant =
+         g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(parsed_variant, ==, "vanilla");
+   }
 
-   output = _au_execute_manager("switch-variant", "steamdeck", f->test_envp, &error);
-   g_assert_no_error(error);
-   parsed_preferences = g_key_file_new();
-   g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
-                             &error);
-   g_assert_no_error(error);
-   parsed_variant = g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
-   g_assert_no_error(error);
-   g_assert_cmpstr(parsed_variant, ==, "steamdeck");
+   {
+      g_autofree gchar *output = NULL;
+      g_autofree gchar *parsed_variant = NULL;
+      g_autoptr(GKeyFile) parsed_preferences = NULL;
 
-   g_clear_pointer(&output, g_free);
+      output = _au_execute_manager("switch-variant", "steamdeck", f->test_envp, &error);
+      g_assert_no_error(error);
+      parsed_preferences = g_key_file_new();
+      g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
+                              &error);
+      g_assert_no_error(error);
+      parsed_variant =
+         g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(parsed_variant, ==, "steamdeck");
+   }
 
-   output = _au_execute_manager("check", NULL, f->test_envp, &error);
-   g_assert_no_error(error);
-   g_assert_nonnull(strstr(output, "20220227.3"));
+   {
+      g_autofree gchar *output = NULL;
 
-   g_clear_pointer(&output, g_free);
+      output = _au_execute_manager("check", NULL, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "20220227.3"));
+   }
 
-   g_debug("Starting an update that is expected to complete in 1.5 seconds");
-   output = _au_execute_manager("update", MOCK_SUCCESS, f->test_envp, &error);
-   g_assert_no_error(error);
-   g_assert_nonnull(strstr(output, "Update completed"));
+   {
+      g_autofree gchar *output = NULL;
+
+      g_debug("Starting an update that is expected to complete in 1.5 seconds");
+      output = _au_execute_manager("update", MOCK_SUCCESS, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "Update completed"));
+   }
 
    au_tests_stop_daemon_service(daemon_proc);
 }
