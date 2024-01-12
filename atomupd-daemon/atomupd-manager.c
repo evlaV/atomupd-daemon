@@ -319,6 +319,26 @@ switch_variant(GOptionContext *context, GDBusConnection *bus, const gchar *varia
    return EXIT_SUCCESS;
 }
 
+static int
+switch_branch(GOptionContext *context, GDBusConnection *bus, const gchar *branch)
+{
+   g_autoptr(GError) error = NULL;
+   g_autoptr(GVariant) reply = NULL;
+
+   if (branch == NULL) {
+      g_print("The required branch has not been provided\n\n");
+      return print_usage(context);
+   }
+
+   if (!_send_message(bus, "SwitchToBranch", g_variant_new("(s)", branch), &reply,
+                      &error)) {
+      g_print("An error occurred while switching branch: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   return EXIT_SUCCESS;
+}
+
 typedef struct {
    const gchar *command;
    const gchar *argument;
@@ -345,6 +365,13 @@ static const LaunchCommands launch_commands[] = {
       .argument = "VARIANT",
       .description = "Select a different variant",
       .command_function = switch_variant,
+   },
+
+   {
+      .command = "switch-branch",
+      .argument = "BRANCH",
+      .description = "Select a different branch",
+      .command_function = switch_branch,
    },
 };
 

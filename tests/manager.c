@@ -211,35 +211,47 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    {
       g_autofree gchar *output = NULL;
       g_autofree gchar *parsed_variant = NULL;
+      g_autofree gchar *parsed_branch = NULL;
       g_autoptr(GKeyFile) parsed_preferences = NULL;
 
       output = _au_execute_manager("switch-variant", "vanilla", f->test_envp, &error);
+      g_assert_no_error(error);
+      g_clear_pointer(&output, g_free);
+      output = _au_execute_manager("switch-branch", "main", f->test_envp, &error);
       g_assert_no_error(error);
       parsed_preferences = g_key_file_new();
       g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
                                 &error);
       g_assert_no_error(error);
       parsed_variant =
-         g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
-      g_assert_no_error(error);
+         g_key_file_get_string(parsed_preferences, "Choices", "Variant", NULL);
       g_assert_cmpstr(parsed_variant, ==, "vanilla");
+      parsed_branch =
+         g_key_file_get_string(parsed_preferences, "Choices", "Branch", NULL);
+      g_assert_cmpstr(parsed_branch, ==, "main");
    }
 
    {
       g_autofree gchar *output = NULL;
       g_autofree gchar *parsed_variant = NULL;
+      g_autofree gchar *parsed_branch = NULL;
       g_autoptr(GKeyFile) parsed_preferences = NULL;
 
       output = _au_execute_manager("switch-variant", "steamdeck", f->test_envp, &error);
       g_assert_no_error(error);
+      g_clear_pointer(&output, g_free);
+      output = _au_execute_manager("switch-branch", "stable", f->test_envp, &error);
+      g_assert_no_error(error);
       parsed_preferences = g_key_file_new();
       g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
-                              &error);
+                                &error);
       g_assert_no_error(error);
       parsed_variant =
-         g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
-      g_assert_no_error(error);
+         g_key_file_get_string(parsed_preferences, "Choices", "Variant", NULL);
       g_assert_cmpstr(parsed_variant, ==, "steamdeck");
+      parsed_branch =
+         g_key_file_get_string(parsed_preferences, "Choices", "Branch", NULL);
+      g_assert_cmpstr(parsed_branch, ==, "stable");
    }
 
    {
