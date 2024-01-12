@@ -37,7 +37,8 @@ GSubprocess *
 au_tests_start_daemon_service(GDBusConnection *bus,
                               const gchar *manifest_path,
                               const gchar *conf,
-                              gchar **envp);
+                              gchar **envp,
+                              gboolean expected_to_fail);
 
 GSubprocess *
 au_tests_launch_rauc_service(const gchar *rauc_pid_path);

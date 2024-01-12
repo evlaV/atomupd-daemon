@@ -83,9 +83,9 @@ foreach test_name : ['au-atomupd1-impl', 'impl', 'manager', 'utils']
     # Increase the timeout because valgrind considerably slows down the execution time
     # Empirically, a 5x the normal timeout should be enough, but we triple that to
     # account for the very slow mock polkit start time
-    test_timeout = 1500
+    test_timeout = 2250
   else
-    test_timeout = 100
+    test_timeout = 150
   endif
 
   test(test_name, exe, env : test_env, timeout : test_timeout)

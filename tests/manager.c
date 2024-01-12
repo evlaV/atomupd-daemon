@@ -172,7 +172,7 @@ test_check_updates(Fixture *f, gconstpointer context)
          g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
 
       daemon_proc =
-         au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+         au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
 
       output = _au_execute_manager("check", NULL, f->test_envp, &error);
       g_assert_no_error(error);
@@ -206,7 +206,7 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
 
    daemon_proc =
-      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp);
+      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
 
    {
       g_autofree gchar *output = NULL;

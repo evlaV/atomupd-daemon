@@ -76,7 +76,8 @@ GSubprocess *
 au_tests_start_daemon_service(GDBusConnection *bus,
                               const gchar *manifest_path,
                               const gchar *conf,
-                              gchar **envp)
+                              gchar **envp,
+                              gboolean expected_to_fail)
 {
    g_autoptr(GSubprocessLauncher) proc_launcher = NULL;
    g_autoptr(GSubprocess) proc = NULL;
@@ -120,6 +121,12 @@ au_tests_start_daemon_service(GDBusConnection *bus,
       g_debug("Atomupd service is not ready: %s", error->message);
       g_clear_error(&error);
       g_usleep(wait);
+   }
+
+   if (expected_to_fail) {
+      g_assert_cmpint(i, ==, max_wait);
+      g_debug("The service didn't start");
+      return NULL;
    }
 
    g_assert_cmpint(i, <, max_wait);

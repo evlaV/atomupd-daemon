@@ -2215,13 +2215,8 @@ au_atomupd1_impl_new(const gchar *config_preference,
    else
       atomupd->config_path = g_strdup(AU_DEFAULT_CONFIG);
 
-   if (!g_key_file_load_from_file(client_config, atomupd->config_path, G_KEY_FILE_NONE,
-                                  &local_error)) {
-      /* The configuration file is not mandatory, continue anyway */
-      g_debug("Failed to load the config file %s: %s", atomupd->config_path,
-              local_error->message);
-      g_clear_error(&local_error);
-   }
+   if (!g_key_file_load_from_file(client_config, atomupd->config_path, G_KEY_FILE_NONE, error))
+      return NULL;
 
    if (manifest_preference != NULL) {
       atomupd->manifest_path = g_strdup(manifest_preference);
@@ -2234,27 +2229,20 @@ au_atomupd1_impl_new(const gchar *config_preference,
    }
 
    g_debug("Getting the list of known variants and branches");
-   known_variants = _au_get_known_variants_from_config(client_config, &local_error);
-   if (known_variants == NULL) {
-      /* Log the error, leave "KnownVariants" as empty and try to continue */
-      g_warning("Failed to get the list of known variants from %s: %s",
-                atomupd->config_path, local_error->message);
-      g_clear_error(&local_error);
-   } else {
-      au_atomupd1_set_known_variants((AuAtomupd1 *)atomupd,
-                                     (const gchar *const *)known_variants);
-   }
 
-   known_branches = _au_get_known_branches_from_config(client_config, &local_error);
-   if (known_branches == NULL) {
-      /* Log the error, leave "KnownBranches" as empty and try to continue */
-      g_warning("Failed to get the list of known branches from %s: %s",
-                atomupd->config_path, local_error->message);
-      g_clear_error(&local_error);
-   } else {
-      au_atomupd1_set_known_branches((AuAtomupd1 *)atomupd,
-                                     (const gchar *const *)known_branches);
-   }
+   known_variants = _au_get_known_variants_from_config(client_config, error);
+   if (known_variants == NULL)
+      return NULL;
+
+   au_atomupd1_set_known_variants((AuAtomupd1 *)atomupd,
+                                  (const gchar *const *)known_variants);
+
+   known_branches = _au_get_known_branches_from_config(client_config, error);
+   if (known_branches == NULL)
+      return NULL;
+
+   au_atomupd1_set_known_branches((AuAtomupd1 *)atomupd,
+                                  (const gchar *const *)known_branches);
 
    /* If the config has an HTTP auth, we need to ensure that netrc and Desync
     * have it too */
