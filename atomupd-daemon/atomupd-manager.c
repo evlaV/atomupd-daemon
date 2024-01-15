@@ -35,6 +35,9 @@
 
 #include "utils.h"
 
+#define _send_atomupd_message(_bus, _method, _body, _reply_out, _error)                  \
+   _send_message(_bus, AU_ATOMUPD1_INTERFACE, _method, _body, _reply_out, _error)
+
 static GMainLoop *main_loop = NULL;
 
 static gboolean opt_session = FALSE;
@@ -56,6 +59,7 @@ static GOptionEntry options[] = {
  */
 static gboolean
 _send_message(GDBusConnection *bus,
+              const gchar *interface,
               const gchar *method,
               GVariant *body,
               GVariant **reply_out,
@@ -68,7 +72,7 @@ _send_message(GDBusConnection *bus,
    g_return_val_if_fail(reply_out == NULL || *reply_out == NULL, FALSE);
 
    message = g_dbus_message_new_method_call(AU_ATOMUPD1_BUS_NAME, AU_ATOMUPD1_PATH,
-                                            AU_ATOMUPD1_INTERFACE, method);
+                                            interface, method);
 
    if (body != NULL)
       g_dbus_message_set_body(message, body);
@@ -178,7 +182,7 @@ on_signal(gpointer user_data)
 
    /* If there is an update in progress, we try to avoid leaving it
     * running in background */
-   _send_message(bus, "CancelUpdate", NULL, NULL, NULL);
+   _send_atomupd_message(bus, "CancelUpdate", NULL, NULL, NULL);
 
    g_main_loop_quit(main_loop);
    return G_SOURCE_REMOVE;
@@ -226,8 +230,8 @@ check_updates(GOptionContext *context,
    g_autoptr(GError) error = NULL;
    g_autoptr(GVariant) reply = NULL;
 
-   if (!_send_message(bus, "CheckForUpdates", g_variant_new("(a{sv})", NULL), &reply,
-                      &error)) {
+   if (!_send_atomupd_message(bus, "CheckForUpdates", g_variant_new("(a{sv})", NULL), &reply,
+                              &error)) {
       g_print("An error occurred while checking for updates: %s\n", error->message);
       return EXIT_FAILURE;
    }
@@ -288,8 +292,8 @@ launch_update(GOptionContext *context, GDBusConnection *bus, const gchar *update
    g_unix_signal_add(SIGINT, on_signal, bus);
    g_unix_signal_add(SIGTERM, on_signal, bus);
 
-   if (!_send_message(bus, "StartUpdate", g_variant_new("(s)", update_id), &reply,
-                      &error)) {
+   if (!_send_atomupd_message(bus, "StartUpdate", g_variant_new("(s)", update_id), &reply,
+                              &error)) {
       g_print("An error occurred while starting an update: %s\n", error->message);
       return EXIT_FAILURE;
    }
@@ -310,8 +314,8 @@ switch_variant(GOptionContext *context, GDBusConnection *bus, const gchar *varia
       return print_usage(context);
    }
 
-   if (!_send_message(bus, "SwitchToVariant", g_variant_new("(s)", variant), &reply,
-                      &error)) {
+   if (!_send_atomupd_message(bus, "SwitchToVariant", g_variant_new("(s)", variant), &reply,
+                              &error)) {
       g_print("An error occurred while switching variant: %s\n", error->message);
       return EXIT_FAILURE;
    }
@@ -330,8 +334,8 @@ switch_branch(GOptionContext *context, GDBusConnection *bus, const gchar *branch
       return print_usage(context);
    }
 
-   if (!_send_message(bus, "SwitchToBranch", g_variant_new("(s)", branch), &reply,
-                      &error)) {
+   if (!_send_atomupd_message(bus, "SwitchToBranch", g_variant_new("(s)", branch), &reply,
+                              &error)) {
       g_print("An error occurred while switching branch: %s\n", error->message);
       return EXIT_FAILURE;
    }
