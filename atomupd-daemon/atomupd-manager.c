@@ -43,6 +43,7 @@
                  _error)
 
 static GMainLoop *main_loop = NULL;
+static int main_loop_result = EXIT_SUCCESS;
 
 static gboolean opt_session = FALSE;
 static gboolean opt_verbose = FALSE;
@@ -153,6 +154,7 @@ on_properties_changed(GDBusProxy *proxy,
       g_print("%s: %s\n", g_variant_get_string(failure_code, NULL),
               g_variant_get_string(failure_message, NULL));
 
+      main_loop_result = EXIT_FAILURE;
       g_main_loop_quit(main_loop);
       return;
    }
@@ -304,7 +306,7 @@ launch_update(GOptionContext *context, GDBusConnection *bus, const gchar *update
 
    g_main_loop_run(main_loop);
 
-   return EXIT_SUCCESS;
+   return main_loop_result;
 }
 
 static int
