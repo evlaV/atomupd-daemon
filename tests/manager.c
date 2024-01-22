@@ -218,6 +218,7 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       g_autofree gchar *initial_branch = NULL;
       g_autofree gchar *tracked_variant = NULL;
       g_autofree gchar *tracked_branch = NULL;
+      g_autofree gchar *update_status = NULL;
       g_autoptr(GKeyFile) parsed_preferences = NULL;
 
       initial_variant =
@@ -251,6 +252,9 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       g_assert_cmpstr(tracked_variant, ==, "vanilla\n");
       tracked_branch = _au_execute_manager("tracked-branch", NULL, f->test_envp, NULL);
       g_assert_cmpstr(tracked_branch, ==, "main\n");
+
+      update_status = _au_execute_manager("get-update-status", NULL, f->test_envp, NULL);
+      g_assert_cmpstr(update_status, ==, "idle\n");
    }
 
    {
@@ -293,11 +297,14 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
 
    {
       g_autofree gchar *output = NULL;
+      g_autofree gchar *update_status = NULL;
 
       g_debug("Starting an update that is expected to complete in 1.5 seconds");
       output = _au_execute_manager("update", MOCK_SUCCESS, f->test_envp, &error);
       g_assert_no_error(error);
       g_assert_nonnull(strstr(output, "Update completed"));
+      update_status = _au_execute_manager("get-update-status", NULL, f->test_envp, NULL);
+      g_assert_cmpstr(update_status, ==, "successful\n");
    }
 
    au_tests_stop_daemon_service(daemon_proc);

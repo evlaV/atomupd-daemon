@@ -28,6 +28,11 @@ atomupd1 = gnome.gdbus_codegen(
   namespace : 'Au',
 )
 
+enums = gnome.mkenums_simple(
+  'enums',
+  sources: 'utils.h',
+)
+
 conf_data = configuration_data()
 conf_data.set('libexecdir', get_option('prefix') / get_option('libexecdir'))
 conf_data.set_quoted('authorized_user', get_option('authorized_user'))
@@ -83,7 +88,7 @@ executable(
 
 executable(
   'atomupd-manager',
-  sources: ['atomupd-manager.c', 'au-atomupd1-impl.c', atomupd1],
+  sources: ['atomupd-manager.c', 'au-atomupd1-impl.c', atomupd1, enums],
   dependencies : [glib, gio, gio_unix, json_glib, polkit_gobject, atomupd1_impl_dep],
   install : true,
 )

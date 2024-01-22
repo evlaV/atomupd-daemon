@@ -33,6 +33,7 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 
+#include "enums.h"
 #include "utils.h"
 
 #define _send_atomupd_message(_bus, _method, _body, _reply_out, _error)                  \
@@ -456,6 +457,37 @@ tracked_branch(G_GNUC_UNUSED GOptionContext *context,
    return EXIT_SUCCESS;
 }
 
+static int
+update_status(G_GNUC_UNUSED GOptionContext *context,
+              GDBusConnection *bus,
+              G_GNUC_UNUSED const gchar *argument)
+{
+   g_autoptr(GVariant) variant_reply = NULL;
+   g_autoptr(GError) error = NULL;
+   g_autoptr(GEnumClass) class = NULL;
+   GEnumValue *enum_value = NULL;
+   guint status;
+
+   variant_reply = get_atomupd_property(bus, "UpdateStatus", &error);
+   if (variant_reply == NULL) {
+      g_print("An error occurred while getting the update status: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   status = g_variant_get_uint32(variant_reply);
+   class = g_type_class_ref(AU_TYPE_UPDATE_STATUS);
+   enum_value = g_enum_get_value(class, status);
+
+   if (enum_value == NULL) {
+      g_print("The update status is unknown\n");
+      return EXIT_FAILURE;
+   }
+
+   g_print("%s\n", enum_value->value_nick);
+
+   return EXIT_SUCCESS;
+}
+
 typedef struct {
    const gchar *command;
    const gchar *argument;
@@ -513,6 +545,13 @@ static const LaunchCommands launch_commands[] = {
       .command = "tracked-branch",
       .description = "Get the branch that is currently being tracked",
       .command_function = tracked_branch,
+   },
+
+   {
+      .command = "get-update-status",
+      .description = "Get the update status, possible values are: idle, in-progress, "
+                     "paused, successful, failed, cancelled",
+      .command_function = update_status,
    },
 };
 
