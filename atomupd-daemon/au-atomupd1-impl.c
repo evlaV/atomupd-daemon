@@ -1256,6 +1256,7 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    const gchar *branch = NULL;
    const gchar *key = NULL;
    GVariant *value = NULL;
+   gboolean penultimate = FALSE;
    GVariantIter iter;
    GPid child_pid;
    g_autoptr(QueryData) data = au_query_data_new();
@@ -1269,7 +1270,17 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    g_variant_iter_init(&iter, arg_options);
 
    while (g_variant_iter_loop(&iter, "{sv}", &key, &value)) {
-      /* Reserved for future use */
+      if (g_str_equal(key, "penultimate")) {
+         if (g_variant_is_of_type(value, G_VARIANT_TYPE_BOOLEAN)) {
+            penultimate = g_variant_get_boolean(value);
+         } else {
+            g_dbus_method_invocation_return_error(
+               g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+               "The argument '%s' must have a boolean value", key);
+         }
+         continue;
+      }
+
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "The argument '%s' is not a valid option", key);
@@ -1291,6 +1302,10 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    g_ptr_array_add(argv, g_strdup(branch));
    g_ptr_array_add(argv, g_strdup("--query-only"));
    g_ptr_array_add(argv, g_strdup("--estimate-download-size"));
+
+   if (penultimate)
+      g_ptr_array_add(argv, g_strdup("--penultimate-update"));
+
    g_ptr_array_add(argv, NULL);
 
    if (!g_spawn_async_with_pipes(NULL,                        /* working directory */

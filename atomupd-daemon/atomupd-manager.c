@@ -48,6 +48,7 @@ static int main_loop_result = EXIT_SUCCESS;
 
 static gboolean opt_session = FALSE;
 static gboolean opt_verbose = FALSE;
+static gboolean opt_penultimate = FALSE;
 static gboolean opt_version = FALSE;
 
 static GOptionEntry options[] = {
@@ -55,6 +56,8 @@ static GOptionEntry options[] = {
      "Use the session bus instead of the system bus", NULL },
    { "verbose", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_verbose,
      "Be more verbose.", NULL },
+   { "penultimate-update", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,
+     &opt_penultimate, "Use the session bus instead of the system bus", NULL },
    { "version", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_version,
      "Print version number and exit.", NULL },
    { NULL }
@@ -236,9 +239,15 @@ check_updates(GOptionContext *context,
    g_autoptr(GVariantIter) available_later = NULL;
    g_autoptr(GError) error = NULL;
    g_autoptr(GVariant) reply = NULL;
+   g_auto(GVariantBuilder) builder;
 
-   if (!_send_atomupd_message(bus, "CheckForUpdates", g_variant_new("(a{sv})", NULL), &reply,
-                              &error)) {
+   g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+
+   if (opt_penultimate)
+      g_variant_builder_add(&builder, "{sv}", "penultimate", g_variant_new_boolean(TRUE));
+
+   if (!_send_atomupd_message(bus, "CheckForUpdates", g_variant_new("(a{sv})", builder),
+                              &reply, &error)) {
       g_print("An error occurred while checking for updates: %s\n", error->message);
       return EXIT_FAILURE;
    }

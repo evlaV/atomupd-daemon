@@ -297,6 +297,14 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
 
    {
       g_autofree gchar *output = NULL;
+
+      output = _au_execute_manager("check", "--penultimate-update", f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "20220227.3"));
+   }
+
+   {
+      g_autofree gchar *output = NULL;
       g_autofree gchar *update_status = NULL;
 
       g_debug("Starting an update that is expected to complete in 1.5 seconds");

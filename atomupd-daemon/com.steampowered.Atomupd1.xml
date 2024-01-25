@@ -292,8 +292,8 @@
 
     <!--
         CheckForUpdates:
-        @options: Vardict with configuration options. None currently available,
-          reserved for future use
+        @options: Vardict with configuration options. Currently the only available option
+          is 'penultimate', to ask for the penultimate update.
         @updates_available: Map of available update Build IDs to their keys and values
         @updates_available_later: Map of available update Build IDs, to their keys and
           values, that require a newer system version
