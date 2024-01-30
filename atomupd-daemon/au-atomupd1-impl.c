@@ -62,6 +62,8 @@ const gchar *AU_NETRC_PATH = "/root/.netrc";
 struct _AuAtomupd1Impl {
    AuAtomupd1Skeleton parent_instance;
 
+   GDebugController *debug_controller;
+   gulong debug_controller_id;
    PolkitAuthority *authority;
    GPid install_pid;
    guint install_event_source;
@@ -1306,6 +1308,9 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    if (penultimate)
       g_ptr_array_add(argv, g_strdup("--penultimate-update"));
 
+   if (g_debug_controller_get_debug_enabled (self->debug_controller))
+      g_ptr_array_add(argv, g_strdup("--debug"));
+
    g_ptr_array_add(argv, NULL);
 
    if (!g_spawn_async_with_pipes(NULL,                        /* working directory */
@@ -2006,6 +2011,10 @@ au_start_update_authorized_cb(AuAtomupd1 *object,
    g_ptr_array_add(argv, g_file_get_path(self->updates_json_copy));
    g_ptr_array_add(argv, g_strdup("--update-version"));
    g_ptr_array_add(argv, g_strdup(arg_id));
+
+   if (g_debug_controller_get_debug_enabled (self->debug_controller))
+      g_ptr_array_add(argv, g_strdup("--debug"));
+
    g_ptr_array_add(argv, NULL);
 
    au_start_update_clear(self);
@@ -2108,6 +2117,17 @@ au_atomupd1_impl_handle_resume_update(AuAtomupd1 *object,
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
+static gboolean
+debug_controller_authorize_cb(GDebugControllerDBus *debug_controller,
+                              GDBusMethodInvocation *invocation,
+                              gpointer user_data)
+{
+   /* Do not perform any additional check before authorizing this operation.
+    * We don't print sensitive information in the debug output, so there is no
+    * need to gate this behind polkit. */
+   return TRUE;
+}
+
 static void
 init_atomupd1_iface(AuAtomupd1Iface *iface)
 {
@@ -2141,6 +2161,9 @@ au_atomupd1_impl_finalize(GObject *object)
       g_file_delete(self->updates_json_copy, NULL, NULL);
       g_clear_object(&self->updates_json_copy);
    }
+
+   g_clear_signal_handler(&self->debug_controller_id, self->debug_controller);
+   g_clear_object(&self->debug_controller);
 
    au_start_update_clear(self);
 
@@ -2197,6 +2220,7 @@ _str_rstrip_newline(gchar *string)
 AuAtomupd1 *
 au_atomupd1_impl_new(const gchar *config_preference,
                      const gchar *manifest_preference,
+                     GDBusConnection *bus,
                      GError **error)
 {
    g_autofree gchar *variant = NULL;
@@ -2403,6 +2427,14 @@ au_atomupd1_impl_new(const gchar *config_preference,
          }
       }
    }
+
+   atomupd->debug_controller = G_DEBUG_CONTROLLER (g_debug_controller_dbus_new (bus, NULL, error));
+   if (atomupd->debug_controller == NULL)
+      return NULL;
+
+   atomupd->debug_controller_id = g_signal_connect (atomupd->debug_controller, "authorize",
+                                                    G_CALLBACK(debug_controller_authorize_cb),
+                                                    NULL);
 
    return (AuAtomupd1 *)atomupd;
 }

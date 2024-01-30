@@ -120,18 +120,18 @@ main(int argc, char *argv[])
    if (opt_replace)
       flags |= G_BUS_NAME_OWNER_FLAGS_REPLACE;
 
-   atomupd = au_atomupd1_impl_new(opt_config, opt_manifest, error);
-   if (atomupd == NULL) {
-      g_warning("An error occurred while initializing the daemon: %s",
-                local_error->message);
-      return EXIT_FAILURE;
-   }
-
    bus =
       g_bus_get_sync(opt_session ? G_BUS_TYPE_SESSION : G_BUS_TYPE_SYSTEM, NULL, error);
 
    if (bus == NULL) {
       g_warning("An error occurred while connecting to the bus: %s",
+                local_error->message);
+      return EXIT_FAILURE;
+   }
+
+   atomupd = au_atomupd1_impl_new(opt_config, opt_manifest, bus, error);
+   if (atomupd == NULL) {
+      g_warning("An error occurred while initializing the daemon: %s",
                 local_error->message);
       return EXIT_FAILURE;
    }

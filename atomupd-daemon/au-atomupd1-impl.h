@@ -39,8 +39,10 @@
 G_DECLARE_FINAL_TYPE(
    AuAtomupd1Impl, au_atomupd1_impl, AU, ATOMUPD1_IMPL, AuAtomupd1Skeleton)
 
-AuAtomupd1 *
-au_atomupd1_impl_new(const gchar *config, const gchar *manifest, GError **error);
+AuAtomupd1 *au_atomupd1_impl_new(const gchar *config,
+                                 const gchar *manifest,
+                                 GDBusConnection *bus,
+                                 GError **error);
 
 gboolean _au_get_http_auth_from_config(GKeyFile *client_config,
                                        gchar **username_out,
