@@ -37,6 +37,7 @@
 #include "fixture.h"
 #include "mock-defines.h"
 #include "services.h"
+#include "tests-utils.h"
 
 #define _skip_if_daemon_is_running(_bus, _error)                                         \
    if (au_tests_is_daemon_service_running(bus, _error)) {                                \
@@ -337,6 +338,114 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    au_tests_stop_daemon_service(daemon_proc);
 }
 
+static gboolean
+get_daemon_debug_status(GDBusConnection *bus)
+{
+   g_autoptr(GVariant) reply = NULL;
+   g_autoptr(GVariant) variant_reply = NULL;
+
+   reply =
+      send_atomupd_message(bus, "/org/gtk/Debugging", "org.freedesktop.DBus.Properties",
+                           "Get", "(ss)", "org.gtk.Debugging", "DebugEnabled");
+
+   g_variant_get(reply, "(v)", &variant_reply);
+
+   return g_variant_get_boolean(variant_reply);
+}
+
+static void
+test_verbose(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+   g_autofree gchar *update_file_path = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   update_file_path = g_build_filename(f->srcdir, "data", "update_one_minor.json", NULL);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                               f->test_envp, FALSE);
+
+   {
+      g_autofree gchar *output = NULL;
+
+      g_assert_false(get_daemon_debug_status(bus));
+      output = _au_execute_manager("check", NULL, TRUE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "20220227.3"));
+      /* At the end of the execution the daemon debug flag should be set to false once
+       * again */
+      g_assert_false(get_daemon_debug_status(bus));
+   }
+
+   {
+      g_autofree gchar *output = NULL;
+
+      g_debug(
+         "Starting an update with --verbose that is expected to complete in 1.5 seconds");
+      output = _au_execute_manager("update", MOCK_SUCCESS, TRUE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "Update completed"));
+      /* At the end of the execution the daemon debug flag should be set to false once
+       * again */
+      g_assert_false(get_daemon_debug_status(bus));
+   }
+
+   send_atomupd_message(bus, "/org/gtk/Debugging", "org.gtk.Debugging", "SetDebugEnabled",
+                        "(b)", TRUE);
+
+   {
+      g_autofree gchar *output = NULL;
+
+      g_assert_true(get_daemon_debug_status(bus));
+      output = _au_execute_manager("check", NULL, TRUE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "20220227.3"));
+      /* The debug option was already enabled, so it should not be changed to false */
+      g_assert_true(get_daemon_debug_status(bus));
+   }
+
+   {
+      g_autofree gchar *output = NULL;
+
+      g_assert_true(get_daemon_debug_status(bus));
+      g_debug(
+         "Starting an update with --verbose that is expected to complete in 1.5 seconds");
+      output = _au_execute_manager("update", MOCK_SUCCESS, TRUE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "Update completed"));
+      /* The debug option was already enabled, so it should not be changed to false */
+      g_assert_true(get_daemon_debug_status(bus));
+   }
+
+   send_atomupd_message(bus, "/org/gtk/Debugging", "org.gtk.Debugging", "SetDebugEnabled",
+                        "(b)", FALSE);
+
+   {
+      const gchar *manager_argv[] = { "atomupd-manager", "--session",  "--verbose",
+                                      "update",          MOCK_SUCCESS, NULL };
+
+      g_spawn_async(NULL, (gchar **)manager_argv, f->test_envp, G_SPAWN_SEARCH_PATH, NULL,
+                    NULL, NULL, &error);
+
+      /* Give it time to start the mock update */
+      g_usleep(0.5 * G_USEC_PER_SEC);
+      /* While the update is in progress we expect the debug status to be turned on */
+      g_assert_true(get_daemon_debug_status(bus));
+      /* Wait for the update to complete */
+      g_usleep(2 * G_USEC_PER_SEC);
+      g_assert_false(get_daemon_debug_status(bus));
+   }
+
+   au_tests_stop_daemon_service(daemon_proc);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -349,6 +458,7 @@ main(int argc, char **argv)
 
    test_add("/manager/check_updates", test_check_updates);
    test_add("/manager/multiple_method_calls", test_multiple_method_calls);
+   test_add("/manager/verbose", test_verbose);
 
    ret = g_test_run();
    return ret;
