@@ -37,11 +37,12 @@
 #include "utils.h"
 
 #define _send_atomupd_message(_bus, _method, _body, _reply_out, _error)                  \
-   _send_message(_bus, AU_ATOMUPD1_INTERFACE, _method, _body, _reply_out, _error)
+   _send_message(_bus, AU_ATOMUPD1_PATH, AU_ATOMUPD1_INTERFACE, _method, _body,          \
+                 _reply_out, _error)
 
 #define _send_properties_message(_bus, _method, _body, _reply_out, _error)               \
-   _send_message(_bus, "org.freedesktop.DBus.Properties", _method, _body, _reply_out,    \
-                 _error)
+   _send_message(_bus, AU_ATOMUPD1_PATH, "org.freedesktop.DBus.Properties", _method,     \
+                 _body, _reply_out, _error)
 
 static GMainLoop *main_loop = NULL;
 static int main_loop_result = EXIT_SUCCESS;
@@ -92,6 +93,7 @@ log_handler(const gchar *log_domain,
  */
 static gboolean
 _send_message(GDBusConnection *bus,
+              const gchar *path,
               const gchar *interface,
               const gchar *method,
               GVariant *body,
@@ -104,8 +106,8 @@ _send_message(GDBusConnection *bus,
 
    g_return_val_if_fail(reply_out == NULL || *reply_out == NULL, FALSE);
 
-   message = g_dbus_message_new_method_call(AU_ATOMUPD1_BUS_NAME, AU_ATOMUPD1_PATH,
-                                            interface, method);
+   message =
+      g_dbus_message_new_method_call(AU_ATOMUPD1_BUS_NAME, path, interface, method);
 
    if (body != NULL)
       g_dbus_message_set_body(message, body);
