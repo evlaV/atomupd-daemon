@@ -37,15 +37,18 @@
 #include "fixture.h"
 #include "mock-defines.h"
 #include "services.h"
+#include "tests-utils.h"
 
 #define _send_atomupd_message_with_null_reply(_bus, _method, _type, _content)            \
    g_assert_null(_send_atomupd_message(_bus, _method, _type, _content))
 
 #define _send_atomupd_message(_bus, _method, _format, ...)                               \
-   _send_message(_bus, AU_ATOMUPD1_INTERFACE, _method, _format, __VA_ARGS__)
+   send_atomupd_message(_bus, AU_ATOMUPD1_PATH, AU_ATOMUPD1_INTERFACE, _method, _format, \
+                        __VA_ARGS__)
 
 #define _send_properties_message(_bus, _method, _format, ...)                            \
-   _send_message(_bus, "org.freedesktop.DBus.Properties", _method, _format, __VA_ARGS__)
+   send_atomupd_message(_bus, AU_ATOMUPD1_PATH, "org.freedesktop.DBus.Properties",       \
+                        _method, _format, __VA_ARGS__)
 
 #define _skip_if_daemon_is_running(_bus, _error)                                         \
    if (au_tests_is_daemon_service_running(bus, _error)) {                                \
@@ -299,49 +302,6 @@ static const CheckUpdatesTest pending_reboot_test[] =
     },
   },
 };
-
-/*
- * If @body is floating, this method will assume ownership of @body.
- */
-static GVariant *
-_send_message(GDBusConnection *bus,
-              const gchar *interface,
-              const gchar *method,
-              const gchar *format_message,
-              ...)
-{
-   GVariant *reply_body = NULL;
-   va_list ap;
-   g_autofree gchar *variant_string = NULL;
-   g_autoptr(GDBusMessage) message = NULL;
-   g_autoptr(GDBusMessage) reply = NULL;
-   g_autoptr(GError) error = NULL;
-
-   message = g_dbus_message_new_method_call(AU_ATOMUPD1_BUS_NAME, AU_ATOMUPD1_PATH,
-                                            interface, method);
-
-   if (format_message != NULL) {
-      va_start(ap, format_message);
-      g_dbus_message_set_body(message, g_variant_new_va(format_message, NULL, &ap));
-      va_end(ap);
-   }
-
-   reply = g_dbus_connection_send_message_with_reply_sync(
-      bus, message, G_DBUS_SEND_MESSAGE_FLAGS_NONE, 3000, NULL, NULL, &error);
-   g_assert_no_error(error);
-
-   reply_body = g_dbus_message_get_body(reply);
-
-   if (reply_body == NULL) {
-      g_debug("The method \"%s\" didn't return anything", method);
-      return NULL;
-   }
-
-   variant_string = g_variant_print(reply_body, TRUE);
-   g_debug("Reply body of \"%s\": %s", method, variant_string);
-
-   return g_variant_ref_sink(reply_body);
-}
 
 static void
 _check_available_updates(GVariantIter *available_iter,
