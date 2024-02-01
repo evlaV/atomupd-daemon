@@ -1,5 +1,5 @@
 /*
- * Copyright © 2023 Collabora Ltd.
+ * Copyright © 2023-2024 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -62,6 +62,30 @@ static GOptionEntry options[] = {
      "Print version number and exit.", NULL },
    { NULL }
 };
+
+static void
+log_handler(const gchar *log_domain,
+            GLogLevelFlags log_level,
+            const gchar *message,
+            gpointer user_data)
+{
+   const gchar *level_prefix;
+
+   /* These are the only expected log levels that we handle. All the other more
+    * severe errors are left to the default handler */
+   if (log_level & G_LOG_LEVEL_WARNING)
+      level_prefix = "W";
+   else if (log_level & G_LOG_LEVEL_MESSAGE)
+      level_prefix = "N"; /* consistent with apt, which calls this a "notice" */
+   else if (log_level & G_LOG_LEVEL_INFO)
+      level_prefix = "I";
+   else if (log_level & G_LOG_LEVEL_DEBUG)
+      level_prefix = "D";
+   else
+      level_prefix = "?!";
+
+   g_printerr("%s[%s]: %s\n", g_get_prgname(), level_prefix, message);
+}
 
 /*
  * If @body is floating, this method will assume ownership of @body.
@@ -628,6 +652,7 @@ main(int argc, char *argv[])
    g_autoptr(GOptionContext) context = NULL;
    g_autoptr(GDBusConnection) bus = NULL;
    g_autofree gchar *summary = NULL;
+   GLogLevelFlags log_levels = G_LOG_LEVEL_MESSAGE | G_LOG_LEVEL_WARNING;
 
    context = g_option_context_new("");
    g_option_context_add_main_entries(context, options, NULL);
@@ -643,6 +668,11 @@ main(int argc, char *argv[])
       return print_usage(context);
    }
 
+   if (opt_verbose)
+      log_levels |= G_LOG_LEVEL_DEBUG | G_LOG_LEVEL_INFO;
+
+   g_log_set_handler(G_LOG_DOMAIN, log_levels, log_handler, NULL);
+
    if (opt_version) {
       g_print("%s:\n"
               " Package: atomupd-daemon\n"
@@ -650,9 +680,6 @@ main(int argc, char *argv[])
               g_get_prgname(), VERSION);
       return EXIT_SUCCESS;
    }
-
-   if (opt_verbose)
-      g_log_set_handler(G_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, g_log_default_handler, NULL);
 
    bus = g_bus_get_sync(opt_session ? G_BUS_TYPE_SESSION : G_BUS_TYPE_SYSTEM, NULL, NULL);
 
