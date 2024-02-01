@@ -428,18 +428,26 @@ test_verbose(Fixture *f, gconstpointer context)
                         "(b)", FALSE);
 
    {
+      int multiplier = 1;
       const gchar *manager_argv[] = { "atomupd-manager", "--session",  "--verbose",
                                       "update",          MOCK_SUCCESS, NULL };
+
+      /* Valgrind is really slow, so we start a mock update that takes longer to complete
+       * and we wait longer */
+      if (g_getenv("AU_TEST_VALGRIND") != NULL) {
+         manager_argv[4] = MOCK_SLOW;
+         multiplier = 6;
+      }
 
       g_spawn_async(NULL, (gchar **)manager_argv, f->test_envp, G_SPAWN_SEARCH_PATH, NULL,
                     NULL, NULL, &error);
 
       /* Give it time to start the mock update */
-      g_usleep(0.5 * G_USEC_PER_SEC);
+      g_usleep(0.5 * G_USEC_PER_SEC * multiplier);
       /* While the update is in progress we expect the debug status to be turned on */
       g_assert_true(get_daemon_debug_status(bus));
       /* Wait for the update to complete */
-      g_usleep(2 * G_USEC_PER_SEC);
+      g_usleep(2 * G_USEC_PER_SEC * multiplier);
       g_assert_false(get_daemon_debug_status(bus));
    }
 

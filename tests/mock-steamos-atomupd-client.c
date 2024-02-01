@@ -122,6 +122,17 @@ main(int argc, char **argv)
       printf("100%%\n");
 
       return EXIT_SUCCESS;
+   } else if (g_str_equal(opt_update_version, MOCK_SLOW)) {
+      /* Simulates an update that after 8 seconds successfully completes */
+      printf("0.00%%\n");
+      g_usleep(delay);
+      printf("4.08%% 01m12s\n");
+      g_usleep(delay);
+      printf("54.42%% 00m13s\n");
+      g_usleep(7 * G_USEC_PER_SEC);
+      printf("100%%\n");
+
+      return EXIT_SUCCESS;
    } else if (g_str_equal(opt_update_version, MOCK_INFINITE)) {
       /* Simulate a very long update. To make it consistent for the testing
        * it always prints the same progress percentage and estimation. */
