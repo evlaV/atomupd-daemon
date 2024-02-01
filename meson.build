@@ -140,6 +140,8 @@ json_glib = dependency(
 
 polkit_gobject = dependency('polkit-gobject-1')
 
+systemd = dependency('libsystemd')
+
 project_include_dirs = include_directories(
   '.',
 )

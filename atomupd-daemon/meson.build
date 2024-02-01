@@ -89,6 +89,6 @@ executable(
 executable(
   'atomupd-manager',
   sources: ['atomupd-manager.c', 'au-atomupd1-impl.c', atomupd1, enums],
-  dependencies : [glib, gio, gio_unix, json_glib, polkit_gobject, atomupd1_impl_dep],
+  dependencies : [glib, gio, gio_unix, json_glib, polkit_gobject, atomupd1_impl_dep, systemd],
   install : true,
 )

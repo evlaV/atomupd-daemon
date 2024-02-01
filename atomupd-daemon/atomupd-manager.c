@@ -32,6 +32,7 @@
 #include <glib-unix.h>
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <systemd/sd-journal.h>
 
 #include "enums.h"
 #include "utils.h"
@@ -43,6 +44,8 @@
 #define _send_properties_message(_bus, _method, _body, _reply_out, _error)               \
    _send_message(_bus, AU_ATOMUPD1_PATH, "org.freedesktop.DBus.Properties", _method,     \
                  _body, _reply_out, _error)
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(sd_journal, sd_journal_close)
 
 static GMainLoop *main_loop = NULL;
 static int main_loop_result = EXIT_SUCCESS;
@@ -56,7 +59,7 @@ static GOptionEntry options[] = {
    { "session", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &opt_session,
      "Use the session bus instead of the system bus", NULL },
    { "verbose", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_verbose,
-     "Be more verbose.", NULL },
+     "Be more verbose, including debug messages from atomupd-daemon.", NULL },
    { "penultimate-update", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,
      &opt_penultimate, "Use the session bus instead of the system bus", NULL },
    { "version", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_version,
@@ -206,6 +209,10 @@ on_properties_changed(GDBusProxy *proxy,
       g_print("%02lis", seconds_diff);
    }
 
+   /* Print newlines when using the verbose mode in order to have a more readable output */
+   if (opt_verbose)
+      g_print("\n");
+
    fflush(stdout);
 }
 
@@ -256,6 +263,113 @@ print_update_info(GVariantIter *available)
    }
 }
 
+static gboolean
+ensure_daemon_debug_enabled(GDBusConnection *bus,
+                            gboolean *edited_value_out,
+                            GError **error)
+{
+   g_autoptr(GVariant) reply = NULL;
+   g_autoptr(GVariant) variant_reply = NULL;
+   GVariant *body = NULL; /* floating */
+   gboolean previous_value;
+
+   g_return_val_if_fail(edited_value_out != NULL, FALSE);
+
+   body = g_variant_new("(ss)", "org.gtk.Debugging", "DebugEnabled");
+
+   if (!_send_message(bus, "/org/gtk/Debugging", "org.freedesktop.DBus.Properties", "Get",
+                      body, &reply, error))
+      return FALSE;
+
+   g_variant_get(reply, "(v)", &variant_reply);
+
+   previous_value = g_variant_get_boolean(variant_reply);
+
+   if (previous_value) {
+      g_debug("Debugging for the atomupd daemon is already enabled");
+      *edited_value_out = FALSE;
+      return TRUE;
+   }
+
+   if (!_send_message(bus, "/org/gtk/Debugging", "org.gtk.Debugging", "SetDebugEnabled",
+                      g_variant_new("(b)", TRUE), NULL, error)) {
+      return FALSE;
+   }
+
+   *edited_value_out = TRUE;
+
+   return TRUE;
+}
+
+static void
+print_journal_messages(sd_journal *journal)
+{
+   while (sd_journal_next(journal) > 0) {
+      const char *message;
+      const char *field;
+      size_t message_len;
+      size_t field_len;
+      int ret;
+
+      ret = sd_journal_get_data(journal, "MESSAGE", (const void **)&field, &field_len);
+      if (ret < 0)
+         continue;
+
+      /* Remove the field prefix */
+      message = (const char *)memchr(field, '=', field_len);
+      if (message == NULL)
+         continue;
+
+      message++;
+      message_len = field_len - (message - field);
+
+      g_debug("%.*s", (int)message_len, message);
+   }
+}
+
+static gboolean
+journal_callback(G_GNUC_UNUSED GIOChannel *channel,
+                 G_GNUC_UNUSED GIOCondition condition,
+                 gpointer user_data)
+{
+   sd_journal *journal = user_data;
+   print_journal_messages(journal);
+   return TRUE;
+}
+
+static sd_journal *
+open_atomupd_daemon_journal(GError **error)
+{
+   g_autoptr(sd_journal) journal = NULL;
+   int ret;
+   int flags = SD_JOURNAL_LOCAL_ONLY;
+
+   if (!opt_session)
+      flags |= SD_JOURNAL_SYSTEM;
+
+   ret = sd_journal_open(&journal, flags);
+   if (ret < 0)
+      return au_throw_error_null(error, "Failed to open the journal: %s",
+                                 g_strerror(-ret));
+
+   ret = sd_journal_add_match(journal, "SYSLOG_IDENTIFIER=atomupd-daemon", 0);
+   if (ret < 0)
+      return au_throw_error_null(error, "Failed to add a match for the journal: %s",
+                                 g_strerror(-ret));
+
+   ret = sd_journal_seek_tail(journal);
+   if (ret < 0)
+      return au_throw_error_null(error, "Failed to move to the end of the journal: %s",
+                                 g_strerror(-ret));
+
+   ret = sd_journal_previous(journal);
+   if (ret < 0)
+      return au_throw_error_null(error, "Failed to move the journal head position: %s",
+                                 g_strerror(-ret));
+
+   return g_steal_pointer(&journal);
+}
+
 static int
 check_updates(GOptionContext *context,
               GDBusConnection *bus,
@@ -266,14 +380,47 @@ check_updates(GOptionContext *context,
    g_autoptr(GError) error = NULL;
    g_autoptr(GVariant) reply = NULL;
    g_auto(GVariantBuilder) builder;
+   g_autoptr(sd_journal) journal = NULL;
+   gboolean edited_debug_value = FALSE;
+   gboolean ret;
+
+   if (opt_verbose) {
+      journal = open_atomupd_daemon_journal(&error);
+      if (journal == NULL) {
+         g_print("%s", error->message);
+         return EXIT_FAILURE;
+      }
+
+      if (!ensure_daemon_debug_enabled(bus, &edited_debug_value, &error)) {
+         g_print("%s", error->message);
+         return EXIT_FAILURE;
+      }
+   }
 
    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
 
    if (opt_penultimate)
       g_variant_builder_add(&builder, "{sv}", "penultimate", g_variant_new_boolean(TRUE));
 
-   if (!_send_atomupd_message(bus, "CheckForUpdates", g_variant_new("(a{sv})", builder),
-                              &reply, &error)) {
+   ret = _send_atomupd_message(bus, "CheckForUpdates", g_variant_new("(a{sv})", builder),
+                               &reply, &error);
+
+   if (opt_verbose) {
+      print_journal_messages(journal);
+
+      if (edited_debug_value) {
+         /* Reset the debug flag to its original value */
+         g_autoptr(GError) local_error = NULL;
+         if (!_send_message(bus, "/org/gtk/Debugging", "org.gtk.Debugging",
+                            "SetDebugEnabled", g_variant_new("(b)", FALSE), NULL,
+                            &local_error)) {
+            g_warning("Failed to restore the debug value of atomupd-daemon: %s",
+                      local_error->message);
+         }
+      }
+   }
+
+   if (!ret) {
       g_print("An error occurred while checking for updates: %s\n", error->message);
       return EXIT_FAILURE;
    }
@@ -308,6 +455,9 @@ launch_update(GOptionContext *context, GDBusConnection *bus, const gchar *update
    g_autoptr(GDBusProxy) proxy = NULL;
    g_autoptr(GError) error = NULL;
    g_autoptr(GVariant) reply = NULL;
+   g_autoptr(sd_journal) journal = NULL;
+   g_autoptr(GIOChannel) channel = NULL;
+   gboolean edited_debug_value = FALSE;
 
    if (update_id == NULL) {
       g_print("It is not possible to apply an update without its ID\n\n");
@@ -334,13 +484,42 @@ launch_update(GOptionContext *context, GDBusConnection *bus, const gchar *update
    g_unix_signal_add(SIGINT, on_signal, bus);
    g_unix_signal_add(SIGTERM, on_signal, bus);
 
+   if (opt_verbose) {
+      journal = open_atomupd_daemon_journal(&error);
+      if (journal == NULL) {
+         g_print("%s", error->message);
+         return EXIT_FAILURE;
+      }
+
+      int fd = sd_journal_get_fd(journal);
+      channel = g_io_channel_unix_new(fd);
+      g_io_add_watch(channel, G_IO_IN, (GIOFunc)journal_callback, journal);
+
+      if (!ensure_daemon_debug_enabled(bus, &edited_debug_value, &error)) {
+         g_print("%s", error->message);
+         return EXIT_FAILURE;
+      }
+   }
+
    if (!_send_atomupd_message(bus, "StartUpdate", g_variant_new("(s)", update_id), &reply,
                               &error)) {
-      g_print("An error occurred while starting an update: %s\n", error->message);
-      return EXIT_FAILURE;
+      g_print("An error occurred while starting the update: %s\n", error->message);
+      main_loop_result = EXIT_FAILURE;
+      goto cleanup;
    }
 
    g_main_loop_run(main_loop);
+
+cleanup:
+   if (edited_debug_value) {
+      /* Reset the debug flag to its original value */
+      g_clear_error(&error);
+      if (!_send_message(bus, "/org/gtk/Debugging", "org.gtk.Debugging",
+                         "SetDebugEnabled", g_variant_new("(b)", FALSE), NULL, &error)) {
+         g_warning("Failed to restore the debug value of atomupd-daemon: %s",
+                   error->message);
+      }
+   }
 
    return main_loop_result;
 }

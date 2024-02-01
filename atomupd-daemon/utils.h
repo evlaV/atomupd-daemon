@@ -81,3 +81,9 @@ gboolean _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
 
 gboolean au_throw_error(GError **error,
                         const char *format, ...) G_GNUC_PRINTF(2, 3);
+
+/* Similar to `au_throw_error()`, but it returns %NULL */
+#define au_throw_error_null(error, args...) ({ \
+   au_throw_error(error, args); \
+   NULL; \
+})
