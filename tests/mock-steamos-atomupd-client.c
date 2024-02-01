@@ -43,6 +43,7 @@ static gchar *opt_variant = NULL;
 static gchar *opt_branch = NULL;
 static gboolean opt_query_only = FALSE;
 static gboolean opt_estimate_download_size = FALSE;
+static gboolean opt_debug = FALSE;
 
 static GOptionEntry options[] = {
    { "config", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_config, NULL,
@@ -59,6 +60,7 @@ static GOptionEntry options[] = {
      NULL },
    { "estimate-download-size", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE,
      &opt_estimate_download_size, NULL, NULL },
+   { "debug", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_debug, NULL, NULL },
    { NULL }
 };
 

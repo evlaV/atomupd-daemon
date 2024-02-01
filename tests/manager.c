@@ -48,6 +48,7 @@
 static gchar *
 _au_execute_manager(const gchar *command,
                     const gchar *argument,
+                    gboolean verbose,
                     gchar **envp,
                     GError **error)
 {
@@ -55,7 +56,12 @@ _au_execute_manager(const gchar *command,
    gint wait_status = 0;
 
    const gchar *systemctl_argv[] = {
-      "atomupd-manager", "--session", command, argument, NULL,
+      "atomupd-manager",
+      "--session",
+      command,
+      argument,
+      verbose ? "--verbose" : NULL,
+      NULL,
    };
 
    g_return_val_if_fail(error == NULL || *error == NULL, NULL);
@@ -171,10 +177,10 @@ test_check_updates(Fixture *f, gconstpointer context)
       f->test_envp =
          g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
 
-      daemon_proc =
-         au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                                  f->test_envp, FALSE);
 
-      output = _au_execute_manager("check", NULL, f->test_envp, &error);
+      output = _au_execute_manager("check", NULL, FALSE, f->test_envp, &error);
       g_assert_no_error(error);
 
       g_debug("%s", output);
@@ -222,15 +228,17 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       g_autoptr(GKeyFile) parsed_preferences = NULL;
 
       initial_variant =
-         _au_execute_manager("tracked-variant", NULL, f->test_envp, &error);
+         _au_execute_manager("tracked-variant", NULL, FALSE, f->test_envp, &error);
       g_assert_cmpstr(initial_variant, ==, "steamdeck\n");
-      initial_branch = _au_execute_manager("tracked-branch", NULL, f->test_envp, &error);
+      initial_branch =
+         _au_execute_manager("tracked-branch", NULL, FALSE, f->test_envp, &error);
       g_assert_cmpstr(initial_branch, ==, "stable\n");
 
-      output = _au_execute_manager("switch-variant", "vanilla", f->test_envp, &error);
+      output =
+         _au_execute_manager("switch-variant", "vanilla", FALSE, f->test_envp, &error);
       g_assert_no_error(error);
       g_clear_pointer(&output, g_free);
-      output = _au_execute_manager("switch-branch", "main", f->test_envp, &error);
+      output = _au_execute_manager("switch-branch", "main", FALSE, f->test_envp, &error);
       g_assert_no_error(error);
       parsed_preferences = g_key_file_new();
       g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
@@ -243,17 +251,22 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
          g_key_file_get_string(parsed_preferences, "Choices", "Branch", NULL);
       g_assert_cmpstr(parsed_branch, ==, "main");
 
-      variants_list = _au_execute_manager("list-variants", NULL, f->test_envp, NULL);
+      variants_list =
+         _au_execute_manager("list-variants", NULL, FALSE, f->test_envp, NULL);
       g_assert_cmpstr(variants_list, ==, "steamdeck\n");
-      branches_list = _au_execute_manager("list-branches", NULL, f->test_envp, NULL);
+      branches_list =
+         _au_execute_manager("list-branches", NULL, FALSE, f->test_envp, NULL);
       g_assert_cmpstr(branches_list, ==, "stable\nrc\nbeta\nbc\nmain\n");
 
-      tracked_variant = _au_execute_manager("tracked-variant", NULL, f->test_envp, NULL);
+      tracked_variant =
+         _au_execute_manager("tracked-variant", NULL, FALSE, f->test_envp, NULL);
       g_assert_cmpstr(tracked_variant, ==, "vanilla\n");
-      tracked_branch = _au_execute_manager("tracked-branch", NULL, f->test_envp, NULL);
+      tracked_branch =
+         _au_execute_manager("tracked-branch", NULL, FALSE, f->test_envp, NULL);
       g_assert_cmpstr(tracked_branch, ==, "main\n");
 
-      update_status = _au_execute_manager("get-update-status", NULL, f->test_envp, NULL);
+      update_status =
+         _au_execute_manager("get-update-status", NULL, FALSE, f->test_envp, NULL);
       g_assert_cmpstr(update_status, ==, "idle\n");
    }
 
@@ -265,10 +278,12 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       g_autofree gchar *tracked_branch = NULL;
       g_autoptr(GKeyFile) parsed_preferences = NULL;
 
-      output = _au_execute_manager("switch-variant", "steamdeck", f->test_envp, &error);
+      output =
+         _au_execute_manager("switch-variant", "steamdeck", FALSE, f->test_envp, &error);
       g_assert_no_error(error);
       g_clear_pointer(&output, g_free);
-      output = _au_execute_manager("switch-branch", "stable", f->test_envp, &error);
+      output =
+         _au_execute_manager("switch-branch", "stable", FALSE, f->test_envp, &error);
       g_assert_no_error(error);
       parsed_preferences = g_key_file_new();
       g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
@@ -281,16 +296,18 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
          g_key_file_get_string(parsed_preferences, "Choices", "Branch", NULL);
       g_assert_cmpstr(parsed_branch, ==, "stable");
 
-      tracked_variant = _au_execute_manager("tracked-variant", NULL, f->test_envp, NULL);
+      tracked_variant =
+         _au_execute_manager("tracked-variant", NULL, FALSE, f->test_envp, NULL);
       g_assert_cmpstr(tracked_variant, ==, "steamdeck\n");
-      tracked_branch = _au_execute_manager("tracked-branch", NULL, f->test_envp, NULL);
+      tracked_branch =
+         _au_execute_manager("tracked-branch", NULL, FALSE, f->test_envp, NULL);
       g_assert_cmpstr(tracked_branch, ==, "stable\n");
    }
 
    {
       g_autofree gchar *output = NULL;
 
-      output = _au_execute_manager("check", NULL, f->test_envp, &error);
+      output = _au_execute_manager("check", NULL, FALSE, f->test_envp, &error);
       g_assert_no_error(error);
       g_assert_nonnull(strstr(output, "20220227.3"));
    }
@@ -298,7 +315,8 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    {
       g_autofree gchar *output = NULL;
 
-      output = _au_execute_manager("check", "--penultimate-update", f->test_envp, &error);
+      output = _au_execute_manager("check", "--penultimate-update", FALSE, f->test_envp,
+                                   &error);
       g_assert_no_error(error);
       g_assert_nonnull(strstr(output, "20220227.3"));
    }
@@ -308,10 +326,11 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       g_autofree gchar *update_status = NULL;
 
       g_debug("Starting an update that is expected to complete in 1.5 seconds");
-      output = _au_execute_manager("update", MOCK_SUCCESS, f->test_envp, &error);
+      output = _au_execute_manager("update", MOCK_SUCCESS, FALSE, f->test_envp, &error);
       g_assert_no_error(error);
       g_assert_nonnull(strstr(output, "Update completed"));
-      update_status = _au_execute_manager("get-update-status", NULL, f->test_envp, NULL);
+      update_status =
+         _au_execute_manager("get-update-status", NULL, FALSE, f->test_envp, NULL);
       g_assert_cmpstr(update_status, ==, "successful\n");
    }
 
