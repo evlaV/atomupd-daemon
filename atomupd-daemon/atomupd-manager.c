@@ -38,6 +38,10 @@
 #define _send_atomupd_message(_bus, _method, _body, _reply_out, _error)                  \
    _send_message(_bus, AU_ATOMUPD1_INTERFACE, _method, _body, _reply_out, _error)
 
+#define _send_properties_message(_bus, _method, _body, _reply_out, _error)               \
+   _send_message(_bus, "org.freedesktop.DBus.Properties", _method, _body, _reply_out,    \
+                 _error)
+
 static GMainLoop *main_loop = NULL;
 
 static gboolean opt_session = FALSE;
@@ -343,6 +347,109 @@ switch_branch(GOptionContext *context, GDBusConnection *bus, const gchar *branch
    return EXIT_SUCCESS;
 }
 
+static GVariant *
+get_atomupd_property(GDBusConnection *bus, const gchar *property, GError **error)
+{
+   g_autoptr(GVariant) reply = NULL;
+   g_autoptr(GVariant) variant_reply = NULL;
+   GVariant *body = NULL; /* floating */
+
+   body = g_variant_new("(ss)", AU_ATOMUPD1_INTERFACE, property);
+
+   if (!_send_properties_message(bus, "Get", body, &reply, error))
+      return NULL;
+
+   g_variant_get(reply, "(v)", &variant_reply);
+
+   return g_steal_pointer(&variant_reply);
+}
+
+static int
+list_variants(G_GNUC_UNUSED GOptionContext *context,
+              GDBusConnection *bus,
+              G_GNUC_UNUSED const gchar *argument)
+{
+   g_autofree const gchar **variants = NULL;
+   g_autoptr(GVariant) variant_reply = NULL;
+   g_autoptr(GError) error = NULL;
+   gsize length;
+
+   variant_reply = get_atomupd_property(bus, "KnownVariants", &error);
+   if (variant_reply == NULL) {
+      g_print("An error occurred while listing known variants: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   variants = g_variant_get_strv(variant_reply, &length);
+
+   for (gsize i = 0; i < length; i++)
+      g_print("%s\n", variants[i]);
+
+   return EXIT_SUCCESS;
+}
+
+static int
+list_branches(G_GNUC_UNUSED GOptionContext *context,
+              GDBusConnection *bus,
+              G_GNUC_UNUSED const gchar *argument)
+{
+   g_autofree const gchar **variants = NULL;
+   g_autoptr(GVariant) variant_reply = NULL;
+   g_autoptr(GError) error = NULL;
+   gsize length;
+
+   variant_reply = get_atomupd_property(bus, "KnownBranches", &error);
+   if (variant_reply == NULL) {
+      g_print("An error occurred while listing known branches: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   variants = g_variant_get_strv(variant_reply, &length);
+
+   for (gsize i = 0; i < length; i++)
+      g_print("%s\n", variants[i]);
+
+   return EXIT_SUCCESS;
+}
+
+static int
+tracked_variant(G_GNUC_UNUSED GOptionContext *context,
+                GDBusConnection *bus,
+                G_GNUC_UNUSED const gchar *argument)
+{
+   g_autoptr(GVariant) variant_reply = NULL;
+   g_autoptr(GError) error = NULL;
+
+   variant_reply = get_atomupd_property(bus, "Variant", &error);
+   if (variant_reply == NULL) {
+      g_print("An error occurred while getting the variant: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   g_print("%s\n", g_variant_get_string(variant_reply, NULL));
+
+   return EXIT_SUCCESS;
+}
+
+static int
+tracked_branch(G_GNUC_UNUSED GOptionContext *context,
+               GDBusConnection *bus,
+               G_GNUC_UNUSED const gchar *argument)
+{
+   g_autoptr(GVariant) variant_reply = NULL;
+   g_autoptr(GError) error = NULL;
+
+   variant_reply = get_atomupd_property(bus, "Branch", &error);
+   if (variant_reply == NULL) {
+      g_print("An error occurred while getting the branch: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   g_print("%s\n", g_variant_get_string(variant_reply, NULL));
+
+   return EXIT_SUCCESS;
+}
+
 typedef struct {
    const gchar *command;
    const gchar *argument;
@@ -376,6 +483,30 @@ static const LaunchCommands launch_commands[] = {
       .argument = "BRANCH",
       .description = "Select a different branch",
       .command_function = switch_branch,
+   },
+
+   {
+      .command = "list-variants",
+      .description = "List the known variants",
+      .command_function = list_variants,
+   },
+
+   {
+      .command = "list-branches",
+      .description = "List the known branches",
+      .command_function = list_branches,
+   },
+
+   {
+      .command = "tracked-variant",
+      .description = "Get the variant that is currently being tracked",
+      .command_function = tracked_variant,
+   },
+
+   {
+      .command = "tracked-branch",
+      .description = "Get the branch that is currently being tracked",
+      .command_function = tracked_branch,
    },
 };
 

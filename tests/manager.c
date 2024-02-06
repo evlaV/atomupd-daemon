@@ -212,7 +212,19 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       g_autofree gchar *output = NULL;
       g_autofree gchar *parsed_variant = NULL;
       g_autofree gchar *parsed_branch = NULL;
+      g_autofree gchar *variants_list = NULL;
+      g_autofree gchar *branches_list = NULL;
+      g_autofree gchar *initial_variant = NULL;
+      g_autofree gchar *initial_branch = NULL;
+      g_autofree gchar *tracked_variant = NULL;
+      g_autofree gchar *tracked_branch = NULL;
       g_autoptr(GKeyFile) parsed_preferences = NULL;
+
+      initial_variant =
+         _au_execute_manager("tracked-variant", NULL, f->test_envp, &error);
+      g_assert_cmpstr(initial_variant, ==, "steamdeck\n");
+      initial_branch = _au_execute_manager("tracked-branch", NULL, f->test_envp, &error);
+      g_assert_cmpstr(initial_branch, ==, "stable\n");
 
       output = _au_execute_manager("switch-variant", "vanilla", f->test_envp, &error);
       g_assert_no_error(error);
@@ -229,12 +241,24 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       parsed_branch =
          g_key_file_get_string(parsed_preferences, "Choices", "Branch", NULL);
       g_assert_cmpstr(parsed_branch, ==, "main");
+
+      variants_list = _au_execute_manager("list-variants", NULL, f->test_envp, NULL);
+      g_assert_cmpstr(variants_list, ==, "steamdeck\n");
+      branches_list = _au_execute_manager("list-branches", NULL, f->test_envp, NULL);
+      g_assert_cmpstr(branches_list, ==, "stable\nrc\nbeta\nbc\nmain\n");
+
+      tracked_variant = _au_execute_manager("tracked-variant", NULL, f->test_envp, NULL);
+      g_assert_cmpstr(tracked_variant, ==, "vanilla\n");
+      tracked_branch = _au_execute_manager("tracked-branch", NULL, f->test_envp, NULL);
+      g_assert_cmpstr(tracked_branch, ==, "main\n");
    }
 
    {
       g_autofree gchar *output = NULL;
       g_autofree gchar *parsed_variant = NULL;
       g_autofree gchar *parsed_branch = NULL;
+      g_autofree gchar *tracked_variant = NULL;
+      g_autofree gchar *tracked_branch = NULL;
       g_autoptr(GKeyFile) parsed_preferences = NULL;
 
       output = _au_execute_manager("switch-variant", "steamdeck", f->test_envp, &error);
@@ -252,6 +276,11 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       parsed_branch =
          g_key_file_get_string(parsed_preferences, "Choices", "Branch", NULL);
       g_assert_cmpstr(parsed_branch, ==, "stable");
+
+      tracked_variant = _au_execute_manager("tracked-variant", NULL, f->test_envp, NULL);
+      g_assert_cmpstr(tracked_variant, ==, "steamdeck\n");
+      tracked_branch = _au_execute_manager("tracked-branch", NULL, f->test_envp, NULL);
+      g_assert_cmpstr(tracked_branch, ==, "stable\n");
    }
 
    {
