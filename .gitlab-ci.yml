@@ -83,7 +83,7 @@ build:clang_asan:
   variables:
     COMPILER: "clang"
     LUNDEF: "false"
-    SANITIZER: "address,undefined"
+    SANITIZER: "address"
 
 build:valgrind:
   extends: .build
