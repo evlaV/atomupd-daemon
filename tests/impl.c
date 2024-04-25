@@ -1041,14 +1041,14 @@ static const PreferencesTest preferences_test[] = {
    {
       .legacy_conf_file_content = "rel",
       /* We have both the new preferences file and the legacy one.
-       * In this situation we expect the new file to take precedence */
+       * In this situation we expect the legacy file to still take precedence */
       .initial_file = {
          .variant = "steamdeck",
          .branch = "main",
       },
       .initial_expected = {
          .variant = "steamdeck",
-         .branch = "main",
+         .branch = "stable",
       },
       .switch_to_variant = "vanilla",
       .switch_to_branch = "bc",
