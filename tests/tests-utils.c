@@ -27,6 +27,9 @@
  * If @body is floating, this method will assume ownership of @body.
  */
 
+#include <ftw.h>
+#include <stdio.h>
+
 #include <gio/gio.h>
 #include <glib.h>
 
@@ -71,4 +74,34 @@ send_atomupd_message(GDBusConnection *bus,
    g_debug("Reply body of \"%s\": %s", method, variant_string);
 
    return g_variant_ref_sink(reply_body);
+}
+
+static gint
+ftw_remove (const gchar *path,
+            const struct stat *sb,
+            gint typeflags,
+            struct FTW *ftwbuf)
+{
+   if (remove (path) < 0) {
+      g_debug ("Unable to remove %s: %s", path, g_strerror (errno));
+      return -1;
+   }
+
+   return 0;
+}
+
+/*
+ * Recursively delete @directory within the same file system and
+ * without following symbolic links.
+ */
+gboolean
+rm_rf (const char *directory)
+{
+   if (directory == NULL)
+      return TRUE;
+
+   if (nftw (directory, ftw_remove, 10, FTW_DEPTH|FTW_MOUNT|FTW_PHYS) < 0)
+      return FALSE;
+
+   return TRUE;
 }

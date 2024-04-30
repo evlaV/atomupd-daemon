@@ -41,8 +41,8 @@
 /* The version of this interface, exposed in the "Version" property */
 guint ATOMUPD_VERSION = 4;
 
-const gchar *AU_DEFAULT_CONFIG = "/etc/steamos-atomupd/client.conf";
-const gchar *AU_DEFAULT_DEV_CONFIG = "/etc/steamos-atomupd/client-dev.conf";
+const gchar *AU_CONFIG = "client.conf";
+const gchar *AU_DEV_CONFIG = "client-dev.conf";
 const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
 const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json";
 
@@ -2205,8 +2205,8 @@ _str_rstrip_newline(gchar *string)
 
 /**
  * au_atomupd1_impl_new:
- * @config_preference: (transfer none) (nullable): Path to the configuration
- *  file. If %NULL, the default configuration path will be used instead.
+ * @config_preference: (transfer none) (not nullable): Path to the directory where
+ *  the configuration is located.
  * @manifest_preference: (transfer none) (nullable): Path to the JSON manifest
  *  file. If %NULL, the path will be either the one in the configuration file,
  *  if any, or the default manifest path.
@@ -2215,7 +2215,7 @@ _str_rstrip_newline(gchar *string)
  * Returns: (transfer full): a new AuAtomupd1
  */
 AuAtomupd1 *
-au_atomupd1_impl_new(const gchar *config_preference,
+au_atomupd1_impl_new(const gchar *config_directory,
                      const gchar *manifest_preference,
                      GDBusConnection *bus,
                      GError **error)
@@ -2229,6 +2229,7 @@ au_atomupd1_impl_new(const gchar *config_preference,
    g_autofree gchar *username = NULL;
    g_autofree gchar *password = NULL;
    g_autofree gchar *auth_encoded = NULL;
+   g_autofree gchar *dev_config_path = NULL;
    g_auto(GStrv) known_variants = NULL;
    g_auto(GStrv) known_branches = NULL;
    g_autoptr(GFile) updates_json_parent = NULL;
@@ -2240,16 +2241,18 @@ au_atomupd1_impl_new(const gchar *config_preference,
    AuAtomupd1Impl *atomupd = g_object_new(AU_TYPE_ATOMUPD1_IMPL, NULL);
    g_autoptr(GKeyFile) client_config = g_key_file_new();
 
+   g_return_val_if_fail(config_directory != NULL, NULL);
+
    atomupd->authority = polkit_authority_get_sync(NULL, error);
    if (atomupd->authority == NULL)
       return NULL;
 
-   if (config_preference != NULL)
-      atomupd->config_path = g_strdup(config_preference);
-   else if (g_file_test(AU_DEFAULT_DEV_CONFIG, G_FILE_TEST_EXISTS))
-      atomupd->config_path = g_strdup(AU_DEFAULT_DEV_CONFIG);
-   else
-      atomupd->config_path = g_strdup(AU_DEFAULT_CONFIG);
+   dev_config_path = g_build_filename(config_directory, AU_DEV_CONFIG, NULL);
+   if (g_file_test(dev_config_path, G_FILE_TEST_EXISTS)) {
+      atomupd->config_path = g_steal_pointer(&dev_config_path);
+   } else {
+      atomupd->config_path = g_build_filename(config_directory, AU_CONFIG, NULL);
+   }
 
    if (!g_key_file_load_from_file(client_config, atomupd->config_path, G_KEY_FILE_NONE,
                                   error))

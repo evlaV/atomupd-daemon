@@ -36,7 +36,7 @@ au_tests_stop_daemon_service(GSubprocess *daemon_proc);
 GSubprocess *
 au_tests_start_daemon_service(GDBusConnection *bus,
                               const gchar *manifest_path,
-                              const gchar *conf,
+                              const gchar *conf_dir,
                               gchar **envp,
                               gboolean expected_to_fail);
 

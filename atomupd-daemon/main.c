@@ -63,7 +63,7 @@ on_sigterm(gpointer user_data)
    return FALSE;
 }
 
-static gchar *opt_config = NULL;
+static gchar *opt_config_directory = NULL;
 static gchar *opt_manifest = NULL;
 static gboolean opt_replace = FALSE;
 static gboolean opt_session = FALSE;
@@ -71,8 +71,8 @@ static gboolean opt_verbose = FALSE;
 static gboolean opt_version = FALSE;
 
 static GOptionEntry options[] = {
-   { "config", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_config,
-     "Use this configuration file", "PATH" },
+   { "config-directory", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_config_directory,
+     "Look for the configuration file in this directory [default: /etc/steamos-atomupd]", "PATH" },
    { "manifest-file", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_manifest,
      "Use this manifest file", "PATH" },
    { "replace", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_replace,
@@ -129,7 +129,10 @@ main(int argc, char *argv[])
       return EXIT_FAILURE;
    }
 
-   atomupd = au_atomupd1_impl_new(opt_config, opt_manifest, bus, error);
+   if (opt_config_directory == NULL)
+      opt_config_directory = g_strdup ("/etc/steamos-atomupd");
+
+   atomupd = au_atomupd1_impl_new(opt_config_directory, opt_manifest, bus, error);
    if (atomupd == NULL) {
       g_warning("An error occurred while initializing the daemon: %s",
                 local_error->message);
@@ -150,7 +153,7 @@ main(int argc, char *argv[])
 
    g_main_loop_run(main_loop);
 
-   g_free(opt_config);
+   g_free(opt_config_directory);
    g_free(opt_manifest);
 
    return EXIT_SUCCESS;

@@ -70,12 +70,12 @@ au_tests_stop_daemon_service(GSubprocess *daemon_proc)
 
 /*
  * @manifest_path: (type filename) (not nullable): Path to the daemon manifest file
- * @conf: (type filename) (nullable): Path to the daemon configuration file
+ * @conf_dir: (type filename) (nullable): Path to the daemon configuration directory
  */
 GSubprocess *
 au_tests_start_daemon_service(GDBusConnection *bus,
                               const gchar *manifest_path,
-                              const gchar *conf,
+                              const gchar *conf_dir,
                               gchar **envp,
                               gboolean expected_to_fail)
 {
@@ -94,8 +94,8 @@ au_tests_start_daemon_service(GDBusConnection *bus,
       "--session",
       "--manifest-file",
       manifest_path,
-      conf == NULL ? NULL : "--config",
-      conf,
+      conf_dir == NULL ? NULL : "--config-directory",
+      conf_dir,
       NULL,
    };
 

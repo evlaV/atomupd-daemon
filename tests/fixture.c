@@ -141,7 +141,7 @@ au_tests_setup(Fixture *f, gconstpointer context)
       f->builddir = g_path_get_dirname(argv0);
 
    f->manifest_path = g_build_filename(f->srcdir, "data", "manifest.json", NULL);
-   f->conf_path = g_build_filename(f->srcdir, "data", "client.conf", NULL);
+   f->conf_dir = g_build_filename(f->srcdir, "data", NULL);
 
    fd = g_file_open_tmp("steamos-atomupd-XXXXXX.json", &f->updates_json, &error);
    g_assert_no_error(error);
@@ -181,7 +181,7 @@ au_tests_teardown(Fixture *f, gconstpointer context)
    g_free(f->srcdir);
    g_free(f->builddir);
    g_free(f->manifest_path);
-   g_free(f->conf_path);
+   g_free(f->conf_dir);
    g_strfreev(f->test_envp);
 
    g_unlink(f->updates_json);

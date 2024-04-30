@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2023 Collabora Ltd.
+ * Copyright © 2022-2024 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -34,3 +34,6 @@ send_atomupd_message(GDBusConnection *bus,
                      const gchar *method,
                      const gchar *format_message,
                      ...);
+
+gboolean
+rm_rf (const char *directory);
