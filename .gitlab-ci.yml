@@ -18,6 +18,7 @@ stages:
   tags:
     - docker
     - linux
+    - isolated
   image: archlinux:base-devel
   script:
     - |
