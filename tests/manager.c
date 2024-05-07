@@ -121,22 +121,6 @@ static const CheckTest check_test[] =
   },
 
   {
-    .update_json = "update_one_minor_one_major.json",
-    .output_contains =
-    {
-      "Updates available:",
-      "20220120.1",
-      "20220202.1",
-      "snapshot",
-    },
-    .output_does_not_contain =
-    {
-      "Updates available later:",
-      "No update available",
-    },
-  },
-
-  {
     .update_json = "update_three_minors.json",
     .output_contains =
     {

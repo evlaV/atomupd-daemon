@@ -100,7 +100,6 @@ typedef struct {
    const gchar *version;
    const gchar *variant;
    guint64 estimated_size;
-   AuUpdateType update_type; /* Defaults to AU_UPDATE_TYPE_MINOR */
    const gchar *requires_buildid;
 } UpdatesTest;
 
@@ -142,24 +141,6 @@ static const CheckUpdatesTest updates_test[] =
   },
 
   {
-    .update_json = "update_one_minor_one_major.json",
-    .updates_available =
-    {
-      {
-        .buildid = "20220120.1",
-        .version = "snapshot",
-        .variant = "steamdeck",
-      },
-      {
-        .buildid = "20220202.1",
-        .version = "snapshot",
-        .variant = "steamdeck",
-        .update_type = AU_UPDATE_TYPE_MAJOR,
-      },
-    },
-  },
-
-  {
     .update_json = "update_three_minors.json",
     .updates_available =
     {
@@ -187,41 +168,6 @@ static const CheckUpdatesTest updates_test[] =
       },
     },
   },
-
-  {
-    .update_json = "update_two_minors_two_majors.json",
-    .updates_available =
-    {
-      {
-        .buildid = "20220110.1",
-        .version = "3.5.1",
-        .variant = "steamdeck",
-        .estimated_size = 4815162342,
-      },
-      {
-        .buildid = "20220201.5",
-        .version = "3.5.3",
-        .variant = "steamdeck",
-        .update_type = AU_UPDATE_TYPE_MAJOR,
-      },
-    },
-    .updates_available_later =
-    {
-      {
-        .buildid = "20220120.1",
-        .version = "3.5.1",
-        .variant = "steamdeck",
-        .requires_buildid = "20220110.1",
-      },
-      {
-        .buildid = "20220202.1",
-        .version = "3.6.0",
-        .variant = "steamdeck",
-        .requires_buildid = "20220201.5",
-        .update_type = AU_UPDATE_TYPE_MAJOR,
-      },
-    }
-  },
 };
 
 static const CheckUpdatesTest pending_reboot_test[] =
@@ -245,21 +191,6 @@ static const CheckUpdatesTest pending_reboot_test[] =
     .update_json = "update_one_minor.json",
     /* The single update proposed has already been applied */
     .reboot_for_update = "20220227.3",
-  },
-
-  {
-    .update_json = "update_one_minor_one_major.json",
-    /* The proposed minor update has already been applied */
-    .reboot_for_update = "20220120.1",
-    .updates_available =
-    {
-      {
-        .buildid = "20220202.1",
-        .version = "snapshot",
-        .variant = "steamdeck",
-        .update_type = AU_UPDATE_TYPE_MAJOR,
-      },
-    },
   },
 
   {
@@ -318,7 +249,6 @@ _check_available_updates(GVariantIter *available_iter,
       g_autoptr(GVariant) version = NULL;
       g_autoptr(GVariant) variant = NULL;
       g_autoptr(GVariant) estimated_size = NULL;
-      g_autoptr(GVariant) update_type = NULL;
       g_autoptr(GVariant)
          requires
       = NULL;
@@ -336,10 +266,6 @@ _check_available_updates(GVariantIter *available_iter,
       estimated_size = g_variant_lookup_value(values, "estimated_size", type_uint64);
       g_assert_cmpuint(expected_update->estimated_size, ==,
                        g_variant_get_uint64(estimated_size));
-
-      update_type = g_variant_lookup_value(values, "update_type", type_uint32);
-      g_assert_cmpuint(expected_update->update_type, ==,
-                       g_variant_get_uint32(update_type));
 
       requires = g_variant_lookup_value(values, "requires", type_string);
       requires_str =
@@ -1285,23 +1211,6 @@ static const ExistingUpdatesJson existing_updates_json_test[] = {
         \"update_path\": \"20231120.1/steamdeck-20231120.1-3.7.1.raucb\" \
       } \
     ] \
-  }, \
-  \"major\": { \
-    \"release\": \"holo\", \
-    \"candidates\": [ \
-      { \
-        \"image\": { \
-          \"product\": \"steamos\", \
-          \"release\": \"holo\", \
-          \"variant\": \"steamdeck\", \
-          \"arch\": \"amd64\", \
-          \"version\": \"4.0.0\", \
-          \"buildid\": \"20231212.5\", \
-          \"estimated_size\": 12312340 \
-        }, \
-        \"update_path\": \"foo/steamdeck-20231212.5-4.0.0.raucb\" \
-      } \
-    ] \
   } \
 }",
       .updates_available =
@@ -1311,13 +1220,6 @@ static const ExistingUpdatesJson existing_updates_json_test[] = {
             .version = "snapshot",
             .variant = "steamdeck",
             .estimated_size = 4815162342,
-         },
-         {
-            .buildid = "20231212.5",
-            .version = "4.0.0",
-            .variant = "steamdeck",
-            .estimated_size = 12312340,
-            .update_type = AU_UPDATE_TYPE_MAJOR,
          },
       },
       .updates_available_later =

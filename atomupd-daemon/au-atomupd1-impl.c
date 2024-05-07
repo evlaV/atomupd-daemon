@@ -898,13 +898,13 @@ _au_parse_image(JsonObject *candidate_obj,
  */
 static gboolean
 _au_get_json_array_candidates(JsonObject *json_object,
-                              AuUpdateType type,
                               const gchar *updated_version,
                               GVariantBuilder *available_builder,
                               GVariantBuilder *available_later_builder,
                               GError **error)
 {
-   const gchar *type_string = NULL;
+   /* We expect the update candidates to be under the "minor" key for legacy reasons */
+   const gchar *type_string = "minor";
    g_autofree gchar *
       requires
    = NULL;
@@ -918,19 +918,6 @@ _au_get_json_array_candidates(JsonObject *json_object,
    g_return_val_if_fail(available_builder != NULL, FALSE);
    g_return_val_if_fail(available_later_builder != NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
-
-   switch (type) {
-   case AU_UPDATE_TYPE_MINOR:
-      type_string = "minor";
-      break;
-
-   case AU_UPDATE_TYPE_MAJOR:
-      type_string = "major";
-      break;
-
-   default:
-      g_return_val_if_reached(FALSE);
-   }
 
    if (!json_object_has_member(json_object, type_string))
       return TRUE;
@@ -981,7 +968,6 @@ _au_get_json_array_candidates(JsonObject *json_object,
       g_variant_builder_add(&builder, "{sv}", "variant", g_variant_new_string(variant));
       g_variant_builder_add(&builder, "{sv}", "estimated_size",
                             g_variant_new_uint64(size));
-      g_variant_builder_add(&builder, "{sv}", "update_type", g_variant_new_uint32(type));
       if (requires != NULL)
          g_variant_builder_add(&builder, "{sv}", "requires",
                                g_variant_new_string(requires));
@@ -1026,14 +1012,8 @@ _au_parse_candidates(JsonNode *json_node,
 
    json_object = json_node_get_object(json_node);
 
-   if (!_au_get_json_array_candidates(json_object, AU_UPDATE_TYPE_MINOR, updated_build_id,
-                                      &available_builder, &available_later_builder,
-                                      error))
-      return FALSE;
-
-   if (!_au_get_json_array_candidates(json_object, AU_UPDATE_TYPE_MAJOR, updated_build_id,
-                                      &available_builder, &available_later_builder,
-                                      error))
+   if (!_au_get_json_array_candidates(json_object, updated_build_id, &available_builder,
+                                      &available_later_builder, error))
       return FALSE;
 
    *available = g_variant_ref_sink(g_variant_builder_end(&available_builder));

@@ -181,17 +181,6 @@
               Estimated download size, in Bytes, to perform the update.
             </para></listitem>
           </varlistentry>
-          <varlistentry>
-            <term>update_type u</term>
-            <listitem><para>
-              An enum representing the update type.
-              Possible values are:
-              <simplelist>
-                <member>0: MINOR_UPDATE</member>
-                <member>1: MAJOR_UPDATE</member>
-              </simplelist>
-            </para></listitem>
-          </varlistentry>
         </variablelist>
     -->
     <property name="UpdatesAvailable" type="a{sa{sv}}" access="read">

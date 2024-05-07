@@ -47,16 +47,6 @@ typedef enum {
    AU_UPDATE_STATUS_CANCELLED = 5,
 } AuUpdateStatus;
 
-/**
- * AuUpdateType:
- * @AU_UPDATE_TYPE_MINOR: A minor update
- * @AU_UPDATE_TYPE_MAJOR: A major update
- */
-typedef enum {
-   AU_UPDATE_TYPE_MINOR = 0,
-   AU_UPDATE_TYPE_MAJOR = 1,
-} AuUpdateType;
-
 extern guint ATOMUPD_VERSION;
 
 extern const gchar *AU_DEFAULT_CONFIG;
