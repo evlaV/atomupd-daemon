@@ -883,44 +883,48 @@ _au_parse_image(JsonObject *candidate_obj,
 }
 
 /*
- * @json_object: (not nullable): A JSON object representing the available updates
- * @type:
- * @updated_version: Update buildid that has been already installed and is
+ * @json_node: (not nullable): The JsonNode of the steamos-atomupd-client output
+ * @updated_build_id: Update build ID that has been already installed and is
  *  waiting a reboot, or %NULL if there isn't such update
- * @available_builder: (not nullable): The available updates will be added to this
- *  GVariant builder
- * @available_later_builder: (not nullable): The available updates, that require a
- *  newer system version, will be added to this GVariant builder
+ * @available: (out) (not optional): Map of available updates that can be installed
+ * @available_later: (out) (not optional): Map of available updates that require
+ *  a newer system version
  * @error: Used to raise an error on failure
- *
- * Returns: %TRUE on success (even if nothing was appended to either of the
- *  GVariant builders)
  */
 static gboolean
-_au_get_json_array_candidates(JsonObject *json_object,
-                              const gchar *updated_version,
-                              GVariantBuilder *available_builder,
-                              GVariantBuilder *available_later_builder,
-                              GError **error)
+_au_parse_candidates(JsonNode *json_node,
+                     const gchar *updated_build_id,
+                     GVariant **available,
+                     GVariant **available_later,
+                     GError **error)
 {
+   g_auto(GVariantBuilder) available_builder =
+      G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE("a{sa{sv}}"));
+   g_auto(GVariantBuilder) available_later_builder =
+      G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE("a{sa{sv}}"));
    /* We expect the update candidates to be under the "minor" key for legacy reasons */
    const gchar *type_string = "minor";
    g_autofree gchar *
       requires
    = NULL;
+   JsonObject *json_object = NULL; /* borrowed */
    JsonObject *sub_obj = NULL; /* borrowed */
    JsonNode *sub_node = NULL;  /* borrowed */
    JsonArray *array = NULL;    /* borrowed */
    guint array_size;
    gsize i;
 
-   g_return_val_if_fail(json_object != NULL, FALSE);
-   g_return_val_if_fail(available_builder != NULL, FALSE);
-   g_return_val_if_fail(available_later_builder != NULL, FALSE);
+   g_return_val_if_fail(json_node != NULL, FALSE);
+   g_return_val_if_fail(available != NULL, FALSE);
+   g_return_val_if_fail(*available == NULL, FALSE);
+   g_return_val_if_fail(available_later != NULL, FALSE);
+   g_return_val_if_fail(*available_later == NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
+   json_object = json_node_get_object(json_node);
+
    if (!json_object_has_member(json_object, type_string))
-      return TRUE;
+      goto success;
 
    sub_node = json_object_get_member(json_object, type_string);
    sub_obj = json_node_get_object(sub_node);
@@ -951,7 +955,7 @@ _au_get_json_array_candidates(JsonObject *json_object,
                            &variant, &size, error))
          return FALSE;
 
-      if (i == 0 && g_strcmp0(id, updated_version) == 0) {
+      if (i == 0 && g_strcmp0(id, updated_build_id) == 0) {
          /* If the first proposed update matches the version already
           * applied (and is pending a reboot), there's nothing left for
           * us to do. Otherwise, we would be applying the same update
@@ -959,7 +963,7 @@ _au_get_json_array_candidates(JsonObject *json_object,
          g_debug("The proposed update to version '%s' has already been applied. Reboot "
                  "to start using it.",
                  id);
-         return TRUE;
+         goto success;
       }
 
       g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
@@ -972,50 +976,14 @@ _au_get_json_array_candidates(JsonObject *json_object,
          g_variant_builder_add(&builder, "{sv}", "requires",
                                g_variant_new_string(requires));
 
-      g_variant_builder_add(i == 0 ? available_builder : available_later_builder,
+      g_variant_builder_add(i == 0 ? &available_builder : &available_later_builder,
                             "{sa{sv}}", id, &builder);
 
       g_clear_pointer(&requires, g_free);
       requires = g_steal_pointer(&id);
    }
 
-   return TRUE;
-}
-
-/*
- * @json_node: (not nullable): The JsonNode of the steamos-atomupd-client output
- * @updated_build_id: Update build ID that has been already installed and is
- *  waiting a reboot, or %NULL if there isn't such update
- * @available: (out) (not optional): Map of available updates that can be installed
- * @available_later: (out) (not optional): Map of available updates that require
- *  a newer system version
- * @error: Used to raise an error on failure
- */
-static gboolean
-_au_parse_candidates(JsonNode *json_node,
-                     const gchar *updated_build_id,
-                     GVariant **available,
-                     GVariant **available_later,
-                     GError **error)
-{
-   g_auto(GVariantBuilder) available_builder =
-      G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE("a{sa{sv}}"));
-   g_auto(GVariantBuilder) available_later_builder =
-      G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE("a{sa{sv}}"));
-   JsonObject *json_object = NULL; /* borrowed */
-
-   g_return_val_if_fail(json_node != NULL, FALSE);
-   g_return_val_if_fail(available != NULL, FALSE);
-   g_return_val_if_fail(*available == NULL, FALSE);
-   g_return_val_if_fail(available_later != NULL, FALSE);
-   g_return_val_if_fail(*available_later == NULL, FALSE);
-
-   json_object = json_node_get_object(json_node);
-
-   if (!_au_get_json_array_candidates(json_object, updated_build_id, &available_builder,
-                                      &available_later_builder, error))
-      return FALSE;
-
+success:
    *available = g_variant_ref_sink(g_variant_builder_end(&available_builder));
    *available_later = g_variant_ref_sink(g_variant_builder_end(&available_later_builder));
 
