@@ -611,8 +611,8 @@ test_unexpected_methods(Fixture *f, gconstpointer context)
 
    _skip_if_daemon_is_running(bus, NULL);
 
-   daemon_proc =
-      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                               f->test_envp, FALSE);
 
    _check_message_reply(
       bus, "StartUpdate", "(s)", "20220120.1",
@@ -654,8 +654,8 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
 
    rauc_proc = au_tests_launch_rauc_service(f->rauc_pid_path);
 
-   daemon_proc =
-      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                               f->test_envp, FALSE);
 
    _call_check_for_updates(bus, NULL, NULL);
 
@@ -663,8 +663,8 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
     * complain that we didn't check for updates, because we already did. */
    au_tests_stop_daemon_service(daemon_proc);
    g_clear_object(&daemon_proc);
-   daemon_proc =
-      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                               f->test_envp, FALSE);
 
    /* Assert that restarting the daemon successfully killed the old rauc service */
    g_assert_true(g_subprocess_get_if_exited(rauc_proc));
@@ -751,8 +751,8 @@ test_progress_default(Fixture *f, gconstpointer context)
    f->test_envp =
       g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
 
-   daemon_proc =
-      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                               f->test_envp, FALSE);
 
    _call_check_for_updates(bus, NULL, NULL);
 
@@ -795,8 +795,8 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
 
    _skip_if_daemon_is_running(bus, NULL);
 
-   daemon_proc =
-      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                               f->test_envp, FALSE);
 
    /* Launch the RAUC service after the atomupd daemon because in its start up
     * process it will kill any eventual RAUC processes that are already running */
@@ -926,8 +926,8 @@ test_restarted_service(Fixture *f, gconstpointer context)
             g_environ_setenv(f->test_envp, "AU_REBOOT_FOR_UPDATE", "/missing_file", TRUE);
       }
 
-      daemon_proc =
-         au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                                  f->test_envp, FALSE);
 
       atomupd_properties = _get_atomupd_properties(bus);
       g_assert_cmpstr(atomupd_properties->update_build_id, ==,
@@ -1110,8 +1110,8 @@ test_preferences(Fixture *f, gconstpointer context)
          g_unlink(preferences_path);
       }
 
-      daemon_proc =
-         au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                                  f->test_envp, FALSE);
 
       _check_string_property(bus, "Variant", test.initial_expected.variant);
       _check_string_property(bus, "Branch", test.initial_expected.branch);
@@ -1163,8 +1163,8 @@ test_unauthorized(Fixture *f, gconstpointer context)
 
    _skip_if_daemon_is_running(bus, NULL);
 
-   daemon_proc =
-      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                               f->test_envp, FALSE);
 
    mock_polkit_set_allowed(allowed, 0);
 
@@ -1316,8 +1316,8 @@ test_parsing_existing_updates_json(Fixture *f, gconstpointer context)
             g_environ_setenv(f->test_envp, "AU_UPDATES_JSON_FILE", "/missing_file", TRUE);
       }
 
-      daemon_proc =
-         au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                                  f->test_envp, FALSE);
 
       _check_updates_property(bus, "UpdatesAvailable", test->updates_available);
       _check_updates_property(bus, "UpdatesAvailableLater",

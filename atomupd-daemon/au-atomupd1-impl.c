@@ -228,17 +228,15 @@ _au_get_user_preferences_file_path(void)
  * Returns: %TRUE if the user preferences were successfully written to a file
  */
 static gboolean
-_au_update_user_preferences(const gchar *variant,
-                            const gchar *branch,
-                            GError **error)
+_au_update_user_preferences(const gchar *variant, const gchar *branch, GError **error)
 {
    const gchar *user_prefs_path = _au_get_user_preferences_file_path();
    g_autoptr(GKeyFile) preferences = g_key_file_new();
    g_autoptr(GError) local_error = NULL;
 
-   if (!g_key_file_load_from_file(preferences, user_prefs_path,
-                                  G_KEY_FILE_KEEP_COMMENTS, &local_error)) {
-      if (g_error_matches (local_error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+   if (!g_key_file_load_from_file(preferences, user_prefs_path, G_KEY_FILE_KEEP_COMMENTS,
+                                  &local_error)) {
+      if (g_error_matches(local_error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
          g_debug("'%s' is missing, creating a new one...", user_prefs_path);
       } else {
          g_warning("An error occurred while attempting to open the preferences file '%s'",
@@ -367,7 +365,8 @@ _au_load_user_preferences(const gchar *manifest_path,
               user_prefs_path);
 
       /* TODO: When all Jupiter images use the new variant+branch (when 3.6 hits stable),
-       * we should clean up the old branch file and just leave the new "preferences.conf". */
+       * we should clean up the old branch file and just leave the new "preferences.conf".
+       */
 
    } else if (g_file_test(user_prefs_path, G_FILE_TEST_EXISTS)) {
       g_autoptr(GKeyFile) user_prefs = g_key_file_new();
@@ -911,9 +910,9 @@ _au_parse_candidates(JsonNode *json_node,
       requires
    = NULL;
    JsonObject *json_object = NULL; /* borrowed */
-   JsonObject *sub_obj = NULL; /* borrowed */
-   JsonNode *sub_node = NULL;  /* borrowed */
-   JsonArray *array = NULL;    /* borrowed */
+   JsonObject *sub_obj = NULL;     /* borrowed */
+   JsonNode *sub_node = NULL;      /* borrowed */
+   JsonArray *array = NULL;        /* borrowed */
    guint array_size;
    gsize i;
 
@@ -1306,7 +1305,7 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    if (penultimate)
       g_ptr_array_add(argv, g_strdup("--penultimate-update"));
 
-   if (g_debug_controller_get_debug_enabled (self->debug_controller))
+   if (g_debug_controller_get_debug_enabled(self->debug_controller))
       g_ptr_array_add(argv, g_strdup("--debug"));
 
    g_ptr_array_add(argv, NULL);
@@ -2010,7 +2009,7 @@ au_start_update_authorized_cb(AuAtomupd1 *object,
    g_ptr_array_add(argv, g_strdup("--update-version"));
    g_ptr_array_add(argv, g_strdup(arg_id));
 
-   if (g_debug_controller_get_debug_enabled (self->debug_controller))
+   if (g_debug_controller_get_debug_enabled(self->debug_controller))
       g_ptr_array_add(argv, g_strdup("--debug"));
 
    g_ptr_array_add(argv, NULL);
@@ -2252,7 +2251,8 @@ au_atomupd1_impl_new(const gchar *config_preference,
    else
       atomupd->config_path = g_strdup(AU_DEFAULT_CONFIG);
 
-   if (!g_key_file_load_from_file(client_config, atomupd->config_path, G_KEY_FILE_NONE, error))
+   if (!g_key_file_load_from_file(client_config, atomupd->config_path, G_KEY_FILE_NONE,
+                                  error))
       return NULL;
 
    if (manifest_preference != NULL) {
@@ -2442,13 +2442,14 @@ au_atomupd1_impl_new(const gchar *config_preference,
       }
    }
 
-   atomupd->debug_controller = G_DEBUG_CONTROLLER (g_debug_controller_dbus_new (bus, NULL, error));
+   atomupd->debug_controller =
+      G_DEBUG_CONTROLLER(g_debug_controller_dbus_new(bus, NULL, error));
    if (atomupd->debug_controller == NULL)
       return NULL;
 
-   atomupd->debug_controller_id = g_signal_connect (atomupd->debug_controller, "authorize",
-                                                    G_CALLBACK(debug_controller_authorize_cb),
-                                                    NULL);
+   atomupd->debug_controller_id =
+      g_signal_connect(atomupd->debug_controller, "authorize",
+                       G_CALLBACK(debug_controller_authorize_cb), NULL);
 
    return (AuAtomupd1 *)atomupd;
 }
