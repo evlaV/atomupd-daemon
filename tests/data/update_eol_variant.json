@@ -1,0 +1,21 @@
+{
+  "minor": {
+    "release": "holo",
+    "replacement_eol_variant": "steamdeck-replacement",
+    "candidates": [
+      {
+        "image": {
+          "product": "steamos",
+          "release": "holo",
+          "variant": "steamdeck-replacement",
+          "arch": "amd64",
+          "version": "3.7.1",
+          "buildid": "20240508.1",
+          "checkpoint": false,
+          "estimated_size": 70910463
+        },
+        "update_path": "steamdeck-replacement/20220227.3/steamdeck-20240508.1-3.7.1.raucb"
+      }
+    ]
+  }
+}

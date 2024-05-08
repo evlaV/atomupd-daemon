@@ -106,6 +106,8 @@ typedef struct {
 typedef struct {
    const gchar *update_json;
    const gchar *reboot_for_update;
+   const gchar *tracked_variant;
+   gboolean preferences_updated;
    UpdatesTest updates_available[3];
    UpdatesTest updates_available_later[3];
 } CheckUpdatesTest;
@@ -125,6 +127,7 @@ static const CheckUpdatesTest updates_test[] =
 {
   {
     .update_json = "update_one_minor.json",
+    .tracked_variant = "steamdeck",
     .updates_available =
     {
       {
@@ -138,10 +141,12 @@ static const CheckUpdatesTest updates_test[] =
 
   {
     .update_json = "update_empty.json",
+    .tracked_variant = "steamdeck",
   },
 
   {
     .update_json = "update_three_minors.json",
+    .tracked_variant = "steamdeck",
     .updates_available =
     {
       {
@@ -168,12 +173,32 @@ static const CheckUpdatesTest updates_test[] =
       },
     },
   },
+
+  {
+    .update_json = "update_eol_variant.json",
+    /* steamdeck has been marked as EOL, we expect the client to automatically
+     * switch to the suggested steamdeck-replacement */
+    .tracked_variant = "steamdeck-replacement",
+    /* When switching to the new variant we expect that info to be stored in the
+     * preferences file as well */
+    .preferences_updated = TRUE,
+    .updates_available =
+    {
+      {
+        .buildid = "20240508.1",
+        .version = "3.7.1",
+        .variant = "steamdeck-replacement",
+        .estimated_size = 70910463,
+      },
+    },
+  },
 };
 
 static const CheckUpdatesTest pending_reboot_test[] =
 {
   {
     .update_json = "update_one_minor.json",
+    .tracked_variant = "steamdeck",
     /* Pending a different ID than the proposed update */
     .reboot_for_update = "20220222.1",
     .updates_available =
@@ -189,18 +214,21 @@ static const CheckUpdatesTest pending_reboot_test[] =
 
   {
     .update_json = "update_one_minor.json",
+    .tracked_variant = "steamdeck",
     /* The single update proposed has already been applied */
     .reboot_for_update = "20220227.3",
   },
 
   {
     .update_json = "update_three_minors.json",
+    .tracked_variant = "steamdeck",
     /* The minor update has already been applied */
     .reboot_for_update = "20211225.1",
   },
 
   {
     .update_json = "update_three_minors.json",
+    .tracked_variant = "steamdeck",
     /* This could probably happen when a downgrade is requested.
      * In this situation the daemon shows the available updates as-is,
      * given that the "later" updates cannot be installed without
@@ -372,6 +400,27 @@ _query_for_updates(Fixture *f, GDBusConnection *bus, const CheckUpdatesTest *tes
 
    _check_updates_property(bus, "UpdatesAvailable", test->updates_available);
    _check_updates_property(bus, "UpdatesAvailableLater", test->updates_available_later);
+
+   _check_string_property(bus, "Variant", test->tracked_variant);
+
+   if (test->preferences_updated) {
+      g_autoptr(GKeyFile) parsed_preferences = NULL;
+      g_autofree gchar *parsed_variant = NULL;
+
+      g_assert_true(g_file_test(f->preferences_path, G_FILE_TEST_EXISTS));
+
+      parsed_preferences = g_key_file_new();
+      g_key_file_load_from_file(parsed_preferences, f->preferences_path, G_KEY_FILE_NONE,
+                                &error);
+      g_assert_no_error(error);
+
+      /* If the server informed us that the requested variant is EOL, the client should
+       * update its chosen variant in the preferences file. */
+      parsed_variant =
+         g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(parsed_variant, ==, test->tracked_variant);
+   }
 
    au_tests_stop_daemon_service(daemon_proc);
 }

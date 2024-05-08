@@ -886,6 +886,8 @@ _au_parse_image(JsonObject *candidate_obj,
  * @json_node: (not nullable): The JsonNode of the steamos-atomupd-client output
  * @updated_build_id: Update build ID that has been already installed and is
  *  waiting a reboot, or %NULL if there isn't such update
+ * @replacement_eol_variant: (out) (not optional): If the requested variant is EOL,
+ *  this is set to its replacement, or %NULL otherwise.
  * @available: (out) (not optional): Map of available updates that can be installed
  * @available_later: (out) (not optional): Map of available updates that require
  *  a newer system version
@@ -896,6 +898,7 @@ _au_parse_candidates(JsonNode *json_node,
                      const gchar *updated_build_id,
                      GVariant **available,
                      GVariant **available_later,
+                     gchar **replacement_eol_variant,
                      GError **error)
 {
    g_auto(GVariantBuilder) available_builder =
@@ -919,6 +922,8 @@ _au_parse_candidates(JsonNode *json_node,
    g_return_val_if_fail(*available == NULL, FALSE);
    g_return_val_if_fail(available_later != NULL, FALSE);
    g_return_val_if_fail(*available_later == NULL, FALSE);
+   g_return_val_if_fail(replacement_eol_variant != NULL, FALSE);
+   g_return_val_if_fail(*replacement_eol_variant == NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
    json_object = json_node_get_object(json_node);
@@ -986,9 +991,20 @@ _au_parse_candidates(JsonNode *json_node,
 success:
    *available = g_variant_ref_sink(g_variant_builder_end(&available_builder));
    *available_later = g_variant_ref_sink(g_variant_builder_end(&available_later_builder));
+   if (sub_obj != NULL)
+      /* If the requested variant was EOL, save the new variant that the server
+       * is proposing as its alternative */
+      *replacement_eol_variant = g_strdup(json_object_get_string_member_with_default(
+         sub_obj, "replacement_eol_variant", NULL));
 
    return TRUE;
 }
+
+static gboolean
+_au_switch_to_variant(AuAtomupd1 *object,
+                      gchar *variant,
+                      gboolean clear_available_updates,
+                      GError **error);
 
 static void
 on_query_completed(GPid pid, gint wait_status, gpointer user_data)
@@ -997,6 +1013,7 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
    g_autoptr(GIOChannel) stdout_channel = NULL;
    g_autoptr(GVariant) available = NULL;
    g_autoptr(GVariant) available_later = NULL;
+   g_autofree gchar *replacement_eol_variant = NULL;
    g_autoptr(JsonNode) json_node = NULL;
    g_autoptr(GError) error = NULL;
    g_autofree gchar *output = NULL;
@@ -1061,7 +1078,7 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
       updated_build_id = au_atomupd1_get_update_build_id(data->req->object);
 
    if (!_au_parse_candidates(json_node, updated_build_id, &available, &available_later,
-                             &error)) {
+                             &replacement_eol_variant, &error)) {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "An error occurred while parsing the helper output JSON: %s", error->message);
@@ -1074,6 +1091,20 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
          g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "An error occurred while storing the helper output JSON: %s", error->message);
       return;
+   }
+
+   if (replacement_eol_variant != NULL) {
+      g_debug("Switching from the EOL variant %s to its replacement %s",
+              au_atomupd1_get_variant(data->req->object), replacement_eol_variant);
+
+      if (!_au_switch_to_variant(data->req->object, replacement_eol_variant, FALSE,
+                                 &error)) {
+         g_dbus_method_invocation_return_error(
+            g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+            "An error occurred while switching to the new variant '%s': %s",
+            replacement_eol_variant, error->message);
+         return;
+      }
    }
 
 success:
@@ -2376,6 +2407,7 @@ au_atomupd1_impl_new(const gchar *config_preference,
          const gchar *updated_build_id;
          g_autoptr(GVariant) available = NULL;
          g_autoptr(GVariant) available_later = NULL;
+         g_autofree gchar *replacement_eol_variant = NULL;
          JsonNode *root = json_parser_get_root(parser); /* borrowed */
 
          updated_build_id = au_atomupd1_get_update_build_id((AuAtomupd1 *)atomupd);
@@ -2383,7 +2415,8 @@ au_atomupd1_impl_new(const gchar *config_preference,
          if (root == NULL) {
             g_info("The existing JSON file seems to be empty");
          } else if (!_au_parse_candidates(root, updated_build_id, &available,
-                                          &available_later, &local_error)) {
+                                          &available_later, &replacement_eol_variant,
+                                          &local_error)) {
             g_warning("Unable to parse the existing updates JSON file: %s",
                       local_error->message);
             g_clear_error(&local_error);
@@ -2391,6 +2424,20 @@ au_atomupd1_impl_new(const gchar *config_preference,
             au_atomupd1_set_updates_available((AuAtomupd1 *)atomupd, available);
             au_atomupd1_set_updates_available_later((AuAtomupd1 *)atomupd,
                                                     available_later);
+         }
+
+         if (replacement_eol_variant != NULL) {
+            g_debug("Switching from the EOL variant %s to its replacement %s",
+                    au_atomupd1_get_variant((AuAtomupd1 *)atomupd),
+                    replacement_eol_variant);
+
+            if (!_au_switch_to_variant((AuAtomupd1 *)atomupd, replacement_eol_variant,
+                                       FALSE, &local_error)) {
+               g_warning("An error occurred while switching to the new variant '%s': %s",
+                         replacement_eol_variant, local_error->message);
+               g_clear_error(&local_error);
+               _au_clear_available_updates((AuAtomupd1 *)atomupd);
+            }
          }
       }
    }
