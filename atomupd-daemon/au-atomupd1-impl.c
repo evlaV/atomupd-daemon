@@ -1116,32 +1116,47 @@ _au_update_legacy_branch_file(const gchar *variant, const gchar *branch)
    }
 }
 
+static gboolean
+_au_switch_to_variant(AuAtomupd1 *object,
+                      gchar *variant,
+                      gboolean clear_available_updates,
+                      GError **error)
+{
+   const gchar *branch = au_atomupd1_get_branch(object);
+
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   if (g_strcmp0(variant, au_atomupd1_get_variant(object)) == 0) {
+      g_debug("We are already tracking the variant %s, nothing to do", variant);
+      return TRUE;
+   }
+
+   _au_update_legacy_branch_file(variant, branch);
+
+   if (!_au_update_user_preferences(variant, branch, error))
+      return FALSE;
+
+   if (clear_available_updates)
+      _au_clear_available_updates(object);
+
+   au_atomupd1_set_variant(object, variant);
+
+   return TRUE;
+}
+
 static void
 au_switch_variant_authorized_cb(AuAtomupd1 *object,
                                 GDBusMethodInvocation *invocation,
                                 gpointer arg_variant_pointer)
 {
-   gchar *arg_variant = arg_variant_pointer;
-   const gchar *branch = au_atomupd1_get_branch(object);
    g_autoptr(GError) error = NULL;
 
-   if (g_strcmp0(arg_variant, au_atomupd1_get_variant(object)) == 0) {
-      g_debug("We are already tracking the variant %s, nothing to do", arg_variant);
-      au_atomupd1_complete_switch_to_variant(object, g_steal_pointer(&invocation));
-      return;
-   }
-
-   _au_update_legacy_branch_file(arg_variant, branch);
-
-   if (!_au_update_user_preferences(arg_variant, branch, &error)) {
+   if (!_au_switch_to_variant(object, arg_variant_pointer, TRUE, &error)) {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-         "An error occurred while storing the chosen variant: %s", error->message);
+         "An error occurred while switching to the chosen variant: %s", error->message);
       return;
    }
-
-   _au_clear_available_updates(object);
-   au_atomupd1_set_variant(object, arg_variant);
 
    au_atomupd1_complete_switch_to_variant(object, g_steal_pointer(&invocation));
 }
