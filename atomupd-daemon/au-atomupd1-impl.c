@@ -2125,6 +2125,111 @@ debug_controller_authorize_cb(GDebugControllerDBus *debug_controller,
    return TRUE;
 }
 
+static gboolean
+_au_load_config(AuAtomupd1Impl *atomupd, const gchar *manifest_preference, GError **error)
+{
+   g_autofree gchar *variant = NULL;
+   g_autofree gchar *branch = NULL;
+   g_autofree gchar *system_build_id = NULL;
+   g_autofree gchar *system_version = NULL;
+   g_autofree gchar *manifest_from_config = NULL;
+   g_autofree gchar *username = NULL;
+   g_autofree gchar *password = NULL;
+   g_autofree gchar *auth_encoded = NULL;
+   g_auto(GStrv) known_variants = NULL;
+   g_auto(GStrv) known_branches = NULL;
+   g_autoptr(GKeyFile) client_config = g_key_file_new();
+
+   g_return_val_if_fail(atomupd != NULL, FALSE);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   if (!g_key_file_load_from_file(client_config, atomupd->config_path, G_KEY_FILE_NONE,
+                                  error))
+      return FALSE;
+
+   g_clear_pointer(&atomupd->manifest_path, g_free);
+   if (manifest_preference != NULL) {
+      atomupd->manifest_path = g_strdup(manifest_preference);
+   } else {
+      manifest_from_config = _au_get_manifest_path_from_config(client_config);
+      if (manifest_from_config != NULL)
+         atomupd->manifest_path = g_steal_pointer(&manifest_from_config);
+      else
+         atomupd->manifest_path = g_strdup(AU_DEFAULT_MANIFEST);
+   }
+
+   g_debug("Getting the list of known variants and branches");
+
+   known_variants = _au_get_known_variants_from_config(client_config, error);
+   if (known_variants == NULL)
+      return FALSE;
+
+   au_atomupd1_set_known_variants((AuAtomupd1 *)atomupd,
+                                  (const gchar *const *)known_variants);
+
+   known_branches = _au_get_known_branches_from_config(client_config, error);
+   if (known_branches == NULL)
+      return FALSE;
+
+   au_atomupd1_set_known_branches((AuAtomupd1 *)atomupd,
+                                  (const gchar *const *)known_branches);
+
+   /* If the config has an HTTP auth, we need to ensure that netrc and Desync
+    * have it too */
+   if (_au_get_http_auth_from_config(client_config, &username, &password,
+                                     &auth_encoded)) {
+      g_autoptr(GHashTable) url_table = NULL;
+      g_autoptr(GList) urls = NULL;
+      const gchar *images_url;
+
+      url_table = _au_get_urls_from_config(client_config, error);
+      if (url_table == NULL) {
+         /* The config file is malformed, bail out */
+         g_warning("Failed to get the list of URLs from %s", atomupd->config_path);
+         return FALSE;
+      }
+      urls = g_hash_table_get_values(url_table);
+
+      if (!_au_ensure_urls_in_netrc(AU_NETRC_PATH, urls, username, password, error))
+         return FALSE;
+
+      images_url = g_hash_table_lookup(url_table, "ImagesUrl");
+      if (images_url == NULL) {
+         /* The ImagesUrl entry is mandatory for a valid config file */
+         au_throw_error(
+            error, "The config file \"%s\" doesn't have the expected \"ImagesUrl\" entry",
+            atomupd->config_path);
+         return FALSE;
+      }
+
+      if (!_au_ensure_url_in_desync_conf(AU_DESYNC_CONFIG_PATH, images_url, auth_encoded,
+                                         error))
+         return FALSE;
+   }
+
+   if (!_au_load_user_preferences(atomupd->manifest_path, &variant, &branch, error))
+      return FALSE;
+
+   au_atomupd1_set_variant((AuAtomupd1 *)atomupd, variant);
+   au_atomupd1_set_branch((AuAtomupd1 *)atomupd, branch);
+
+   system_build_id = _au_get_current_system_build_id(atomupd->manifest_path, error);
+   if (system_build_id == NULL)
+      return FALSE;
+   system_version = _au_get_current_system_version(atomupd->manifest_path, error);
+   if (system_version == NULL)
+      return FALSE;
+
+   if (!_is_buildid_valid(system_build_id, &atomupd->buildid_date,
+                          &atomupd->buildid_increment, error))
+      return FALSE;
+
+   au_atomupd1_set_current_build_id((AuAtomupd1 *)atomupd, system_build_id);
+   au_atomupd1_set_current_version((AuAtomupd1 *)atomupd, system_version);
+
+   return TRUE;
+}
+
 static void
 init_atomupd1_iface(AuAtomupd1Iface *iface)
 {
@@ -2220,18 +2325,8 @@ au_atomupd1_impl_new(const gchar *config_directory,
                      GDBusConnection *bus,
                      GError **error)
 {
-   g_autofree gchar *variant = NULL;
-   g_autofree gchar *branch = NULL;
-   g_autofree gchar *system_build_id = NULL;
-   g_autofree gchar *system_version = NULL;
-   g_autofree gchar *manifest_from_config = NULL;
    g_autofree gchar *reboot_content = NULL;
-   g_autofree gchar *username = NULL;
-   g_autofree gchar *password = NULL;
-   g_autofree gchar *auth_encoded = NULL;
    g_autofree gchar *dev_config_path = NULL;
-   g_auto(GStrv) known_variants = NULL;
-   g_auto(GStrv) known_branches = NULL;
    g_autoptr(GFile) updates_json_parent = NULL;
    const gchar *updates_json_path;
    const gchar *reboot_for_update;
@@ -2239,7 +2334,6 @@ au_atomupd1_impl_new(const gchar *config_directory,
    gint64 client_pid = -1;
    gint64 rauc_pid = -1;
    AuAtomupd1Impl *atomupd = g_object_new(AU_TYPE_ATOMUPD1_IMPL, NULL);
-   g_autoptr(GKeyFile) client_config = g_key_file_new();
 
    g_return_val_if_fail(config_directory != NULL, NULL);
 
@@ -2254,68 +2348,8 @@ au_atomupd1_impl_new(const gchar *config_directory,
       atomupd->config_path = g_build_filename(config_directory, AU_CONFIG, NULL);
    }
 
-   if (!g_key_file_load_from_file(client_config, atomupd->config_path, G_KEY_FILE_NONE,
-                                  error))
+   if (!_au_load_config(atomupd, manifest_preference, error))
       return NULL;
-
-   if (manifest_preference != NULL) {
-      atomupd->manifest_path = g_strdup(manifest_preference);
-   } else {
-      manifest_from_config = _au_get_manifest_path_from_config(client_config);
-      if (manifest_from_config != NULL)
-         atomupd->manifest_path = g_steal_pointer(&manifest_from_config);
-      else
-         atomupd->manifest_path = g_strdup(AU_DEFAULT_MANIFEST);
-   }
-
-   g_debug("Getting the list of known variants and branches");
-
-   known_variants = _au_get_known_variants_from_config(client_config, error);
-   if (known_variants == NULL)
-      return NULL;
-
-   au_atomupd1_set_known_variants((AuAtomupd1 *)atomupd,
-                                  (const gchar *const *)known_variants);
-
-   known_branches = _au_get_known_branches_from_config(client_config, error);
-   if (known_branches == NULL)
-      return NULL;
-
-   au_atomupd1_set_known_branches((AuAtomupd1 *)atomupd,
-                                  (const gchar *const *)known_branches);
-
-   /* If the config has an HTTP auth, we need to ensure that netrc and Desync
-    * have it too */
-   if (_au_get_http_auth_from_config(client_config, &username, &password,
-                                     &auth_encoded)) {
-      g_autoptr(GHashTable) url_table = NULL;
-      g_autoptr(GList) urls = NULL;
-      const gchar *images_url;
-
-      url_table = _au_get_urls_from_config(client_config, error);
-      if (url_table == NULL) {
-         /* The config file is malformed, bail out */
-         g_warning("Failed to get the list of URLs from %s", atomupd->config_path);
-         return NULL;
-      }
-      urls = g_hash_table_get_values(url_table);
-
-      if (!_au_ensure_urls_in_netrc(AU_NETRC_PATH, urls, username, password, error))
-         return NULL;
-
-      images_url = g_hash_table_lookup(url_table, "ImagesUrl");
-      if (images_url == NULL) {
-         /* The ImagesUrl entry is mandatory for a valid config file */
-         au_throw_error(
-            error, "The config file \"%s\" doesn't have the expected \"ImagesUrl\" entry",
-            atomupd->config_path);
-         return NULL;
-      }
-
-      if (!_au_ensure_url_in_desync_conf(AU_DESYNC_CONFIG_PATH, images_url, auth_encoded,
-                                         error))
-         return NULL;
-   }
 
    /* This environment variable is used for debugging and automated tests */
    updates_json_path = g_getenv("AU_UPDATES_JSON_FILE");
@@ -2333,27 +2367,6 @@ au_atomupd1_impl_new(const gchar *config_directory,
 
       g_clear_error(&local_error);
    }
-
-   if (!_au_load_user_preferences(atomupd->manifest_path, &variant, &branch, error))
-      return NULL;
-
-   au_atomupd1_set_variant((AuAtomupd1 *)atomupd, variant);
-   au_atomupd1_set_branch((AuAtomupd1 *)atomupd, branch);
-
-   system_build_id = _au_get_current_system_build_id(atomupd->manifest_path, error);
-   if (system_build_id == NULL)
-      return NULL;
-   system_version = _au_get_current_system_version(atomupd->manifest_path, error);
-   if (system_version == NULL)
-      return NULL;
-
-   /* Quit early if the current system has an unexpected build ID */
-   if (!_is_buildid_valid(system_build_id, &atomupd->buildid_date,
-                          &atomupd->buildid_increment, error))
-      return NULL;
-
-   au_atomupd1_set_current_build_id((AuAtomupd1 *)atomupd, system_build_id);
-   au_atomupd1_set_current_version((AuAtomupd1 *)atomupd, system_version);
 
    au_atomupd1_set_version((AuAtomupd1 *)atomupd, ATOMUPD_VERSION);
 
