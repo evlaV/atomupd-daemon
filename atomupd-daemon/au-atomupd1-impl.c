@@ -2344,12 +2344,20 @@ au_atomupd1_impl_new(const gchar *config_directory,
    dev_config_path = g_build_filename(config_directory, AU_DEV_CONFIG, NULL);
    if (g_file_test(dev_config_path, G_FILE_TEST_EXISTS)) {
       atomupd->config_path = g_steal_pointer(&dev_config_path);
-   } else {
-      atomupd->config_path = g_build_filename(config_directory, AU_CONFIG, NULL);
+
+      if (!_au_load_config(atomupd, manifest_preference, &local_error)) {
+         g_warning("Failed to load '%s': %s\nUsing '%s' as a fallback.", AU_DEV_CONFIG,
+                   local_error->message, AU_CONFIG);
+         g_clear_error(&local_error);
+         g_clear_pointer(&atomupd->config_path, g_free);
+      }
    }
 
-   if (!_au_load_config(atomupd, manifest_preference, error))
-      return NULL;
+   if (atomupd->config_path == NULL) {
+      atomupd->config_path = g_build_filename(config_directory, AU_CONFIG, NULL);
+      if (!_au_load_config(atomupd, manifest_preference, error))
+         return NULL;
+   }
 
    /* This environment variable is used for debugging and automated tests */
    updates_json_path = g_getenv("AU_UPDATES_JSON_FILE");
