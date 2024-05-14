@@ -255,6 +255,14 @@
     <property name="KnownBranches" type="as" access="read"/>
 
     <!--
+        ReloadConfiguration:
+          @options: Reserved for future use
+    -->
+    <method name="ReloadConfiguration">
+      <arg type="a{sv}" name="options" direction="in"/>
+    </method>
+
+    <!--
         SwitchToVariant:
         @variant: Desired update variant. A typical value is `steamdeck`
 

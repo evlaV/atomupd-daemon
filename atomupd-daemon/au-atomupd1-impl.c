@@ -68,6 +68,8 @@ struct _AuAtomupd1Impl {
    GPid install_pid;
    guint install_event_source;
    gchar *config_path;
+   gchar *config_directory;
+   gchar *manifest_preference;
    gchar *manifest_path;
    GFile *updates_json_file;
    GFile *updates_json_copy;
@@ -2126,7 +2128,7 @@ debug_controller_authorize_cb(GDebugControllerDBus *debug_controller,
 }
 
 static gboolean
-_au_load_config(AuAtomupd1Impl *atomupd, const gchar *manifest_preference, GError **error)
+_au_load_config(AuAtomupd1Impl *atomupd, GError **error)
 {
    g_autofree gchar *variant = NULL;
    g_autofree gchar *branch = NULL;
@@ -2148,8 +2150,8 @@ _au_load_config(AuAtomupd1Impl *atomupd, const gchar *manifest_preference, GErro
       return FALSE;
 
    g_clear_pointer(&atomupd->manifest_path, g_free);
-   if (manifest_preference != NULL) {
-      atomupd->manifest_path = g_strdup(manifest_preference);
+   if (atomupd->manifest_preference != NULL) {
+      atomupd->manifest_path = g_strdup(atomupd->manifest_preference);
    } else {
       manifest_from_config = _au_get_manifest_path_from_config(client_config);
       if (manifest_from_config != NULL)
@@ -2231,11 +2233,65 @@ _au_load_config(AuAtomupd1Impl *atomupd, const gchar *manifest_preference, GErro
 }
 
 static void
+au_reload_configuration_authorized_cb(AuAtomupd1 *object,
+                                      GDBusMethodInvocation *invocation,
+                                      gpointer arg_options_pointer)
+{
+   g_autofree gchar *dev_config_path = NULL;
+   g_autoptr(GError) error = NULL;
+   AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
+
+   _au_clear_available_updates(object);
+   g_clear_pointer(&self->config_path, g_free);
+
+   dev_config_path = g_build_filename(self->config_directory, AU_DEV_CONFIG, NULL);
+   if (g_file_test(dev_config_path, G_FILE_TEST_EXISTS)) {
+      self->config_path = g_steal_pointer(&dev_config_path);
+
+      if (_au_load_config(self, &error)) {
+         g_debug("Loaded the configuration file '%s'", dev_config_path);
+         au_atomupd1_complete_reload_configuration(object, g_steal_pointer(&invocation));
+         return;
+      }
+
+      g_warning("Failed to load '%s': %s\nUsing '%s' as a fallback.", AU_DEV_CONFIG,
+                error->message, AU_CONFIG);
+      g_clear_error(&error);
+      g_clear_pointer(&self->config_path, g_free);
+   }
+
+   self->config_path = g_build_filename(self->config_directory, AU_CONFIG, NULL);
+   if (!_au_load_config(self, &error)) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "An error occurred while reloading the configuration, please fix your conf file "
+         "and retry: %s",
+         error->message);
+      return;
+   }
+
+   au_atomupd1_complete_reload_configuration(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_reload_configuration(AuAtomupd1 *object,
+                                             GDBusMethodInvocation *invocation,
+                                             GVariant *arg_options)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.reload-configuration",
+                  au_reload_configuration_authorized_cb, invocation,
+                  g_variant_ref(arg_options), (GDestroyNotify)g_variant_unref);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static void
 init_atomupd1_iface(AuAtomupd1Iface *iface)
 {
    iface->handle_cancel_update = au_atomupd1_impl_handle_cancel_update;
    iface->handle_check_for_updates = au_atomupd1_impl_handle_check_for_updates;
    iface->handle_pause_update = au_atomupd1_impl_handle_pause_update;
+   iface->handle_reload_configuration = au_atomupd1_impl_handle_reload_configuration;
    iface->handle_resume_update = au_atomupd1_impl_handle_resume_update;
    iface->handle_start_update = au_atomupd1_impl_handle_start_update;
    iface->handle_switch_to_variant = au_atomupd1_impl_handle_switch_to_variant;
@@ -2253,7 +2309,9 @@ au_atomupd1_impl_finalize(GObject *object)
    AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
 
    g_free(self->config_path);
+   g_free(self->config_directory);
    g_free(self->manifest_path);
+   g_free(self->manifest_preference);
    g_clear_object(&self->authority);
 
    // Keep the update file, to be able to reuse it later on
@@ -2341,11 +2399,14 @@ au_atomupd1_impl_new(const gchar *config_directory,
    if (atomupd->authority == NULL)
       return NULL;
 
+   atomupd->config_directory = g_strdup(config_directory);
+   atomupd->manifest_preference = g_strdup(manifest_preference);
+
    dev_config_path = g_build_filename(config_directory, AU_DEV_CONFIG, NULL);
    if (g_file_test(dev_config_path, G_FILE_TEST_EXISTS)) {
       atomupd->config_path = g_steal_pointer(&dev_config_path);
 
-      if (!_au_load_config(atomupd, manifest_preference, &local_error)) {
+      if (!_au_load_config(atomupd, &local_error)) {
          g_warning("Failed to load '%s': %s\nUsing '%s' as a fallback.", AU_DEV_CONFIG,
                    local_error->message, AU_CONFIG);
          g_clear_error(&local_error);
@@ -2355,7 +2416,7 @@ au_atomupd1_impl_new(const gchar *config_directory,
 
    if (atomupd->config_path == NULL) {
       atomupd->config_path = g_build_filename(config_directory, AU_CONFIG, NULL);
-      if (!_au_load_config(atomupd, manifest_preference, error))
+      if (!_au_load_config(atomupd, error))
          return NULL;
    }
 

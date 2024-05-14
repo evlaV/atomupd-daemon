@@ -643,6 +643,14 @@ test_dev_config(Fixture *f, gconstpointer context)
       g_assert_no_error(error);
    }
 
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+
+   atomupd_properties = _get_atomupd_properties(bus);
+   /* We only have the client.conf file */
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_branches);
+
    /* Fill the client-dev.conf file */
    {
       g_autofree gchar *source_config_path = NULL;
@@ -658,9 +666,17 @@ test_dev_config(Fixture *f, gconstpointer context)
       g_assert_no_error(error);
    }
 
-   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
-                                               f->test_envp, FALSE);
+   g_clear_pointer(&atomupd_properties, atomupd_properties_free);
+   atomupd_properties = _get_atomupd_properties(bus);
+   /* The daemon was already running when we created the client dev file.
+    * This means that it should still point to the canonical client.conf */
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_branches);
 
+   /* Reload the configuration. This time it should notice the new client-dev file */
+   _send_atomupd_message_with_null_reply(bus, "ReloadConfiguration", "(a{sv})", NULL);
+
+   g_clear_pointer(&atomupd_properties, atomupd_properties_free);
    atomupd_properties = _get_atomupd_properties(bus);
    /* We expect the dev file to take precedence here */
    g_assert_cmpstrv(atomupd_properties->known_variants, client_dev_variants);
