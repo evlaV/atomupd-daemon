@@ -438,6 +438,167 @@ test_verbose(Fixture *f, gconstpointer context)
    au_tests_stop_daemon_service(daemon_proc);
 }
 
+static void
+test_dev_config(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+   g_autofree gchar *update_file_path = NULL;
+   g_autofree gchar *tmp_config_dir = NULL;
+   gint wait_status = 0;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   tmp_config_dir = g_dir_make_tmp("atomupd-daemon-prop-XXXXXX", &error);
+   g_assert_no_error(error);
+
+   f->test_envp = g_environ_setenv(f->test_envp, "AU_CONFIG_DIR", tmp_config_dir, TRUE);
+
+   {
+      g_autofree gchar *config_path = NULL;
+      g_autofree gchar *source_config_path = NULL;
+      g_autoptr(GFile) source_file = NULL;
+      g_autoptr(GFile) dest_file = NULL;
+
+      config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+      source_config_path = g_build_filename(f->srcdir, "data", "client.conf", NULL);
+      source_file = g_file_new_for_path(source_config_path);
+      dest_file = g_file_new_for_path(config_path);
+      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
+                  &error);
+      g_assert_no_error(error);
+   }
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+
+   {
+      g_autofree gchar *variants_list = NULL;
+      g_autofree gchar *branches_list = NULL;
+
+      variants_list =
+         _au_execute_manager("list-variants", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(variants_list, ==, "steamdeck\n");
+      branches_list =
+         _au_execute_manager("list-branches", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(branches_list, ==, "stable\nrc\nbeta\nbc\nmain\n");
+   }
+
+   /* Create a custom client-dev file with an additional test variant */
+   const gchar *am_argv[] = {
+      "atomupd-manager",      "--session",      "create-dev-conf",
+      "--additional-variant", "steamdeck-test", NULL,
+   };
+
+   g_spawn_sync(NULL, /* working directory */
+                (gchar **)am_argv, f->test_envp, G_SPAWN_SEARCH_PATH,
+                NULL, /* child setup */
+                NULL, /* user data */
+                NULL, /* stdout */
+                NULL, /* stderr */
+                &wait_status, &error);
+   g_assert_no_error(error);
+   g_spawn_check_wait_status(wait_status, &error);
+   g_assert_no_error(error);
+
+   {
+      g_autofree gchar *variants_list = NULL;
+      g_autofree gchar *branches_list = NULL;
+
+      variants_list =
+         _au_execute_manager("list-variants", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(variants_list, ==, "steamdeck\nsteamdeck-test\n");
+      branches_list =
+         _au_execute_manager("list-branches", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(branches_list, ==, "stable\nrc\nbeta\nbc\nmain\n");
+   }
+
+   const gchar *am_no_reload_argv[] = {
+      "atomupd-manager",      "--session",        "create-dev-conf",
+      "--additional-variant", "steamdeck-test10", "--additional-variant",
+      "steamdeck-test20",     "--skip-reload",    NULL,
+   };
+
+   g_spawn_sync(NULL, /* working directory */
+                (gchar **)am_no_reload_argv, f->test_envp, G_SPAWN_SEARCH_PATH,
+                NULL, /* child setup */
+                NULL, /* user data */
+                NULL, /* stdout */
+                NULL, /* stderr */
+                &wait_status, &error);
+   g_assert_no_error(error);
+   g_spawn_check_wait_status(wait_status, &error);
+   g_assert_no_error(error);
+
+   {
+      g_autofree gchar *variants_list = NULL;
+      g_autofree gchar *variants_list_reboot = NULL;
+
+      /* We didn't reload the configuration. This means that the new client-dev file
+       * should not be loaded yet */
+      variants_list =
+         _au_execute_manager("list-variants", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(variants_list, ==, "steamdeck\nsteamdeck-test\n");
+
+      au_tests_stop_daemon_service(daemon_proc);
+      g_clear_object(&daemon_proc);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                                  f->test_envp, FALSE);
+
+      /* After a service restart it should pick up the new client-dev file */
+      variants_list_reboot =
+         _au_execute_manager("list-variants", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(variants_list_reboot, ==,
+                      "steamdeck\nsteamdeck-test10\nsteamdeck-test20\n");
+   }
+
+   /* Test the case where the Variants in client.conf end with a semicolon */
+   {
+      g_autofree gchar *config_path = NULL;
+      g_autofree gchar *source_config_path = NULL;
+      g_autofree gchar *variants_list = NULL;
+      g_autoptr(GFile) source_file = NULL;
+      g_autoptr(GFile) dest_file = NULL;
+
+      config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+      source_config_path = g_build_filename(f->srcdir, "data", "client_semicolon.conf", NULL);
+      source_file = g_file_new_for_path(source_config_path);
+      dest_file = g_file_new_for_path(config_path);
+      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
+                  &error);
+      g_assert_no_error(error);
+
+      const gchar *spawn_argv[] = {
+         "atomupd-manager",      "--session",      "create-dev-conf",
+         "--additional-variant", "steamdeck-test", NULL,
+      };
+
+      g_spawn_sync(NULL, /* working directory */
+                  (gchar **)spawn_argv, f->test_envp, G_SPAWN_SEARCH_PATH,
+                  NULL, /* child setup */
+                  NULL, /* user data */
+                  NULL, /* stdout */
+                  NULL, /* stderr */
+                  &wait_status, &error);
+      g_assert_no_error(error);
+      g_spawn_check_wait_status(wait_status, &error);
+      g_assert_no_error(error);
+
+      variants_list =
+         _au_execute_manager("list-variants", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(variants_list, ==, "steamdeck\nvanilla\nsteamdeck-test\n");
+   }
+
+   au_tests_stop_daemon_service(daemon_proc);
+
+   if (!rm_rf(tmp_config_dir))
+      g_debug("Unable to remove temp directory: %s", tmp_config_dir);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -451,6 +612,7 @@ main(int argc, char **argv)
    test_add("/manager/check_updates", test_check_updates);
    test_add("/manager/multiple_method_calls", test_multiple_method_calls);
    test_add("/manager/verbose", test_verbose);
+   test_add("/manager/dev_config", test_dev_config);
 
    ret = g_test_run();
    return ret;

@@ -47,6 +47,9 @@
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(sd_journal, sd_journal_close)
 
+static const gchar *AU_CONFIG = "client.conf";
+static const gchar *AU_DEV_CONFIG = "client-dev.conf";
+
 static GMainLoop *main_loop = NULL;
 static int main_loop_result = EXIT_SUCCESS;
 
@@ -54,6 +57,10 @@ static gboolean opt_session = FALSE;
 static gboolean opt_verbose = FALSE;
 static gboolean opt_penultimate = FALSE;
 static gboolean opt_version = FALSE;
+static gboolean opt_skip_reload = FALSE;
+static gchar **opt_additional_variants = NULL;
+static gchar *opt_username = NULL;
+static gchar *opt_password = NULL;
 
 static GOptionEntry options[] = {
    { "session", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &opt_session,
@@ -64,6 +71,18 @@ static GOptionEntry options[] = {
      &opt_penultimate, "Use the session bus instead of the system bus", NULL },
    { "version", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_version,
      "Print version number and exit.", NULL },
+   { NULL }
+};
+
+static GOptionEntry create_dev_conf_options[] = {
+   { "additional-variant", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING_ARRAY,
+     &opt_additional_variants, "Additional known variant, can be repeated", "VARIANT" },
+   { "username", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_username,
+     "Username for the eventual HTTP authentication", NULL },
+   { "password", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_password,
+     "Password for the eventual HTTP authentication", NULL },
+   { "skip-reload", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_skip_reload,
+     "Do not execute the ReloadConfiguration method of the API", NULL },
    { NULL }
 };
 
@@ -702,6 +721,84 @@ update_status(G_GNUC_UNUSED GOptionContext *context,
    return EXIT_SUCCESS;
 }
 
+static int
+create_dev_conf(G_GNUC_UNUSED GOptionContext *context,
+                GDBusConnection *bus,
+                G_GNUC_UNUSED const gchar *argument)
+{
+   const gchar *config_dir = NULL;
+   g_autofree gchar *initial_variants = NULL;
+   g_autoptr(GString) variants = NULL;
+   g_autofree gchar *config_path = NULL;
+   g_autofree gchar *dev_config_path = NULL;
+   g_auto(GVariantBuilder) builder;
+   g_autoptr(GError) error = NULL;
+   g_autoptr(GKeyFile) client_config = g_key_file_new();
+   gsize i;
+
+   /* This environment variable is used for debugging and automated tests */
+   config_dir = g_getenv("AU_CONFIG_DIR");
+   if (config_dir == NULL)
+      config_dir = "/etc/steamos-atomupd";
+
+   config_path = g_build_filename(config_dir, AU_CONFIG, NULL);
+
+   if (!g_key_file_load_from_file(client_config, config_path, G_KEY_FILE_NONE, &error)) {
+      g_print("An error occurred while loading the client configuration: %s\n",
+              error->message);
+      return EXIT_FAILURE;
+   }
+
+   if (opt_username)
+      g_key_file_set_string(client_config, "Server", "Username", opt_username);
+
+   if (opt_password)
+      g_key_file_set_string(client_config, "Server", "Password", opt_password);
+
+   if (opt_additional_variants) {
+      initial_variants =
+         g_key_file_get_string(client_config, "Server", "Variants", &error);
+
+      if (error != NULL) {
+         g_print("An error occurred while loading the Variants from the client "
+                 "configuration: %s\n",
+                 error->message);
+         return EXIT_FAILURE;
+      }
+
+      if (g_str_has_suffix(initial_variants, ";"))
+         initial_variants[strlen(initial_variants) - 1] = 0;
+
+      variants = g_string_new(initial_variants);
+
+      for (i = 0; opt_additional_variants[i] != NULL; i++)
+         g_string_append_printf(variants, ";%s", opt_additional_variants[i]);
+
+      g_key_file_set_string(client_config, "Server", "Variants", variants->str);
+   }
+
+   dev_config_path = g_build_filename(config_dir, AU_DEV_CONFIG, NULL);
+   if (!g_key_file_save_to_file(client_config, dev_config_path, &error)) {
+      g_print("An error occurred while creating the dev client configuration: %s\n",
+              error->message);
+      return EXIT_FAILURE;
+   }
+
+   if (opt_skip_reload)
+      return EXIT_SUCCESS;
+
+   g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+
+   if (!_send_atomupd_message(bus, "ReloadConfiguration", g_variant_new("(a{sv})", NULL),
+                              NULL, &error)) {
+      g_print("An error occurred while reloading the configuration: %s\n",
+              error->message);
+      return EXIT_FAILURE;
+   }
+
+   return EXIT_SUCCESS;
+}
+
 typedef struct {
    const gchar *command;
    const gchar *argument;
@@ -767,6 +864,12 @@ static const LaunchCommands launch_commands[] = {
                      "paused, successful, failed, cancelled",
       .command_function = update_status,
    },
+
+   {
+      .command = "create-dev-conf",
+      .description = "Create a custom client-dev.conf file for the atomic updates",
+      .command_function = create_dev_conf,
+   },
 };
 
 /*
@@ -831,6 +934,7 @@ main(int argc, char *argv[])
 {
    g_autoptr(GError) error = NULL;
    g_autoptr(GOptionContext) context = NULL;
+   GOptionGroup *dev_config_group = NULL;
    g_autoptr(GDBusConnection) bus = NULL;
    g_autofree gchar *summary = NULL;
    GLogLevelFlags log_levels = G_LOG_LEVEL_MESSAGE | G_LOG_LEVEL_WARNING;
@@ -843,6 +947,11 @@ main(int argc, char *argv[])
                                     "This tool let developers to control "
                                     "atomupd-daemon, allowing them to check and install "
                                     "OS updates.");
+
+   dev_config_group = g_option_group_new("create-dev-conf", "create-dev-conf Options:",
+                                         "Show create-dev-conf help options", NULL, NULL);
+   g_option_group_add_entries(dev_config_group, create_dev_conf_options);
+   g_option_context_add_group(context, dev_config_group);
 
    if (!g_option_context_parse(context, &argc, &argv, &error)) {
       g_print("%s\n", error->message);
@@ -861,6 +970,17 @@ main(int argc, char *argv[])
               g_get_prgname(), VERSION);
       return EXIT_SUCCESS;
    }
+
+   if (!g_str_equal(argv[1], "create-dev-conf")) {
+      /* These options are only relevant for the create-dev-conf command */
+      if (opt_additional_variants != NULL || opt_username != NULL ||
+          opt_password != NULL || opt_skip_reload)
+         return print_usage(context);
+   }
+
+   /* The authentication requires both username and password to be set */
+   if ((opt_username == NULL && opt_password != NULL) || (opt_username != NULL && opt_password == NULL))
+      return print_usage(context);
 
    bus = g_bus_get_sync(opt_session ? G_BUS_TYPE_SESSION : G_BUS_TYPE_SYSTEM, NULL, NULL);
 
