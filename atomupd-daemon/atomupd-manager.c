@@ -403,6 +403,8 @@ check_updates(GOptionContext *context,
    gboolean edited_debug_value = FALSE;
    gboolean ret;
 
+   g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+
    if (opt_verbose) {
       journal = open_atomupd_daemon_journal(&error);
       if (journal == NULL) {
@@ -415,8 +417,6 @@ check_updates(GOptionContext *context,
          return EXIT_FAILURE;
       }
    }
-
-   g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
 
    if (opt_penultimate)
       g_variant_builder_add(&builder, "{sv}", "penultimate", g_variant_new_boolean(TRUE));
@@ -736,6 +736,8 @@ create_dev_conf(G_GNUC_UNUSED GOptionContext *context,
    g_autoptr(GKeyFile) client_config = g_key_file_new();
    gsize i;
 
+   g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+
    /* This environment variable is used for debugging and automated tests */
    config_dir = g_getenv("AU_CONFIG_DIR");
    if (config_dir == NULL)
@@ -786,8 +788,6 @@ create_dev_conf(G_GNUC_UNUSED GOptionContext *context,
 
    if (opt_skip_reload)
       return EXIT_SUCCESS;
-
-   g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
 
    if (!_send_atomupd_message(bus, "ReloadConfiguration", g_variant_new("(a{sv})", NULL),
                               NULL, &error)) {
