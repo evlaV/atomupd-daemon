@@ -424,7 +424,7 @@ check_updates(GOptionContext *context,
    if (opt_penultimate)
       g_variant_builder_add(&builder, "{sv}", "penultimate", g_variant_new_boolean(TRUE));
 
-   ret = _send_atomupd_message(bus, "CheckForUpdates", g_variant_new("(a{sv})", builder),
+   ret = _send_atomupd_message(bus, "CheckForUpdates", g_variant_new("(a{sv})", &builder),
                                &reply, &error);
 
    if (opt_verbose) {
