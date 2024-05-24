@@ -16,7 +16,7 @@ stages:
 .build:
   stage: build
   tags:
-    - x86_64-linux-kvm-docker
+    - x86_64-linux-kvm-docker-heavy
   image: archlinux:base-devel
   script:
     - |
