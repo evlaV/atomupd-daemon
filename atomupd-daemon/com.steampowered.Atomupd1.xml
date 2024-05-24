@@ -38,7 +38,7 @@
         Version:
 
         The version of this interface implemented by this object.
-        This file documents version 4 of the interface.
+        This file documents version 5 of the interface.
     -->
     <property name="Version" type="u" access="read"/>
 
