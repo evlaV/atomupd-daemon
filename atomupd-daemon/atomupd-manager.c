@@ -734,12 +734,9 @@ create_dev_conf(G_GNUC_UNUSED GOptionContext *context,
    g_autoptr(GString) variants = NULL;
    g_autofree gchar *config_path = NULL;
    g_autofree gchar *dev_config_path = NULL;
-   g_auto(GVariantBuilder) builder;
    g_autoptr(GError) error = NULL;
    g_autoptr(GKeyFile) client_config = g_key_file_new();
    gsize i;
-
-   g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
 
    /* This environment variable is used for debugging and automated tests */
    config_dir = g_getenv("AU_CONFIG_DIR");
