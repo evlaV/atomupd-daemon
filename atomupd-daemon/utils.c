@@ -213,8 +213,9 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
    JsonObject *object = NULL;
    JsonObject *store_options = NULL;
    const gchar *store_options_literal = "store-options";
-   g_autofree gchar *url_entry = NULL;
    gboolean updated = FALSE;
+   g_autoptr(GString) url_entry = g_string_new (NULL);
+   gsize i;
 
    g_return_val_if_fail(desync_conf_path != NULL, FALSE);
    g_return_val_if_fail(url != NULL, FALSE);
@@ -250,38 +251,47 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
    store_options = json_object_get_object_member(object, store_options_literal);
 
    /* Use three `*` because the the first element is the image name, usually
-    * "steamdeck", then the version and finally the "castr" directory */
-   url_entry = g_strdup_printf("%s%s%s",
-                               url,
-                               g_str_has_suffix (url, "/") ? "" : "/",
-                               "*/*/*/");
+    * "steamdeck", then the version and finally the "castr" directory.
+    * We only add two `*` here, because the third will be added in the for loop. */
+   g_string_printf (url_entry,
+                    "%s%s%s",
+                    url,
+                    g_str_has_suffix (url, "/") ? "" : "/",
+                    "*/*/");
 
-   if (json_object_has_member (store_options, url_entry)) {
-      const gchar *old_auth = NULL;
-      JsonObject *url_object = NULL;
+   /* The server isn't too strict on the paths used. In order to cover any reasonable
+    * additional sub directories that the server might add in the future, we iterate
+    * a couple additional times to reach up to five `*` in the URL. */
+   for (i = 0; i < 3; i++) {
+      g_string_append (url_entry, "*/");
 
-      url_object = json_object_get_object_member(store_options, url_entry);
+      if (json_object_has_member (store_options, url_entry->str)) {
+         const gchar *old_auth = NULL;
+         JsonObject *url_object = NULL;
 
-      old_auth = json_object_get_string_member_with_default(url_object, "http-auth", NULL);
+         url_object = json_object_get_object_member(store_options, url_entry->str);
 
-      if (g_strcmp0(old_auth, auth_encoded) != 0) {
-         g_debug("The auth token for %s has been updated", url);
+         old_auth = json_object_get_string_member_with_default(url_object, "http-auth", NULL);
+
+         if (g_strcmp0(old_auth, auth_encoded) != 0) {
+            g_debug("The auth token for %s has been updated", url_entry->str);
+
+            json_object_set_string_member(url_object, "http-auth", auth_encoded);
+            updated = TRUE;
+         }
+      }
+
+      if (!json_object_has_member (store_options, url_entry->str)) {
+         g_autoptr(JsonObject) url_object = json_object_new();
 
          json_object_set_string_member(url_object, "http-auth", auth_encoded);
+         /* Set the error retry base interval to 1 second to let Desync wait a sane
+         * amount of time before re-trying a failed HTTP request */
+         json_object_set_int_member(url_object, "error-retry-base-interval", 1000000000);
+         json_object_set_object_member(store_options, url_entry->str, g_steal_pointer(&url_object));
+
          updated = TRUE;
       }
-   }
-
-   if (!json_object_has_member (store_options, url_entry)) {
-      g_autoptr(JsonObject) url_object = json_object_new();
-
-      json_object_set_string_member(url_object, "http-auth", auth_encoded);
-      /* Set the error retry base interval to 1 second to let Desync wait a sane
-       * amount of time before re-trying a failed HTTP request */
-      json_object_set_int_member(url_object, "error-retry-base-interval", 1000000000);
-      json_object_set_object_member(store_options, url_entry, g_steal_pointer(&url_object));
-
-      updated = TRUE;
    }
 
    if (updated) {

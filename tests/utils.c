@@ -299,6 +299,14 @@ static const DesyncConfTest desync_conf_tests[] = {
                      "    \"https://ci.example.com/*/*/*/\" : {\n"
                      "      \"http-auth\" : \"Basic foobar==\",\n"
                      "      \"error-retry-base-interval\" : 1000000000\n"
+                     "    },\n"
+                     "    \"https://ci.example.com/*/*/*/*/\" : {\n"
+                     "      \"http-auth\" : \"Basic foobar==\",\n"
+                     "      \"error-retry-base-interval\" : 1000000000\n"
+                     "    },\n"
+                     "    \"https://ci.example.com/*/*/*/*/*/\" : {\n"
+                     "      \"http-auth\" : \"Basic foobar==\",\n"
+                     "      \"error-retry-base-interval\" : 1000000000\n"
                      "    }\n"
                      "  }\n"
                      "}",
@@ -311,6 +319,14 @@ static const DesyncConfTest desync_conf_tests[] = {
                  "    \"https://images.example.com/*/*/*/\": {\n"
                  "      \"http-auth\": \"Basic abcabc==\",\n"
                  "      \"error-retry-base-interval\": 1000000000\n"
+                 "    },\n"
+                 "    \"https://images.example.com/*/*/*/*/\": {\n"
+                 "      \"http-auth\": \"Basic abcabc==\",\n"
+                 "      \"error-retry-base-interval\": 1000000000\n"
+                 "    },\n"
+                 "    \"https://images.example.com/*/*/*/*/\": {\n"
+                 "      \"http-auth\": \"Basic abcabc==\",\n"
+                 "      \"error-retry-base-interval\": 1000000000\n"
                  "    }\n"
                  "  }\n"
                  "}\n",
@@ -319,6 +335,14 @@ static const DesyncConfTest desync_conf_tests[] = {
       .new_content = "{\n"
                      "  \"store-options\" : {\n"
                      "    \"https://images.example.com/*/*/*/\" : {\n"
+                     "      \"http-auth\" : \"Basic foobar==\",\n"
+                     "      \"error-retry-base-interval\" : 1000000000\n"
+                     "    },\n"
+                     "    \"https://images.example.com/*/*/*/*/\" : {\n"
+                     "      \"http-auth\" : \"Basic foobar==\",\n"
+                     "      \"error-retry-base-interval\" : 1000000000\n"
+                     "    },\n"
+                     "    \"https://images.example.com/*/*/*/*/*/\" : {\n"
                      "      \"http-auth\" : \"Basic foobar==\",\n"
                      "      \"error-retry-base-interval\" : 1000000000\n"
                      "    }\n"
@@ -343,6 +367,14 @@ static const DesyncConfTest desync_conf_tests[] = {
                      "    \"ftp://example.com/*/*/*/\" : {\n"
                      "      \"http-auth\" : \"Basic abcabc==\",\n"
                      "      \"error-retry-base-interval\" : 1000000000\n"
+                     "    },\n"
+                     "    \"ftp://example.com/*/*/*/*/\" : {\n"
+                     "      \"http-auth\" : \"Basic abcabc==\",\n"
+                     "      \"error-retry-base-interval\" : 1000000000\n"
+                     "    },\n"
+                     "    \"ftp://example.com/*/*/*/*/*/\" : {\n"
+                     "      \"http-auth\" : \"Basic abcabc==\",\n"
+                     "      \"error-retry-base-interval\" : 1000000000\n"
                      "    }\n"
                      "  }\n"
                      "}",
@@ -355,6 +387,14 @@ static const DesyncConfTest desync_conf_tests[] = {
       .new_content = "{\n"
                      "  \"store-options\" : {\n"
                      "    \"https://ci.example.com/*/*/*/\" : {\n"
+                     "      \"http-auth\" : \"Basic aabbccdd==\",\n"
+                     "      \"error-retry-base-interval\" : 1000000000\n"
+                     "    },\n"
+                     "    \"https://ci.example.com/*/*/*/*/\" : {\n"
+                     "      \"http-auth\" : \"Basic aabbccdd==\",\n"
+                     "      \"error-retry-base-interval\" : 1000000000\n"
+                     "    },\n"
+                     "    \"https://ci.example.com/*/*/*/*/*/\" : {\n"
                      "      \"http-auth\" : \"Basic aabbccdd==\",\n"
                      "      \"error-retry-base-interval\" : 1000000000\n"
                      "    }\n"
@@ -378,6 +418,14 @@ static const DesyncConfTest desync_conf_tests[] = {
                      "    \"https://images.example.com/*/*/*/\" : {\n"
                      "      \"error-retry-base-interval\" : 1000000000,\n"
                      "      \"http-auth\" : \"Basic foobar==\"\n"
+                     "    },\n"
+                     "    \"https://images.example.com/*/*/*/*/\" : {\n"
+                     "      \"http-auth\" : \"Basic foobar==\",\n"
+                     "      \"error-retry-base-interval\" : 1000000000\n"
+                     "    },\n"
+                     "    \"https://images.example.com/*/*/*/*/*/\" : {\n"
+                     "      \"http-auth\" : \"Basic foobar==\",\n"
+                     "      \"error-retry-base-interval\" : 1000000000\n"
                      "    }\n"
                      "  }\n"
                      "}",
@@ -389,6 +437,12 @@ static const DesyncConfTest desync_conf_tests[] = {
                  "  \"store-options\": {\n"
                  "    \"https://images.example.com/*/*/*/\": {\n"
                  "      \"error-retry-base-interval\": 500000000\n"
+                 "    },\n"
+                 "    \"https://images.example.com/*/*/*/*/\": {\n"
+                 "      \"error-retry-base-interval\": 500000000\n"
+                 "    },\n"
+                 "    \"https://images.example.com/*/*/*/*/*/\": {\n"
+                 "      \"error-retry-base-interval\": 500000000\n"
                  "    }\n"
                  "  }\n"
                  "}\n",
@@ -397,6 +451,14 @@ static const DesyncConfTest desync_conf_tests[] = {
       .new_content = "{\n"
                      "  \"store-options\" : {\n"
                      "    \"https://images.example.com/*/*/*/\" : {\n"
+                     "      \"error-retry-base-interval\" : 500000000,\n"
+                     "      \"http-auth\" : \"Basic foobar==\"\n"
+                     "    },\n"
+                     "    \"https://images.example.com/*/*/*/*/\" : {\n"
+                     "      \"error-retry-base-interval\" : 500000000,\n"
+                     "      \"http-auth\" : \"Basic foobar==\"\n"
+                     "    },\n"
+                     "    \"https://images.example.com/*/*/*/*/*/\" : {\n"
                      "      \"error-retry-base-interval\" : 500000000,\n"
                      "      \"http-auth\" : \"Basic foobar==\"\n"
                      "    }\n"
@@ -428,6 +490,17 @@ test_desync_conf_update(Fixture *f, gconstpointer context)
          g_unlink(tmp_file);
       }
 
+      result =
+         _au_ensure_url_in_desync_conf(tmp_file, test->url, test->auth_encoded, &error);
+      g_assert_no_error(error);
+      g_assert_true(result);
+
+      g_file_get_contents(tmp_file, &tmp_content, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(tmp_content, ==, test->new_content);
+
+      /* Run again, this time we don't expect any further change */
+      g_clear_pointer(&tmp_content, g_free);
       result =
          _au_ensure_url_in_desync_conf(tmp_file, test->url, test->auth_encoded, &error);
       g_assert_no_error(error);
