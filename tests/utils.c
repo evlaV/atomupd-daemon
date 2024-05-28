@@ -361,6 +361,48 @@ static const DesyncConfTest desync_conf_tests[] = {
                      "  }\n"
                      "}",
    },
+
+   {
+      .description = "The URL is already in the Desync config without auth",
+      .content = "{\n"
+                 "  \"store-options\": {\n"
+                 "    \"https://images.example.com/*/*/*/\": {\n"
+                 "      \"error-retry-base-interval\": 1000000000\n"
+                 "    }\n"
+                 "  }\n"
+                 "}\n",
+      .url = "https://images.example.com/",
+      .auth_encoded = "Basic foobar==",
+      .new_content = "{\n"
+                     "  \"store-options\" : {\n"
+                     "    \"https://images.example.com/*/*/*/\" : {\n"
+                     "      \"error-retry-base-interval\" : 1000000000,\n"
+                     "      \"http-auth\" : \"Basic foobar==\"\n"
+                     "    }\n"
+                     "  }\n"
+                     "}",
+   },
+
+   {
+      .description = "URL without auth and 500ms interval",
+      .content = "{\n"
+                 "  \"store-options\": {\n"
+                 "    \"https://images.example.com/*/*/*/\": {\n"
+                 "      \"error-retry-base-interval\": 500000000\n"
+                 "    }\n"
+                 "  }\n"
+                 "}\n",
+      .url = "https://images.example.com/",
+      .auth_encoded = "Basic foobar==",
+      .new_content = "{\n"
+                     "  \"store-options\" : {\n"
+                     "    \"https://images.example.com/*/*/*/\" : {\n"
+                     "      \"error-retry-base-interval\" : 500000000,\n"
+                     "      \"http-auth\" : \"Basic foobar==\"\n"
+                     "    }\n"
+                     "  }\n"
+                     "}",
+   },
 };
 
 static void

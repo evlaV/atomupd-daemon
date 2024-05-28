@@ -264,7 +264,7 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
 
       old_auth = json_object_get_string_member_with_default(url_object, "http-auth", NULL);
 
-      if (!g_str_equal(old_auth, auth_encoded)) {
+      if (g_strcmp0(old_auth, auth_encoded) != 0) {
          g_debug("The auth token for %s has been updated", url);
 
          json_object_set_string_member(url_object, "http-auth", auth_encoded);
