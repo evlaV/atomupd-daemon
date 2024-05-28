@@ -203,6 +203,7 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    g_autoptr(GDBusConnection) bus = NULL;
    g_autoptr(GError) error = NULL;
    g_autofree gchar *update_file_path = NULL;
+   g_autofree gchar *update_file_path_penultimate = NULL;
 
    bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
 
@@ -212,8 +213,13 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    f->test_envp =
       g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
 
-   daemon_proc =
-      au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path, f->test_envp, FALSE);
+   update_file_path_penultimate =
+      g_build_filename(f->srcdir, "data", "update_three_minors.json", NULL);
+   f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON_PENULTIMATE",
+                                   update_file_path_penultimate, TRUE);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_path,
+                                               f->test_envp, FALSE);
 
    {
       g_autofree gchar *output = NULL;
@@ -319,7 +325,7 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       output = _au_execute_manager("check", "--penultimate-update", FALSE, f->test_envp,
                                    &error);
       g_assert_no_error(error);
-      g_assert_nonnull(strstr(output, "20220227.3"));
+      g_assert_nonnull(strstr(output, "20211225.1"));
    }
 
    {

@@ -43,6 +43,7 @@ static gchar *opt_variant = NULL;
 static gchar *opt_branch = NULL;
 static gboolean opt_query_only = FALSE;
 static gboolean opt_estimate_download_size = FALSE;
+static gboolean opt_penultimate = FALSE;
 static gboolean opt_debug = FALSE;
 
 static GOptionEntry options[] = {
@@ -60,6 +61,7 @@ static GOptionEntry options[] = {
      NULL },
    { "estimate-download-size", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE,
      &opt_estimate_download_size, NULL, NULL },
+   { "penultimate-update", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_penultimate, NULL, NULL },
    { "debug", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_debug, NULL, NULL },
    { NULL }
 };
@@ -88,7 +90,12 @@ main(int argc, char **argv)
 
    if (opt_query_only) {
       g_autofree gchar *update_json = NULL;
-      const gchar *update_json_path = g_getenv("G_TEST_UPDATE_JSON");
+      const gchar *update_json_path;
+
+      if (opt_penultimate)
+         update_json_path = g_getenv("G_TEST_UPDATE_JSON_PENULTIMATE");
+      else
+         update_json_path = g_getenv("G_TEST_UPDATE_JSON");
 
       if (update_json_path == NULL) {
          printf("{}");
