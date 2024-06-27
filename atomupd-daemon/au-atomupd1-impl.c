@@ -269,8 +269,7 @@ _au_update_user_preferences(const gchar *variant,
 static gboolean
 _au_convert_from_legacy_variant(const gchar *legacy_variant,
                                 gchar **variant_out,
-                                gchar **branch_out,
-                                GError **error)
+                                gchar **branch_out)
 {
    g_autofree gchar *expanded_variant = NULL;
 
@@ -283,8 +282,8 @@ _au_convert_from_legacy_variant(const gchar *legacy_variant,
       *variant_out = g_strdup("steamdeck");
       *branch_out = g_strdup(expanded_variant + strlen("steamdeck-"));
    } else {
-      return au_throw_error(error, "The legacy variant '%s' is unexpected",
-                            expanded_variant);
+      g_warning("The legacy variant '%s' is unexpected", expanded_variant);
+      return FALSE;
    }
 
    return TRUE;
@@ -356,20 +355,27 @@ _au_load_user_preferences(const gchar *manifest_path,
          }
       }
 
-      /* Extrapolate the variant and branch from the legacy variant value */
-      if (!_au_convert_from_legacy_variant(legacy_variant, &variant, &branch, error))
-         return FALSE;
+      /* Extrapolate the variant and branch from the legacy variant value, if valid */
+      if (_au_convert_from_legacy_variant(legacy_variant, &variant, &branch)) {
+         if (!_au_update_user_preferences(variant, branch, error)) {
+            return FALSE;
+         }
+         g_debug("The user preferences have been migrated to the new '%s' file.",
+                 user_prefs_path);
+      } else {
+         g_unlink(branch_file_path);
+         g_warning("Unparsable legacy branch file variant '%s', unlinking.",
+                   legacy_variant);
+      }
 
-      if (!_au_update_user_preferences(variant, branch, error))
-         return FALSE;
-
-      g_debug("The user preferences have been migrated to the new '%s' file.",
-              user_prefs_path);
 
       /* TODO: When all Jupiter images use the new variant+branch (when 3.6 hits stable),
        * we should clean up the old branch file and just leave the new "preferences.conf". */
 
-   } else if (g_file_test(user_prefs_path, G_FILE_TEST_EXISTS)) {
+   }
+
+   /* Try preferences.conf if we couldn't load legacy config */
+   if (!variant && g_file_test(user_prefs_path, G_FILE_TEST_EXISTS)) {
       g_autoptr(GKeyFile) user_prefs = g_key_file_new();
 
       if (!g_key_file_load_from_file(user_prefs, user_prefs_path, G_KEY_FILE_NONE,
@@ -391,9 +397,10 @@ _au_load_user_preferences(const gchar *manifest_path,
          return FALSE;
       }
 
-   } else {
-      /* As our last resort we try to parse the image manifest file */
+   }
 
+   /* As our last resort we try to parse the image manifest file */
+   if (!variant) {
       variant = _au_get_default_variant(manifest_path, error);
       if (variant == NULL) {
          g_debug("Failed to parse the default variant from the image manifest");
@@ -408,8 +415,10 @@ _au_load_user_preferences(const gchar *manifest_path,
             "There isn't a default branch from the manifest, this is a legacy image");
 
          /* Extrapolate the variant and branch from the legacy variant value */
-         if (!_au_convert_from_legacy_variant(legacy_variant, &variant, &branch, error))
-            return FALSE;
+         if (!_au_convert_from_legacy_variant(legacy_variant, &variant, &branch)) {
+            return au_throw_error(error, "Cannot parse default variant '%s' from manifest",
+                                  legacy_variant);
+         }
       }
 
       if (!_au_update_user_preferences(variant, branch, error))
@@ -1156,10 +1165,20 @@ _au_update_legacy_branch_file(const gchar *variant, const gchar *branch)
       return;
    }
 
-   if (g_str_equal(branch, "stable"))
+   if (g_str_equal(branch, "stable")) {
       contracted_legacy_variant = "rel";
-   else
+   } else {
       contracted_legacy_variant = branch;
+   }
+
+   /* If this is not a known legacy variant, it similarly isn't supported by old images. */
+   g_autofree gchar *test_variant = NULL;
+   g_autofree gchar *test_branch = NULL;
+   if (!_au_convert_from_legacy_variant(contracted_legacy_variant, &test_variant,
+                                       &test_branch)) {
+      g_unlink(legacy_branch_file);
+      return;
+   }
 
    if (!g_file_set_contents(legacy_branch_file, contracted_legacy_variant, -1, &error)) {
       /* This is only for the legacy file, it is not a critical error */
