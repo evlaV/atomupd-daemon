@@ -3,6 +3,7 @@ variables:
     clang
     dbus
     json-glib
+    glib2-devel
     meson
     ninja
     polkit
