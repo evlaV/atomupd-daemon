@@ -971,6 +971,9 @@ main(int argc, char *argv[])
       return EXIT_SUCCESS;
    }
 
+   if (argc < 2)
+      return print_usage(context);
+
    if (!g_str_equal(argv[1], "create-dev-conf")) {
       /* These options are only relevant for the create-dev-conf command */
       if (opt_additional_variants != NULL || opt_username != NULL ||

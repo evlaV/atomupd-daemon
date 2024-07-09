@@ -441,6 +441,12 @@ test_verbose(Fixture *f, gconstpointer context)
       g_assert_false(get_daemon_debug_status(bus));
    }
 
+   {
+      /* Calling atomupd-manager without any command should result in the usage helper being printed */
+      _au_execute_manager(NULL, NULL, FALSE, f->test_envp, &error);
+      g_assert_error(error, G_SPAWN_EXIT_ERROR, 64);
+   }
+
    au_tests_stop_daemon_service(daemon_proc);
 }
 
