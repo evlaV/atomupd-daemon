@@ -1092,6 +1092,7 @@ typedef struct {
 } PrefsEntries;
 
 typedef struct {
+   const gchar *custom_manifest; /* Use a custom manifest instead of f->manifest_path */
    const gchar *legacy_conf_file_content; /* Content of the legacy "steamos-branch" file */
    PrefsEntries
       initial_file; /* Initial variant and branch values in the preferences file */
@@ -1110,6 +1111,53 @@ static const PreferencesTest preferences_test[] = {
          .variant = "steamdeck",
          .branch = "stable",
       },
+      .switch_expected = {
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+   },
+
+   {
+      .preferences_file_missing = TRUE,
+      .custom_manifest = "manifest_steamtest.json",
+      .initial_expected = {
+         /* Default values from manifest_steamtest.json */
+         .variant = "steamtest",
+         .branch = "beta",
+      },
+      .switch_expected = {
+         .variant = "steamtest",
+         .branch = "beta",
+      },
+   },
+
+   {
+      .preferences_file_missing = TRUE,
+      .custom_manifest = "manifest_steamtest_missing_branch.json",
+      .initial_expected = {
+         /* Expecting stable as the hardcoded fallback value */
+         .variant = "steamtest",
+         .branch = "stable",
+      },
+      .switch_expected = {
+         .variant = "steamtest",
+         .branch = "stable",
+      },
+   },
+
+   {
+      /* Manifest that is missing the necessary "variant" field */
+      .custom_manifest = "manifest_invalid.json",
+      .initial_file = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .initial_expected = {
+         /* Preferences takes precedence, so the borked manifest shouldn't be an issue */
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .switch_to_branch = "stable",
       .switch_expected = {
          .variant = "steamdeck",
          .branch = "stable",
@@ -1199,6 +1247,7 @@ test_preferences(Fixture *f, gconstpointer context)
       g_autofree gchar *preferences_path = NULL;
       g_autofree gchar *parsed_variant = NULL;
       g_autofree gchar *parsed_branch = NULL;
+      g_autofree gchar *manifest_path = NULL;
       g_autoptr(GKeyFile) parsed_preferences = NULL;
       int fd;
 
@@ -1240,7 +1289,12 @@ test_preferences(Fixture *f, gconstpointer context)
          g_unlink(preferences_path);
       }
 
-      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+      if (test.custom_manifest)
+         manifest_path = g_build_filename(f->srcdir, "data", test.custom_manifest, NULL);
+      else
+         manifest_path = g_strdup(f->manifest_path);
+
+      daemon_proc = au_tests_start_daemon_service(bus, manifest_path, f->conf_dir,
                                                   f->test_envp, FALSE);
 
       _check_string_property(bus, "Variant", test.initial_expected.variant);

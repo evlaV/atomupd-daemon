@@ -408,10 +408,11 @@ _au_load_user_preferences(const gchar *manifest_path,
          return FALSE;
       }
 
-      branch = _au_get_default_branch(manifest_path, error);
+      branch = _au_get_default_branch(manifest_path, NULL);
       if (branch == NULL) {
-         g_debug("Failed to parse the default branch from the image manifest");
-         return FALSE;
+         g_warning("Failed to parse the default branch from the image manifest. Using "
+                   "`stable` as a last resort attempt.");
+         branch = g_strdup("stable");
       }
 
       if (!_au_update_user_preferences(variant, branch, error))

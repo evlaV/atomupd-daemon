@@ -1,0 +1,8 @@
+{
+  "product": "steamos",
+  "release": "holo",
+  "default_update_branch": "beta",
+  "arch": "amd64",
+  "version": "3.7.9",
+  "buildid": "20240716.9001"
+}
