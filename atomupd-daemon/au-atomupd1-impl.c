@@ -408,18 +408,10 @@ _au_load_user_preferences(const gchar *manifest_path,
          return FALSE;
       }
 
-      branch = _au_get_default_branch(manifest_path, NULL);
+      branch = _au_get_default_branch(manifest_path, error);
       if (branch == NULL) {
-         g_autofree gchar *legacy_variant = g_steal_pointer(&variant);
-
-         g_debug(
-            "There isn't a default branch from the manifest, this is a legacy image");
-
-         /* Extrapolate the variant and branch from the legacy variant value */
-         if (!_au_convert_from_legacy_variant(legacy_variant, &variant, &branch)) {
-            return au_throw_error(error, "Cannot parse default variant '%s' from manifest",
-                                  legacy_variant);
-         }
+         g_debug("Failed to parse the default branch from the image manifest");
+         return FALSE;
       }
 
       if (!_au_update_user_preferences(variant, branch, error))
