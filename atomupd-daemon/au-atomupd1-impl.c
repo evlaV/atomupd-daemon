@@ -703,7 +703,7 @@ _au_get_default_variant(const gchar *manifest, GError **error)
 static gchar *
 _au_get_default_branch(const gchar *manifest, GError **error)
 {
-   return _au_get_string_from_manifest(manifest, "branch", error);
+   return _au_get_string_from_manifest(manifest, "default_update_branch", error);
 }
 
 /*
