@@ -2,8 +2,10 @@ variables:
   STEAM_CI_DEPENDENCIES: >-
     clang
     dbus
-    json-glib
+    gcovr
     glib2-devel
+    json-glib
+    lcov
     meson
     ninja
     polkit
@@ -39,6 +41,7 @@ stages:
         -Db_lundef=${LUNDEF} \
         -Db_sanitize=${SANITIZER} \
         -Dusing_valgrind=${VALGRIND:-false} \
+        -Db_coverage=${COVERAGE:-false} \
         _build
       ninja -C _build
       ninja -C _build install
@@ -57,12 +60,27 @@ stages:
       - _build/meson-logs/*.txt
     when: always
 
-build:gcc:
+build:gcc_with_coverage:
   extends: .build
   variables:
     COMPILER: "gcc"
+    COVERAGE: "true"
     LUNDEF: "true"
     SANITIZER: "none"
+  after_script:
+    # We don't use coverage-html because it exits with an error about "duplicate merge record atomupd-daemon"
+    - lcov --capture --directory _build --output-file _build/meson-logs/coverage.info
+    - genhtml _build/meson-logs/coverage.info --output-directory _build/meson-logs/coverage_report
+    - ninja -C _build coverage-xml
+  coverage: '/^\s+lines.+:\s+([\d.]+\%)\s+/'
+  artifacts:
+    paths:
+      - _build/meson-logs
+    when: always
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: _build/meson-logs/coverage.xml
 
 build:gcc_asan:
   extends: .build
