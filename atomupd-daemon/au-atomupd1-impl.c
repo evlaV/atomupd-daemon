@@ -336,6 +336,8 @@ _au_load_user_preferences(const gchar *manifest_path,
       const char *search;
       gsize len;
 
+      g_debug("Parsing the legacy steamos-branch file '%s'", branch_file_path);
+
       if (!g_file_get_contents(branch_file_path, &legacy_variant, &len, error)) {
          g_debug("The legacy config file '%s' is probably malformed", branch_file_path);
          return FALSE;
@@ -363,9 +365,9 @@ _au_load_user_preferences(const gchar *manifest_path,
          g_debug("The user preferences have been migrated to the new '%s' file.",
                  user_prefs_path);
       } else {
+         g_warning("Unparsable legacy branch file variant '%s', removing '%s'.",
+                   legacy_variant, branch_file_path);
          g_unlink(branch_file_path);
-         g_warning("Unparsable legacy branch file variant '%s', unlinking.",
-                   legacy_variant);
       }
 
 
@@ -378,6 +380,8 @@ _au_load_user_preferences(const gchar *manifest_path,
    /* Try preferences.conf if we couldn't load legacy config */
    if (!variant && g_file_test(user_prefs_path, G_FILE_TEST_EXISTS)) {
       g_autoptr(GKeyFile) user_prefs = g_key_file_new();
+
+      g_debug("Parsing the preferences.conf file '%s'", user_prefs_path);
 
       if (!g_key_file_load_from_file(user_prefs, user_prefs_path, G_KEY_FILE_NONE,
                                      error)) {
@@ -402,6 +406,9 @@ _au_load_user_preferences(const gchar *manifest_path,
 
    /* As our last resort we try to parse the image manifest file */
    if (!variant) {
+      g_debug("Parsing the image manifest '%s' to grab the variant and branch",
+              manifest_path);
+
       variant = _au_get_default_variant(manifest_path, error);
       if (variant == NULL) {
          g_debug("Failed to parse the default variant from the image manifest");
