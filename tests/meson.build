@@ -88,7 +88,7 @@ foreach test_name : ['au-atomupd1-impl', 'impl', 'manager', 'utils']
     test_timeout = 150
   endif
 
-  test(test_name, exe, env : test_env, timeout : test_timeout)
+  test(test_name, exe, env : test_env, timeout : test_timeout, is_parallel: false)
 endforeach
 
 install_subdir('data', install_dir : tests_dir)

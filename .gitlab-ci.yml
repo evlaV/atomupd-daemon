@@ -49,10 +49,10 @@ stages:
       # Do not run multiple tests in parallel because they all rely on the same
       # D-Bus path, so they'll conflict with each other
       if [ -z "${VALGRIND-}" ]; then
-        meson test --verbose --num-processes 1 -C _build
+        meson test --verbose -C _build
       else
         export DEBUGINFOD_URLS=https://debuginfod.archlinux.org
-        meson test --wrap='valgrind --trace-children=yes --error-exitcode=1' --verbose --num-processes 1 -C _build
+        meson test --wrap='valgrind --trace-children=yes --error-exitcode=1' --verbose -C _build
       fi
 
   artifacts:
