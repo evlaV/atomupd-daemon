@@ -289,6 +289,130 @@ _au_convert_from_legacy_variant(const gchar *legacy_variant,
    return TRUE;
 }
 
+/*
+ * _au_load_legacy_preferences:
+ * @branch_file_path: (not nullable): Path to the legacy steamos-branch file
+ * @variant_out: (out): Used to return the tracked variant
+ * @branch_out: (out): Used to return the tracked branch
+ * @error: Used to raise an error on failure
+ *
+ * Retrieve the variant and branch that are currently being tracked by parsing the
+ * old legacy "steamos-branch" file.
+ *
+ * Returns: %TRUE if the preferences are correctly retrieved
+ */
+static gboolean
+_au_load_legacy_preferences(const gchar *branch_file_path,
+                            gchar **variant_out,
+                            gchar **branch_out,
+                            GError **error)
+{
+   g_autofree gchar *variant = NULL;
+   g_autofree gchar *branch = NULL;
+   g_autofree gchar *legacy_variant = NULL;
+   const char *search;
+   gsize len;
+   const gchar *user_prefs_path = _au_get_user_preferences_file_path();
+
+   g_return_val_if_fail(branch_file_path != NULL, FALSE);
+   g_return_val_if_fail(variant_out != NULL && *variant_out == NULL, FALSE);
+   g_return_val_if_fail(branch_out != NULL && *branch_out == NULL, FALSE);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   g_debug("Parsing the legacy steamos-branch file '%s'", branch_file_path);
+
+   if (!g_file_get_contents(branch_file_path, &legacy_variant, &len, error)) {
+      g_debug("The legacy config file '%s' is probably malformed", branch_file_path);
+      return FALSE;
+   }
+
+   if (len != 0) {
+      /* Remove eventual trailing newline that could have been added by
+       * steamos-select-branch */
+      if (legacy_variant[len - 1] == '\n')
+         legacy_variant[len - 1] = '\0';
+
+      search = strstr(legacy_variant, "\n");
+      if (search != NULL) {
+         /* If we have multiple newlines the file is likely malformed */
+         return au_throw_error(error, "Failed to parse the legacy config file '%s'",
+                               branch_file_path);
+      }
+   }
+
+   /* Extrapolate the variant and branch from the legacy variant value, if valid */
+   if (_au_convert_from_legacy_variant(legacy_variant, &variant, &branch)) {
+      if (!_au_update_user_preferences(variant, branch, error)) {
+         return FALSE;
+      }
+      g_debug("The user preferences have been migrated to the new '%s' file.",
+              user_prefs_path);
+   } else {
+      g_warning("Unparsable legacy branch file variant '%s', removing '%s'.",
+                legacy_variant, branch_file_path);
+      g_unlink(branch_file_path);
+   }
+
+   /* TODO: When all Jupiter images use the new variant+branch (when 3.6 hits stable),
+    * we should clean up the old branch file and just leave the new "preferences.conf". */
+
+   *variant_out = g_steal_pointer(&variant);
+   *branch_out = g_steal_pointer(&branch);
+   return TRUE;
+}
+
+/*
+ * _au_load_preferences_file:
+ * @user_prefs_path: (not nullable): Path to the preferences file
+ * @variant_out: (out): Used to return the tracked variant
+ * @branch_out: (out): Used to return the tracked branch
+ * @error: Used to raise an error on failure
+ *
+ * Parses the user preference file and retrieves the variant and branch that are
+ * currently being tracked.
+ *
+ * Returns: %TRUE if the preferences are correctly retrieved
+ */
+static gboolean
+_au_load_user_preferences_file(const gchar *user_prefs_path,
+                               gchar **variant_out,
+                               gchar **branch_out,
+                               GError **error)
+{
+   g_autofree gchar *variant = NULL;
+   g_autofree gchar *branch = NULL;
+   g_autoptr(GKeyFile) user_prefs = g_key_file_new();
+
+   g_return_val_if_fail(user_prefs_path != NULL, FALSE);
+   g_return_val_if_fail(variant_out != NULL && *variant_out == NULL, FALSE);
+   g_return_val_if_fail(branch_out != NULL && *branch_out == NULL, FALSE);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   g_debug("Parsing the preferences.conf file '%s'", user_prefs_path);
+
+   if (!g_key_file_load_from_file(user_prefs, user_prefs_path, G_KEY_FILE_NONE, error)) {
+      g_debug("The user preferences config file '%s' is probably malformed",
+              user_prefs_path);
+      return FALSE;
+   }
+
+   variant = g_key_file_get_string(user_prefs, "Choices", "Variant", error);
+   if (variant == NULL) {
+      g_debug("Failed to parse the chosen Variant from '%s'", user_prefs_path);
+      return FALSE;
+   }
+
+   branch = g_key_file_get_string(user_prefs, "Choices", "Branch", error);
+   if (branch == NULL) {
+      g_debug("Failed to parse the chosen Branch from '%s'", user_prefs_path);
+      return FALSE;
+   }
+
+   *variant_out = g_steal_pointer(&variant);
+   *branch_out = g_steal_pointer(&branch);
+   return TRUE;
+}
+
 static gchar *
 _au_get_default_variant(const gchar *manifest, GError **error);
 
@@ -296,135 +420,48 @@ static gchar *
 _au_get_default_branch(const gchar *manifest, GError **error);
 
 /*
- * _au_load_user_preferences:
+ * _au_load_preferences_from_manifest:
  * @manifest_path: (not nullable): Path to the image manifest file
  * @variant_out: (out): Used to return the tracked variant
  * @branch_out: (out): Used to return the tracked branch
  * @error: Used to raise an error on failure
  *
- * Retrieve the variant and branch that are currently being tracked. These values
- * are taken by parsing the user preference file. If the file is not available, the old
- * legacy "steamos-branch" file will be used instead. If even that file is not available,
- * the default values will be taken from the image JSON manifest file.
+ * Retrieve the default variant and branch by parsing the image JSON manifest file.
  *
- * Returns: %TRUE if the preferences are correctly retrieved
+ * Returns: %TRUE if the values are correctly retrieved
  */
 static gboolean
-_au_load_user_preferences(const gchar *manifest_path,
-                          gchar **variant_out,
-                          gchar **branch_out,
-                          GError **error)
+_au_load_preferences_from_manifest(const gchar *manifest_path,
+                                   gchar **variant_out,
+                                   gchar **branch_out,
+                                   GError **error)
 {
    g_autofree gchar *variant = NULL;
    g_autofree gchar *branch = NULL;
-   const gchar *user_prefs_path = _au_get_user_preferences_file_path();
 
    g_return_val_if_fail(manifest_path != NULL, FALSE);
    g_return_val_if_fail(variant_out != NULL && *variant_out == NULL, FALSE);
    g_return_val_if_fail(branch_out != NULL && *branch_out == NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
-   if (g_file_test(_au_get_legacy_branch_file_path(), G_FILE_TEST_EXISTS)) {
-      /* If we still have a legacy "steamos-branch" file, we try to load it first.
-       * Jupiter images older than 3.6 only update the "steamos-branch" file, so if
-       * a user switches several times between 3.6 and 3.5 images, we can be sure
-       * that "steamos-branch" holds the most up to date selected branch. While
-       * "preferences.conf" could store outdated info. */
+   g_debug("Parsing the image manifest '%s' to grab the variant and branch",
+           manifest_path);
 
-      g_autofree gchar *legacy_variant = NULL;
-      const gchar *branch_file_path = _au_get_legacy_branch_file_path();
-      const char *search;
-      gsize len;
-
-      g_debug("Parsing the legacy steamos-branch file '%s'", branch_file_path);
-
-      if (!g_file_get_contents(branch_file_path, &legacy_variant, &len, error)) {
-         g_debug("The legacy config file '%s' is probably malformed", branch_file_path);
-         return FALSE;
-      }
-
-      if (len != 0) {
-         /* Remove eventual trailing newline that could have been added by
-          * steamos-select-branch */
-         if (legacy_variant[len - 1] == '\n')
-            legacy_variant[len - 1] = '\0';
-
-         search = strstr(legacy_variant, "\n");
-         if (search != NULL) {
-            /* If we have multiple newlines the file is likely malformed */
-            return au_throw_error(error, "Failed to parse the legacy config file '%s'",
-                                  branch_file_path);
-         }
-      }
-
-      /* Extrapolate the variant and branch from the legacy variant value, if valid */
-      if (_au_convert_from_legacy_variant(legacy_variant, &variant, &branch)) {
-         if (!_au_update_user_preferences(variant, branch, error)) {
-            return FALSE;
-         }
-         g_debug("The user preferences have been migrated to the new '%s' file.",
-                 user_prefs_path);
-      } else {
-         g_warning("Unparsable legacy branch file variant '%s', removing '%s'.",
-                   legacy_variant, branch_file_path);
-         g_unlink(branch_file_path);
-      }
-
-
-      /* TODO: When all Jupiter images use the new variant+branch (when 3.6 hits stable),
-       * we should clean up the old branch file and just leave the new "preferences.conf".
-       */
-
+   variant = _au_get_default_variant(manifest_path, error);
+   if (variant == NULL) {
+      g_debug("Failed to parse the default variant from the image manifest");
+      return FALSE;
    }
 
-   /* Try preferences.conf if we couldn't load legacy config */
-   if (!variant && g_file_test(user_prefs_path, G_FILE_TEST_EXISTS)) {
-      g_autoptr(GKeyFile) user_prefs = g_key_file_new();
-
-      g_debug("Parsing the preferences.conf file '%s'", user_prefs_path);
-
-      if (!g_key_file_load_from_file(user_prefs, user_prefs_path, G_KEY_FILE_NONE,
-                                     error)) {
-         g_debug("The user preferences config file '%s' is probably malformed",
-                 user_prefs_path);
-         return FALSE;
-      }
-
-      variant = g_key_file_get_string(user_prefs, "Choices", "Variant", error);
-      if (variant == NULL) {
-         g_debug("Failed to parse the chosen Variant from '%s'", user_prefs_path);
-         return FALSE;
-      }
-
-      branch = g_key_file_get_string(user_prefs, "Choices", "Branch", error);
-      if (branch == NULL) {
-         g_debug("Failed to parse the chosen Branch from '%s'", user_prefs_path);
-         return FALSE;
-      }
-
+   branch = _au_get_default_branch(manifest_path, NULL);
+   if (branch == NULL) {
+      g_warning("Failed to parse the default branch from the image manifest. Using "
+                "`stable` as a last resort attempt.");
+      branch = g_strdup("stable");
    }
 
-   /* As our last resort we try to parse the image manifest file */
-   if (!variant) {
-      g_debug("Parsing the image manifest '%s' to grab the variant and branch",
-              manifest_path);
-
-      variant = _au_get_default_variant(manifest_path, error);
-      if (variant == NULL) {
-         g_debug("Failed to parse the default variant from the image manifest");
-         return FALSE;
-      }
-
-      branch = _au_get_default_branch(manifest_path, NULL);
-      if (branch == NULL) {
-         g_warning("Failed to parse the default branch from the image manifest. Using "
-                   "`stable` as a last resort attempt.");
-         branch = g_strdup("stable");
-      }
-
-      if (!_au_update_user_preferences(variant, branch, error))
-         return FALSE;
-   }
+   if (!_au_update_user_preferences(variant, branch, error))
+      return FALSE;
 
    g_debug("Tracking the variant %s and branch %s", variant, branch);
    *variant_out = g_steal_pointer(&variant);
@@ -2160,6 +2197,8 @@ _au_load_config(AuAtomupd1Impl *atomupd, GError **error)
    g_auto(GStrv) known_variants = NULL;
    g_auto(GStrv) known_branches = NULL;
    g_autoptr(GKeyFile) client_config = g_key_file_new();
+   const gchar *branch_file_path = _au_get_legacy_branch_file_path();
+   const gchar *user_prefs_path = _au_get_user_preferences_file_path();
 
    g_return_val_if_fail(atomupd != NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
@@ -2228,8 +2267,33 @@ _au_load_config(AuAtomupd1Impl *atomupd, GError **error)
          return FALSE;
    }
 
-   if (!_au_load_user_preferences(atomupd->manifest_path, &variant, &branch, error))
-      return FALSE;
+   /* If we still have a legacy "steamos-branch" file, we try to load it first.
+    * Jupiter images older than 3.6 only update the "steamos-branch" file, so if
+    * a user switches several times between 3.6 and 3.5 images, we can be sure
+    * that "steamos-branch" holds the most up to date selected branch. While
+    * "preferences.conf" could store outdated info. */
+   if (g_file_test(branch_file_path, G_FILE_TEST_EXISTS)) {
+      if (!_au_load_legacy_preferences(branch_file_path, &variant, &branch, error)) {
+         return FALSE;
+      }
+   }
+
+   /* Try preferences.conf if we couldn't load the legacy config */
+   if (!variant && g_file_test(user_prefs_path, G_FILE_TEST_EXISTS)) {
+      if (!_au_load_user_preferences_file(user_prefs_path, &variant, &branch, error)) {
+         return FALSE;
+      }
+   }
+
+   /* As our last resort we try to parse the image manifest file */
+   if (!variant) {
+      if (!_au_load_preferences_from_manifest(atomupd->manifest_path, &variant, &branch,
+                                              error)) {
+         return FALSE;
+      }
+   }
+
+   g_debug("Tracking the variant %s and branch %s", variant, branch);
 
    au_atomupd1_set_variant((AuAtomupd1 *)atomupd, variant);
    au_atomupd1_set_branch((AuAtomupd1 *)atomupd, branch);
