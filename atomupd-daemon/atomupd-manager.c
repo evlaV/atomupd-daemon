@@ -67,8 +67,8 @@ static GOptionEntry options[] = {
      "Use the session bus instead of the system bus", NULL },
    { "verbose", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_verbose,
      "Be more verbose, including debug messages from atomupd-daemon.", NULL },
-   { "penultimate-update", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE,
-     &opt_penultimate, "Use the session bus instead of the system bus", NULL },
+   { "penultimate-update", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE,
+     &opt_penultimate, "Request the penultimate update that has been released", NULL },
    { "version", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_version,
      "Print version number and exit.", NULL },
    { NULL }
