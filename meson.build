@@ -148,4 +148,6 @@ project_include_dirs = include_directories(
 
 subdir('atomupd-daemon')
 
+subdir('completion')
+
 subdir('tests')

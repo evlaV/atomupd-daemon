@@ -1,0 +1,40 @@
+# Copyright © 2024 Collabora Ltd
+# SPDX-License-Identifier: MIT
+
+_atomupd_manager() {
+    local cur prev opts
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    local commands="check update switch-variant switch-branch list-variants list-branches tracked-variant tracked-branch get-update-status create-dev-conf"
+
+    local common_opts="--session --verbose --version --help"
+    local create_dev_conf_opts="--additional-variant --username --password --skip-reload"
+    local check_opts="--penultimate-update"
+
+    # Complete the first command argument
+    if [[ ${COMP_CWORD} -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
+        return 0
+    fi
+
+    # Complete the options based on the command
+    case "${COMP_WORDS[1]}" in
+        create-dev-conf)
+            opts="${common_opts} ${create_dev_conf_opts}"
+            ;;
+        check)
+            opts="${common_opts} ${check_opts}"
+            ;;
+        *)
+            opts="${common_opts}"
+            ;;
+    esac
+
+    if [[ "${cur}" == -* ]]; then
+        COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+        return 0
+    fi
+}
+
+complete -F _atomupd_manager atomupd-manager
