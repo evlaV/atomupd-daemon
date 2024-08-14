@@ -1094,6 +1094,7 @@ typedef struct {
 typedef struct {
    const gchar *custom_manifest; /* Use a custom manifest instead of f->manifest_path */
    const gchar *legacy_conf_file_content; /* Content of the legacy "steamos-branch" file */
+   gboolean unreadable_legacy_conf_file;
    PrefsEntries
       initial_file; /* Initial variant and branch values in the preferences file */
    gboolean preferences_file_missing;
@@ -1227,6 +1228,121 @@ static const PreferencesTest preferences_test[] = {
          .branch = "beta",
       },
    },
+
+   {
+      .unreadable_legacy_conf_file = TRUE,
+      /* Given the unreadable legacy config file, it should fallback to the new preferences file */
+      .initial_file = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .initial_expected = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .switch_to_variant = "vanilla",
+      .switch_expected = {
+         .variant = "vanilla",
+         .branch = "main",
+      },
+   },
+
+   {
+      /* Malformed conf file */
+      .legacy_conf_file_content = "steamdeck-beta\nsteamdeck-main",
+      .preferences_file_missing = TRUE,
+      /* It should fallback to the manifest */
+      .initial_expected = {
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+      .switch_expected = {
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+   },
+
+   {
+      /* Malformed conf file */
+      .legacy_conf_file_content = "\nsteamdeck-beta",
+      .initial_file = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .initial_expected = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .switch_expected = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+   },
+
+   {
+      /* Conf file with unexpected content */
+      .legacy_conf_file_content = "unknown-beta",
+      .initial_file = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .initial_expected = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .switch_expected = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+   },
+
+   {
+      .unreadable_legacy_conf_file = TRUE,
+      .initial_file = {
+         /* Empty prefs file */
+      },
+      .initial_expected = {
+         /* Default values from the f->manifest_path */
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+      .switch_expected = {
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+   },
+
+   {
+      .initial_file = {
+         /* Prefs file missing the branch */
+         .variant = "vanilla",
+      },
+      .initial_expected = {
+         /* Default values from the f->manifest_path */
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+      .switch_expected = {
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+   },
+
+   {
+      .initial_file = {
+         /* Prefs file missing the variant */
+         .branch = "main",
+      },
+      .initial_expected = {
+         /* Default values from the f->manifest_path */
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+      .switch_expected = {
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+   },
 };
 
 static void
@@ -1267,6 +1383,16 @@ test_preferences(Fixture *f, gconstpointer context)
          g_file_set_contents(legacy_steamos_branch, test.legacy_conf_file_content, -1,
                              &error);
          g_assert_no_error(error);
+      } else if (test.unreadable_legacy_conf_file) {
+         int result;
+         g_unlink(legacy_steamos_branch);
+
+         /* Create a directory instead of a text file, to test the code path where the path exists
+          * but we can't actually read it. Another alternative would be to remove the read
+          * permission from the file, but that doesn't work in our test cases if we execute them
+          * with root privileges. */
+         result = g_mkdir(legacy_steamos_branch, 0775);
+         g_assert_cmpint(result, ==, 0);
       } else {
          g_unlink(legacy_steamos_branch);
       }
@@ -1326,7 +1452,12 @@ test_preferences(Fixture *f, gconstpointer context)
       g_assert_cmpstr(parsed_branch, ==, test.switch_expected.branch);
 
       au_tests_stop_daemon_service(daemon_proc);
-      g_unlink(legacy_steamos_branch);
+
+      if (test.unreadable_legacy_conf_file)
+         g_rmdir(legacy_steamos_branch);
+      else
+         g_unlink(legacy_steamos_branch);
+
       g_unlink(preferences_path);
    }
 }
