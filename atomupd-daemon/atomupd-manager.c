@@ -222,7 +222,9 @@ on_properties_changed(GDBusProxy *proxy,
    minutes_diff = estimated_diff / G_TIME_SPAN_MINUTE;
    seconds_diff = (estimated_diff / G_TIME_SPAN_SECOND) % 60;
 
-   g_print("\r%.2f%%  ", g_variant_get_double(progress_prop));
+   /* The second \r is necessary to avoid breaking the legacy steamos-update
+    * script parsing */
+   g_print("\r\033[K\r%.2f%%  ", g_variant_get_double(progress_prop));
 
    if (estimated_diff > 0) {
       if (minutes_diff > 0)
