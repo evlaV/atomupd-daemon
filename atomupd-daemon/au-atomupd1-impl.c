@@ -1280,32 +1280,42 @@ au_atomupd1_impl_handle_switch_to_variant(AuAtomupd1 *object,
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
+static gboolean
+_au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error)
+{
+   const gchar *variant = au_atomupd1_get_variant(object);
+
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   if (g_str_equal(branch, au_atomupd1_get_branch(object))) {
+      g_debug("We are already tracking the branch %s, nothing to do", branch);
+      return TRUE;
+   }
+
+   _au_update_legacy_branch_file(variant, branch);
+
+   if (!_au_update_user_preferences(variant, branch, error))
+      return FALSE;
+
+   _au_clear_available_updates(object);
+   au_atomupd1_set_branch(object, branch);
+
+   return TRUE;
+}
+
 static void
 au_switch_branch_authorized_cb(AuAtomupd1 *object,
                                GDBusMethodInvocation *invocation,
                                gpointer arg_branch_pointer)
 {
-   gchar *arg_branch = arg_branch_pointer;
-   const gchar *variant = au_atomupd1_get_variant(object);
    g_autoptr(GError) error = NULL;
 
-   if (g_str_equal(arg_branch, au_atomupd1_get_branch(object))) {
-      g_debug("We are already tracking the branch %s, nothing to do", arg_branch);
-      au_atomupd1_complete_switch_to_branch(object, g_steal_pointer(&invocation));
-      return;
-   }
-
-   _au_update_legacy_branch_file(variant, arg_branch);
-
-   if (!_au_update_user_preferences(variant, arg_branch, &error)) {
+   if (!_au_switch_to_branch(object, arg_branch_pointer, &error)) {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-         "An error occurred while storing the chosen branch: %s", error->message);
+         "An error occurred while switching to the chosen branch: %s", error->message);
       return;
    }
-
-   _au_clear_available_updates(object);
-   au_atomupd1_set_branch(object, arg_branch);
 
    au_atomupd1_complete_switch_to_branch(object, g_steal_pointer(&invocation));
 }
