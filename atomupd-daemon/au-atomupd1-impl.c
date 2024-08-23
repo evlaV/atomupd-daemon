@@ -437,7 +437,7 @@ static gchar *
 _au_get_default_variant(const gchar *manifest, GError **error);
 
 static gchar *
-_au_get_default_branch(const gchar *manifest, GError **error);
+_au_get_default_branch(const gchar *manifest);
 
 /*
  * _au_load_preferences_from_manifest:
@@ -473,12 +473,7 @@ _au_load_preferences_from_manifest(const gchar *manifest_path,
       return FALSE;
    }
 
-   branch = _au_get_default_branch(manifest_path, NULL);
-   if (branch == NULL) {
-      g_warning("Failed to parse the default branch from the image manifest. Using "
-                "`stable` as a last resort attempt.");
-      branch = g_strdup("stable");
-   }
+   branch = _au_get_default_branch(manifest_path);
 
    if (!_au_update_user_preferences(variant, branch, error))
       return FALSE;
@@ -751,15 +746,26 @@ _au_get_default_variant(const gchar *manifest, GError **error)
 /*
  * _au_get_default_branch:
  * @manifest: (not nullable): Path to the JSON manifest file
- * @error: Used to raise an error on failure
  *
  * Returns: (type filename) (transfer full): The branch value taken from the
- *  manifest file, or %NULL on failure
+ *  manifest file, or an hardcoded `stable` on failure
  */
 static gchar *
-_au_get_default_branch(const gchar *manifest, GError **error)
+_au_get_default_branch(const gchar *manifest)
 {
-   return _au_get_string_from_manifest(manifest, "default_update_branch", error);
+   g_autofree gchar *branch = NULL;
+   g_autoptr(GError) local_error = NULL;
+
+   branch = _au_get_string_from_manifest(manifest, "default_update_branch", &local_error);
+
+   if (branch == NULL) {
+      g_warning("Failed to parse the default branch from the image manifest. Using "
+                "`stable` as a last resort attempt: %s",
+                local_error->message);
+      branch = g_strdup("stable");
+   }
+
+   return g_steal_pointer(&branch);
 }
 
 /*
