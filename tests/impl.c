@@ -1387,10 +1387,10 @@ test_preferences(Fixture *f, gconstpointer context)
          int result;
          g_unlink(legacy_steamos_branch);
 
-         /* Create a directory instead of a text file, to test the code path where the path exists
-          * but we can't actually read it. Another alternative would be to remove the read
-          * permission from the file, but that doesn't work in our test cases if we execute them
-          * with root privileges. */
+         /* Create a directory instead of a text file, to test the code path where the
+          * path exists but we can't actually read it. Another alternative would be to
+          * remove the read permission from the file, but that doesn't work in our test
+          * cases if we execute them with root privileges. */
          result = g_mkdir(legacy_steamos_branch, 0775);
          g_assert_cmpint(result, ==, 0);
       } else {

@@ -1217,7 +1217,7 @@ _au_update_legacy_branch_file(const gchar *variant, const gchar *branch)
    g_autofree gchar *test_variant = NULL;
    g_autofree gchar *test_branch = NULL;
    if (!_au_convert_from_legacy_variant(contracted_legacy_variant, &test_variant,
-                                       &test_branch)) {
+                                        &test_branch)) {
       g_unlink(legacy_branch_file);
       return;
    }
