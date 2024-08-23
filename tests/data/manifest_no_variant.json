@@ -1,0 +1,8 @@
+{
+  "product": "steamos",
+  "release": "holo",
+  "default_update_branch": "stable",
+  "arch": "amd64",
+  "version": "3.9.1",
+  "buildid": "20240822.2000"
+}

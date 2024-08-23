@@ -732,6 +732,22 @@ _check_message_reply(GDBusConnection *bus,
 }
 
 static void
+_check_message_reply_prefix(GDBusConnection *bus,
+                            const gchar *method,
+                            const gchar *message_type,
+                            const gchar *message_content,
+                            const gchar *expected_reply_prefix)
+{
+   g_autoptr(GVariant) reply = NULL;
+   g_autofree gchar *reply_str = NULL;
+
+   reply = _send_atomupd_message(bus, method, message_type, message_content);
+   g_variant_get(reply, "(s)", &reply_str);
+
+   g_assert_true(g_str_has_prefix(reply_str, expected_reply_prefix));
+}
+
+static void
 test_unexpected_methods(Fixture *f, gconstpointer context)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
@@ -1644,6 +1660,201 @@ test_parsing_existing_updates_json(Fixture *f, gconstpointer context)
    }
 }
 
+typedef struct {
+   gboolean preferences_file_missing;
+   const gchar *custom_manifest; /* Use a custom manifest instead of f->manifest_path */
+   PrefsEntries initial_prefs;   /* Initial variant and branch in the preferences file */
+   PrefsEntries updated_prefs;   /* Values after the 4xx from the server */
+   const gchar *failed_message;  /* The expected prefix of the error message returned by
+                                    the daemon */
+} CheckUpdates4xxTest;
+
+static const CheckUpdates4xxTest check_updates_4xx_test[] = {
+   {
+      .custom_manifest = "manifest_steamdeck.json",
+      .initial_prefs = {
+         .variant = "steamdeck",
+         .branch = "betaaa",
+      },
+      .updated_prefs = {
+         /* Default values from manifest_steamdeck.json */
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+   },
+
+   {
+      .custom_manifest = "manifest_steamdeck.json",
+      .initial_prefs = {
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+      .updated_prefs = {
+         /* Default values from manifest_steamdeck.json */
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+      .failed_message = "The server query returned HTTP 4xx. We are already following the default ",
+   },
+
+   {
+      .custom_manifest = "manifest_steamdeck.json",
+      .initial_prefs = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .updated_prefs = {
+         /* Default values from manifest_steamdeck.json */
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+   },
+
+   {
+      .custom_manifest = "manifest_steamtest.json",
+      .initial_prefs = {
+         .variant = "customvariant",
+         .branch = "main",
+      },
+      .updated_prefs = {
+         /* Default values from manifest_steamtest.json */
+         .variant = "steamtest",
+         .branch = "beta",
+      },
+   },
+
+   {
+      .custom_manifest = "manifest_steamtest.json",
+      .preferences_file_missing = TRUE,
+      .initial_prefs = {
+         /* Values from manifest_steamtest.json */
+         .variant = "steamtest",
+         .branch = "beta",
+      },
+      .updated_prefs = {
+         /* After a 4xx we keep the same values because these are the defaults */
+         .variant = "steamtest",
+         .branch = "beta",
+      },
+      .failed_message = "The server query returned HTTP 4xx. We are already following the default ",
+   },
+
+   {
+      .custom_manifest = "manifest_no_variant.json",
+      .initial_prefs = {
+         .variant = "steamdeck",
+         .branch = "rc",
+      },
+      .updated_prefs = {
+         /* After a 4xx we keep the same values because we can't parse the default variant from the manifest */
+         .variant = "steamdeck",
+         .branch = "rc",
+      },
+      .failed_message = "The server query returned HTTP 4xx and parsing the default variant from the image manifest failed",
+   },
+
+   {
+      .custom_manifest = "manifest.json",
+      .initial_prefs = {
+         .variant = "steamdtest",
+         .branch = "rc",
+      },
+      .updated_prefs = {
+         /* The manifest doesn't have a branch, so we expect stable to be used as the hardcoded fallback */
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+   },
+};
+
+static void
+test_query_updates_4xx(Fixture *f, gconstpointer context)
+{
+   gsize i;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   for (i = 0; i < G_N_ELEMENTS(check_updates_4xx_test); i++) {
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      CheckUpdates4xxTest test = check_updates_4xx_test[i];
+      g_autofree gchar *legacy_steamos_branch = NULL;
+      g_autofree gchar *preferences_path = NULL;
+      g_autofree gchar *manifest_path = NULL;
+      g_autofree gchar *expected_reply = NULL;
+      int fd;
+
+      fd = g_file_open_tmp("steamos-branch-XXXXXX", &legacy_steamos_branch, &error);
+      g_assert_no_error(error);
+      close(fd);
+      f->test_envp = g_environ_setenv(f->test_envp, "AU_CHOSEN_BRANCH_FILE",
+                                      legacy_steamos_branch, TRUE);
+      g_unlink(legacy_steamos_branch);
+
+      fd = g_file_open_tmp("preferences-XXXXXX", &preferences_path, &error);
+      g_assert_no_error(error);
+      close(fd);
+      f->test_envp = g_environ_setenv(f->test_envp, "AU_USER_PREFERENCES_FILE",
+                                      preferences_path, TRUE);
+
+      if (!test.preferences_file_missing) {
+         g_autoptr(GKeyFile) preferences = g_key_file_new();
+
+         if (test.initial_prefs.variant != NULL)
+            g_key_file_set_string(preferences, "Choices", "Variant",
+                                  test.initial_prefs.variant);
+
+         if (test.initial_prefs.branch != NULL)
+            g_key_file_set_string(preferences, "Choices", "Branch",
+                                  test.initial_prefs.branch);
+
+         g_key_file_save_to_file(preferences, preferences_path, &error);
+         g_assert_no_error(error);
+
+      } else {
+         g_unlink(preferences_path);
+      }
+
+      if (test.custom_manifest)
+         manifest_path = g_build_filename(f->srcdir, "data", test.custom_manifest, NULL);
+      else
+         manifest_path = g_strdup(f->manifest_path);
+
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_CLIENT_QUERY_4xx", "1", TRUE);
+
+      daemon_proc = au_tests_start_daemon_service(bus, manifest_path, f->conf_dir,
+                                                  f->test_envp, FALSE);
+
+      _check_string_property(bus, "Variant", test.initial_prefs.variant);
+      _check_string_property(bus, "Branch", test.initial_prefs.branch);
+
+      /* The daemon should always create the preferences file */
+      g_assert_true(g_file_test(preferences_path, G_FILE_TEST_EXISTS));
+
+      if (test.failed_message != NULL)
+         expected_reply = g_strdup(test.failed_message);
+      else
+         expected_reply =
+            g_strdup_printf("The server query returned HTTP 4xx. The tracked variant and "
+                            "branch have been reverted to the default values: '%s', '%s'",
+                            test.updated_prefs.variant, test.updated_prefs.branch);
+
+      _check_message_reply_prefix(bus, "CheckForUpdates", "(a{sv})", NULL,
+                                  expected_reply);
+
+      /* The tracked variant and branch should be updated after the HTTP 4xx error */
+      _check_string_property(bus, "Variant", test.updated_prefs.variant);
+      _check_string_property(bus, "Branch", test.updated_prefs.branch);
+
+      au_tests_stop_daemon_service(daemon_proc);
+      g_unlink(legacy_steamos_branch);
+      g_unlink(preferences_path);
+   }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1659,6 +1870,7 @@ main(int argc, char **argv)
    g_test_add(_name, Fixture, argv[0], au_tests_setup, _test, au_tests_teardown)
 
    test_add("/daemon/query_updates", test_query_updates);
+   test_add("/daemon/query_updates_4xx", test_query_updates_4xx);
    test_add("/daemon/default_properties", test_default_properties);
    test_add("/daemon/dev_config", test_dev_config);
    test_add("/daemon/unexpected_methods", test_unexpected_methods);

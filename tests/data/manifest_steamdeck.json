@@ -1,0 +1,9 @@
+{
+  "product": "steamos",
+  "release": "holo",
+  "variant": "steamdeck",
+  "default_update_branch": "stable",
+  "arch": "amd64",
+  "version": "3.8.1",
+  "buildid": "20240821.1"
+}

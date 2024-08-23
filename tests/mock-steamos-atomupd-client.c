@@ -92,6 +92,9 @@ main(int argc, char **argv)
       g_autofree gchar *update_json = NULL;
       const gchar *update_json_path;
 
+      if (g_getenv("G_TEST_CLIENT_QUERY_4xx"))
+         return 2;
+
       if (opt_penultimate)
          update_json_path = g_getenv("G_TEST_UPDATE_JSON_PENULTIMATE");
       else

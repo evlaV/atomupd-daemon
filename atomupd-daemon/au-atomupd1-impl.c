@@ -1078,6 +1078,9 @@ _au_switch_to_variant(AuAtomupd1 *object,
                       gboolean clear_available_updates,
                       GError **error);
 
+static gboolean
+_au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error);
+
 static void
 on_query_completed(GPid pid, gint wait_status, gpointer user_data)
 {
@@ -1095,6 +1098,68 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
    AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(data->req->object);
 
    if (!g_spawn_check_wait_status(wait_status, &error)) {
+      if (error->domain == G_SPAWN_EXIT_ERROR && error->code == 2) {
+         /* The query server returned an HTTP error in the 4xx range */
+
+         g_autofree gchar *variant = NULL;
+         g_autofree gchar *branch = NULL;
+         const gchar *initial_variant = NULL;
+         const gchar *initial_branch = NULL;
+         g_autoptr(GError) local_error = NULL;
+
+         variant = _au_get_default_variant(self->manifest_path, &local_error);
+         if (variant == NULL) {
+            g_dbus_method_invocation_return_error(
+               g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+               "The server query returned HTTP 4xx and parsing the default variant from "
+               "the image manifest failed: %s",
+               local_error->message);
+            return;
+         }
+
+         branch = _au_get_default_branch(self->manifest_path);
+
+         initial_variant = au_atomupd1_get_variant(data->req->object);
+         initial_branch = au_atomupd1_get_branch(data->req->object);
+
+         if (g_strcmp0(initial_variant, variant) == 0 &&
+             g_strcmp0(initial_branch, branch) == 0) {
+            g_dbus_method_invocation_return_error(
+               g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+               "The server query returned HTTP 4xx. We are already following the default "
+               "variant and branch, nothing else we can do...");
+            return;
+         }
+
+         g_warning(
+            "The server query returned HTTP 4xx. Reverting the variant and branch to "
+            "the default values: %s, %s",
+            variant, branch);
+
+         if (!_au_switch_to_variant(data->req->object, variant, TRUE, &local_error)) {
+            g_dbus_method_invocation_return_error(
+               g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+               "An error occurred while switching to the default variant '%s': %s",
+               variant, local_error->message);
+            return;
+         }
+
+         if (!_au_switch_to_branch(data->req->object, branch, &local_error)) {
+            g_dbus_method_invocation_return_error(
+               g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+               "An error occurred while switching to the default branch '%s': %s",
+               variant, local_error->message);
+            return;
+         }
+
+         g_dbus_method_invocation_return_error(
+            g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+            "The server query returned HTTP 4xx. The tracked variant and branch have "
+            "been reverted to the default values: '%s', '%s'",
+            variant, branch);
+         return;
+      }
+
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "An error occurred calling the 'steamos-atomupd-client' helper: %s",
