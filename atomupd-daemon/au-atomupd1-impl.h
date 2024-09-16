@@ -39,8 +39,8 @@
 G_DECLARE_FINAL_TYPE(
    AuAtomupd1Impl, au_atomupd1_impl, AU, ATOMUPD1_IMPL, AuAtomupd1Skeleton)
 
-AuAtomupd1 *au_atomupd1_impl_new(const gchar *config,
-                                 const gchar *manifest,
+AuAtomupd1 *au_atomupd1_impl_new(const gchar *config_directory,
+                                 const gchar *manifest_preference,
                                  GDBusConnection *bus,
                                  GError **error);
 
