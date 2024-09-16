@@ -100,7 +100,6 @@ _au_ensure_urls_in_netrc(const gchar *netrc_path,
    g_autofree gchar *login = NULL;
    FILE *fp = NULL;
    size_t len = 0;
-   ssize_t chars;
    g_autofree gchar *line = NULL;
    gboolean netrc_updated = FALSE;
 
@@ -132,6 +131,7 @@ _au_ensure_urls_in_netrc(const gchar *netrc_path,
    updated_netrc = g_string_new("");
 
    if (fp != NULL) {
+      ssize_t chars;
       while ((chars = getline(&line, &len, fp)) != -1) {
          g_auto(GStrv) parts = NULL;
 

@@ -310,7 +310,6 @@ _au_load_legacy_preferences(const gchar *branch_file_path,
    g_autofree gchar *variant = NULL;
    g_autofree gchar *branch = NULL;
    g_autofree gchar *legacy_variant = NULL;
-   const char *search;
    gsize len;
    const gchar *user_prefs_path = _au_get_user_preferences_file_path();
 
@@ -333,6 +332,8 @@ _au_load_legacy_preferences(const gchar *branch_file_path,
    }
 
    if (len != 0) {
+      const char *search;
+
       /* Remove eventual trailing newline that could have been added by
        * steamos-select-branch */
       if (legacy_variant[len - 1] == '\n')
@@ -1624,8 +1625,6 @@ _au_ensure_pid_is_killed(GPid pid)
        * We wait up to 2s and, if they are still running, we will send a
        * SIGKILL. */
       for (i = 0; i < 4; i++) {
-         int saved_errno;
-
          if (waitpid(pid, &status, WNOHANG | WUNTRACED) > 0) {
             if (WIFEXITED(status))
                goto success;
@@ -1636,7 +1635,7 @@ _au_ensure_pid_is_killed(GPid pid)
                killpg(pgid, SIGCONT);
             }
          } else {
-            saved_errno = errno;
+            int saved_errno = errno;
 
             if (saved_errno == ESRCH)
                goto success;
@@ -1777,7 +1776,6 @@ static gboolean
 _au_send_signal_to_install_procs(AuAtomupd1Impl *self, int sig, GError **error)
 {
    gint64 rauc_pid;
-   int rauc_pgid;
    int saved_errno;
 
    g_return_val_if_fail(self != NULL, FALSE);
@@ -1805,7 +1803,7 @@ _au_send_signal_to_install_procs(AuAtomupd1Impl *self, int sig, GError **error)
 
    if (rauc_pid > 0) {
       /* Send the signal to the entire PGID, to include the eventual Desync process */
-      rauc_pgid = getpgid(rauc_pid);
+      int rauc_pgid = getpgid(rauc_pid);
       g_debug("Sending signal %i to the RAUC service PGID %i", sig, rauc_pgid);
 
       if (killpg(rauc_pgid, sig) < 0) {
