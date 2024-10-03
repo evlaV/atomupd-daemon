@@ -176,7 +176,7 @@ test_check_updates(Fixture *f, gconstpointer context)
       for (j = 0; ct.output_does_not_contain[j] != NULL; j++)
          g_assert_null(strstr(output, ct.output_does_not_contain[j]));
 
-      au_tests_stop_daemon_service(daemon_proc);
+      au_tests_stop_process(daemon_proc);
    }
 }
 
@@ -325,7 +325,7 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
       g_assert_cmpstr(update_status, ==, "successful\n");
    }
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 }
 
 static gboolean
@@ -447,7 +447,7 @@ test_verbose(Fixture *f, gconstpointer context)
       g_assert_error(error, G_SPAWN_EXIT_ERROR, 64);
    }
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 }
 
 static void
@@ -555,7 +555,7 @@ test_dev_config(Fixture *f, gconstpointer context)
          _au_execute_manager("list-variants", NULL, FALSE, f->test_envp, NULL);
       g_assert_cmpstr(variants_list, ==, "steamdeck\nsteamdeck-test\n");
 
-      au_tests_stop_daemon_service(daemon_proc);
+      au_tests_stop_process(daemon_proc);
       g_clear_object(&daemon_proc);
 
       daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
@@ -605,7 +605,7 @@ test_dev_config(Fixture *f, gconstpointer context)
       g_assert_cmpstr(variants_list, ==, "steamdeck\nvanilla\nsteamdeck-test\n");
    }
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 
    if (!rm_rf(tmp_config_dir))
       g_debug("Unable to remove temp directory: %s", tmp_config_dir);

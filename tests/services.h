@@ -31,7 +31,7 @@ gboolean
 au_tests_is_daemon_service_running(GDBusConnection *bus, GError **error);
 
 void
-au_tests_stop_daemon_service(GSubprocess *daemon_proc);
+au_tests_stop_process(GSubprocess *proc);
 
 GSubprocess *
 au_tests_start_daemon_service(GDBusConnection *bus,

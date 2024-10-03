@@ -53,19 +53,22 @@ au_tests_is_daemon_service_running(GDBusConnection *bus, GError **error)
 }
 
 /*
- * @daemon_proc: Daemon process that needs to be stopped
+ * @proc: Process that needs to be stopped
+ *
+ * Sends a SIGTERM, followed by a SIGKILL, to ensure the provided GSubprocess
+ * @proc is successfully stopped.
  */
 void
-au_tests_stop_daemon_service(GSubprocess *daemon_proc)
+au_tests_stop_process(GSubprocess *proc)
 {
-   g_return_if_fail(daemon_proc != NULL);
+   g_return_if_fail(proc != NULL);
 
-   g_debug("Stopping the daemon service");
+   g_debug("Stopping the process");
 
-   g_subprocess_send_signal(daemon_proc, SIGTERM);
+   g_subprocess_send_signal(proc, SIGTERM);
    g_usleep(0.5 * G_USEC_PER_SEC);
-   /* Ensure that the daemon is really killed */
-   g_subprocess_force_exit(daemon_proc);
+   /* Ensure that the process is really killed */
+   g_subprocess_force_exit(proc);
 }
 
 /*

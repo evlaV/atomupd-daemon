@@ -422,7 +422,7 @@ _query_for_updates(Fixture *f, GDBusConnection *bus, const CheckUpdatesTest *tes
       g_assert_cmpstr(parsed_variant, ==, test->tracked_variant);
    }
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 }
 
 static void
@@ -585,7 +585,7 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
    g_assert_cmpstrv(atomupd_properties->known_variants, test->variants);
    g_assert_cmpstrv(atomupd_properties->known_branches, test->branches);
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 
    if (!rm_rf(tmp_config_dir))
       g_debug("Unable to remove temp directory: %s", tmp_config_dir);
@@ -682,7 +682,7 @@ test_dev_config(Fixture *f, gconstpointer context)
    g_assert_cmpstrv(atomupd_properties->known_variants, client_dev_variants);
    g_assert_cmpstrv(atomupd_properties->known_branches, client_dev_branches);
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
    g_clear_object(&daemon_proc);
 
@@ -709,7 +709,7 @@ test_dev_config(Fixture *f, gconstpointer context)
    g_assert_cmpstrv(atomupd_properties->known_variants, client_variants);
    g_assert_cmpstrv(atomupd_properties->known_branches, client_branches);
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 
    if (!rm_rf(tmp_config_dir))
       g_debug("Unable to remove temp directory: %s", tmp_config_dir);
@@ -774,7 +774,7 @@ test_unexpected_methods(Fixture *f, gconstpointer context)
    _check_message_reply(bus, "CancelUpdate", NULL, NULL,
                         "There isn't an update in progress that can be cancelled");
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 }
 
 static void
@@ -807,7 +807,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
 
    /* Restart the service. When starting an update we expect that it shouldn't
     * complain that we didn't check for updates, because we already did. */
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
    g_clear_object(&daemon_proc);
    daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
                                                f->test_envp, FALSE);
@@ -877,7 +877,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    /* Assert that the CancelUpdate successfully killed the rauc service */
    g_assert_true(g_subprocess_get_if_exited(rauc_proc));
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 }
 
 static void
@@ -925,7 +925,7 @@ test_progress_default(Fixture *f, gconstpointer context)
    g_assert_true(progress == 0);
 
    _send_atomupd_message_with_null_reply(bus, "CancelUpdate", NULL, NULL);
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 }
 
 static void
@@ -964,7 +964,7 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_CANCELLED);
    g_assert_true(g_subprocess_get_if_exited(rauc_proc));
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 }
 
 typedef struct {
@@ -1082,7 +1082,7 @@ test_restarted_service(Fixture *f, gconstpointer context)
                       test->expected_update_version);
       g_assert_cmpuint(atomupd_properties->status, ==, test->expected_status);
 
-      au_tests_stop_daemon_service(daemon_proc);
+      au_tests_stop_process(daemon_proc);
       if (reboot_for_update != NULL)
          g_unlink(reboot_for_update);
    }
@@ -1467,7 +1467,7 @@ test_preferences(Fixture *f, gconstpointer context)
       g_assert_cmpstr(parsed_variant, ==, test.switch_expected.variant);
       g_assert_cmpstr(parsed_branch, ==, test.switch_expected.branch);
 
-      au_tests_stop_daemon_service(daemon_proc);
+      au_tests_stop_process(daemon_proc);
 
       if (test.unreadable_legacy_conf_file)
          g_rmdir(legacy_steamos_branch);
@@ -1507,7 +1507,7 @@ test_unauthorized(Fixture *f, gconstpointer context)
    _check_message_reply(bus, "ResumeUpdate", NULL, NULL, expected_reply);
    _check_message_reply(bus, "CancelUpdate", NULL, NULL, expected_reply);
 
-   au_tests_stop_daemon_service(daemon_proc);
+   au_tests_stop_process(daemon_proc);
 }
 
 typedef struct {
@@ -1654,7 +1654,7 @@ test_parsing_existing_updates_json(Fixture *f, gconstpointer context)
       _check_updates_property(bus, "UpdatesAvailableLater",
                               test->updates_available_later);
 
-      au_tests_stop_daemon_service(daemon_proc);
+      au_tests_stop_process(daemon_proc);
       if (atomupd_updates != NULL)
          g_unlink(atomupd_updates);
    }
@@ -1849,7 +1849,7 @@ test_query_updates_4xx(Fixture *f, gconstpointer context)
       _check_string_property(bus, "Variant", test.updated_prefs.variant);
       _check_string_property(bus, "Branch", test.updated_prefs.branch);
 
-      au_tests_stop_daemon_service(daemon_proc);
+      au_tests_stop_process(daemon_proc);
       g_unlink(legacy_steamos_branch);
       g_unlink(preferences_path);
    }
