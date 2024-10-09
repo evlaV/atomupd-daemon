@@ -2282,7 +2282,7 @@ debug_controller_authorize_cb(GDebugControllerDBus *debug_controller,
 }
 
 static gboolean
-_au_load_config(AuAtomupd1Impl *atomupd, GError **error)
+_au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
 {
    g_autofree gchar *variant = NULL;
    g_autofree gchar *branch = NULL;
@@ -2413,36 +2413,51 @@ _au_load_config(AuAtomupd1Impl *atomupd, GError **error)
    return TRUE;
 }
 
+static gboolean
+_au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
+{
+   g_autofree gchar *dev_config_path = NULL;
+   g_autoptr(GError) local_error = NULL;
+
+   g_return_val_if_fail(atomupd != NULL, FALSE);
+   g_return_val_if_fail(atomupd->config_directory != NULL, FALSE);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   g_clear_pointer(&atomupd->config_path, g_free);
+
+   dev_config_path = g_build_filename(atomupd->config_directory, AU_DEV_CONFIG, NULL);
+   if (g_file_test(dev_config_path, G_FILE_TEST_EXISTS)) {
+      atomupd->config_path = g_steal_pointer(&dev_config_path);
+
+      if (_au_parse_config(atomupd, &local_error)) {
+         g_debug("Loaded the configuration file '%s'", dev_config_path);
+         return TRUE;
+      }
+
+      g_warning("Failed to load '%s': %s\nUsing '%s' as a fallback.", AU_DEV_CONFIG,
+                local_error->message, AU_CONFIG);
+      g_clear_error(&local_error);
+      g_clear_pointer(&atomupd->config_path, g_free);
+   }
+
+   atomupd->config_path = g_build_filename(atomupd->config_directory, AU_CONFIG, NULL);
+   if (!_au_parse_config(atomupd, error))
+      return FALSE;
+
+   return TRUE;
+}
+
 static void
 au_reload_configuration_authorized_cb(AuAtomupd1 *object,
                                       GDBusMethodInvocation *invocation,
                                       gpointer arg_options_pointer)
 {
-   g_autofree gchar *dev_config_path = NULL;
    g_autoptr(GError) error = NULL;
    AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
 
    _au_clear_available_updates(object);
-   g_clear_pointer(&self->config_path, g_free);
 
-   dev_config_path = g_build_filename(self->config_directory, AU_DEV_CONFIG, NULL);
-   if (g_file_test(dev_config_path, G_FILE_TEST_EXISTS)) {
-      self->config_path = g_steal_pointer(&dev_config_path);
-
-      if (_au_load_config(self, &error)) {
-         g_debug("Loaded the configuration file '%s'", dev_config_path);
-         au_atomupd1_complete_reload_configuration(object, g_steal_pointer(&invocation));
-         return;
-      }
-
-      g_warning("Failed to load '%s': %s\nUsing '%s' as a fallback.", AU_DEV_CONFIG,
-                error->message, AU_CONFIG);
-      g_clear_error(&error);
-      g_clear_pointer(&self->config_path, g_free);
-   }
-
-   self->config_path = g_build_filename(self->config_directory, AU_CONFIG, NULL);
-   if (!_au_load_config(self, &error)) {
+   if (!_au_select_and_load_configuration(self, &error)) {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "An error occurred while reloading the configuration, please fix your conf file "
@@ -2565,7 +2580,6 @@ au_atomupd1_impl_new(const gchar *config_directory,
                      GError **error)
 {
    g_autofree gchar *reboot_content = NULL;
-   g_autofree gchar *dev_config_path = NULL;
    g_autoptr(GFile) updates_json_parent = NULL;
    const gchar *updates_json_path;
    const gchar *reboot_for_update;
@@ -2583,23 +2597,8 @@ au_atomupd1_impl_new(const gchar *config_directory,
    atomupd->config_directory = g_strdup(config_directory);
    atomupd->manifest_preference = g_strdup(manifest_preference);
 
-   dev_config_path = g_build_filename(config_directory, AU_DEV_CONFIG, NULL);
-   if (g_file_test(dev_config_path, G_FILE_TEST_EXISTS)) {
-      atomupd->config_path = g_steal_pointer(&dev_config_path);
-
-      if (!_au_load_config(atomupd, &local_error)) {
-         g_warning("Failed to load '%s': %s\nUsing '%s' as a fallback.", AU_DEV_CONFIG,
-                   local_error->message, AU_CONFIG);
-         g_clear_error(&local_error);
-         g_clear_pointer(&atomupd->config_path, g_free);
-      }
-   }
-
-   if (atomupd->config_path == NULL) {
-      atomupd->config_path = g_build_filename(config_directory, AU_CONFIG, NULL);
-      if (!_au_load_config(atomupd, error))
-         return NULL;
-   }
+   if (!_au_select_and_load_configuration(atomupd, error))
+      return NULL;
 
    /* This environment variable is used for debugging and automated tests */
    updates_json_path = g_getenv("AU_UPDATES_JSON_FILE");
