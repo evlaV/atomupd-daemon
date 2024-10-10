@@ -69,7 +69,6 @@ struct _AuAtomupd1Impl {
    guint install_event_source;
    gchar *config_path;
    gchar *config_directory;
-   gchar *manifest_preference;
    gchar *manifest_path;
    GFile *updates_json_file;
    GFile *updates_json_copy;
@@ -499,21 +498,6 @@ _au_clear_available_updates(AuAtomupd1 *object)
    available_later = g_variant_new("a{sa{sv}}", NULL);
    au_atomupd1_set_updates_available(object, g_steal_pointer(&available));
    au_atomupd1_set_updates_available_later(object, g_steal_pointer(&available_later));
-}
-
-/*
- * _au_get_manifest_path_from_config:
- * @client_config: (not nullable): Object that holds the configuration key file
- *
- * Returns: (type filename) (transfer full): The configured path to the manifest,
- *  or %NULL if the configuration doesn't have the "Manifest" field.
- */
-static gchar *
-_au_get_manifest_path_from_config(GKeyFile *client_config)
-{
-   g_return_val_if_fail(client_config != NULL, NULL);
-
-   return g_key_file_get_string(client_config, "Host", "Manifest", NULL);
 }
 
 /*
@@ -2306,17 +2290,6 @@ _au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
                                   error))
       return FALSE;
 
-   g_clear_pointer(&atomupd->manifest_path, g_free);
-   if (atomupd->manifest_preference != NULL) {
-      atomupd->manifest_path = g_strdup(atomupd->manifest_preference);
-   } else {
-      manifest_from_config = _au_get_manifest_path_from_config(client_config);
-      if (manifest_from_config != NULL)
-         atomupd->manifest_path = g_steal_pointer(&manifest_from_config);
-      else
-         atomupd->manifest_path = g_strdup(AU_DEFAULT_MANIFEST);
-   }
-
    g_debug("Getting the list of known variants and branches");
 
    known_variants = _au_get_known_variants_from_config(client_config, error);
@@ -2507,7 +2480,6 @@ au_atomupd1_impl_finalize(GObject *object)
    g_free(self->config_path);
    g_free(self->config_directory);
    g_free(self->manifest_path);
-   g_free(self->manifest_preference);
    g_clear_object(&self->authority);
 
    // Keep the update file, to be able to reuse it later on
@@ -2566,9 +2538,8 @@ _str_rstrip_newline(gchar *string)
  * au_atomupd1_impl_new:
  * @config_preference: (transfer none) (not nullable): Path to the directory where
  *  the configuration is located.
- * @manifest_preference: (transfer none) (nullable): Path to the JSON manifest
- *  file. If %NULL, the path will be either the one in the configuration file,
- *  if any, or the default manifest path.
+ * @manifest_preference: (transfer none) (nullable): Path to a custom JSON manifest
+ *  file. If %NULL, the path will be the default manifest path.
  * @error: Used to raise an error on failure
  *
  * Returns: (transfer full): a new AuAtomupd1
@@ -2595,7 +2566,11 @@ au_atomupd1_impl_new(const gchar *config_directory,
       return NULL;
 
    atomupd->config_directory = g_strdup(config_directory);
-   atomupd->manifest_preference = g_strdup(manifest_preference);
+
+   if (manifest_preference == NULL)
+      atomupd->manifest_path = g_strdup(AU_DEFAULT_MANIFEST);
+   else
+      atomupd->manifest_path = g_strdup(manifest_preference);
 
    if (!_au_select_and_load_configuration(atomupd, error))
       return NULL;
