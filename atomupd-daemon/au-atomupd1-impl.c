@@ -2266,21 +2266,86 @@ debug_controller_authorize_cb(GDebugControllerDBus *debug_controller,
 }
 
 static gboolean
-_au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
+_au_parse_preferences(AuAtomupd1Impl *atomupd, GError **error)
 {
    g_autofree gchar *variant = NULL;
    g_autofree gchar *branch = NULL;
+   const gchar *branch_file_path = _au_get_legacy_branch_file_path();
+   const gchar *user_prefs_path = _au_get_user_preferences_file_path();
+   g_autoptr(GError) local_error = NULL;
+
+   g_return_val_if_fail(atomupd != NULL, FALSE);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   /* If we still have a legacy "steamos-branch" file, we try to load it first.
+    * Jupiter images older than 3.6 only update the "steamos-branch" file, so if
+    * a user switches several times between 3.6 and 3.5 images, we can be sure
+    * that "steamos-branch" holds the most up-to-date selected branch. While
+    * "preferences.conf" could store outdated info. */
+   if (!_au_load_legacy_preferences(branch_file_path, &variant, &branch, &local_error)) {
+      g_debug("%s", local_error->message);
+      g_clear_error(&local_error);
+   }
+
+   /* Try preferences.conf if we couldn't load the legacy config */
+   if (!variant && !_au_load_user_preferences_file(user_prefs_path, &variant, &branch,
+                                                   &local_error)) {
+      g_debug("%s", local_error->message);
+      g_clear_error(&local_error);
+   }
+
+   /* As our last resort we try to parse the image manifest file */
+   if (!variant) {
+      if (!_au_load_preferences_from_manifest(atomupd->manifest_path, &variant, &branch,
+                                              error)) {
+         return FALSE;
+      }
+   }
+
+   g_debug("Tracking the variant %s and branch %s", variant, branch);
+
+   au_atomupd1_set_variant((AuAtomupd1 *)atomupd, variant);
+   au_atomupd1_set_branch((AuAtomupd1 *)atomupd, branch);
+
+   return TRUE;
+}
+
+static gboolean
+_au_parse_manifest(AuAtomupd1Impl *atomupd, GError **error)
+{
    g_autofree gchar *system_build_id = NULL;
    g_autofree gchar *system_version = NULL;
-   g_autofree gchar *manifest_from_config = NULL;
+
+   g_return_val_if_fail(atomupd != NULL, FALSE);
+   g_return_val_if_fail(atomupd->manifest_path != NULL, FALSE);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   system_build_id = _au_get_current_system_build_id(atomupd->manifest_path, error);
+   if (system_build_id == NULL)
+      return FALSE;
+   system_version = _au_get_current_system_version(atomupd->manifest_path, error);
+   if (system_version == NULL)
+      return FALSE;
+
+   if (!_is_buildid_valid(system_build_id, &atomupd->buildid_date,
+                          &atomupd->buildid_increment, error))
+      return FALSE;
+
+   au_atomupd1_set_current_build_id((AuAtomupd1 *)atomupd, system_build_id);
+   au_atomupd1_set_current_version((AuAtomupd1 *)atomupd, system_version);
+
+   return TRUE;
+}
+
+static gboolean
+_au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
+{
    g_autofree gchar *username = NULL;
    g_autofree gchar *password = NULL;
    g_autofree gchar *auth_encoded = NULL;
    g_auto(GStrv) known_variants = NULL;
    g_auto(GStrv) known_branches = NULL;
    g_autoptr(GKeyFile) client_config = g_key_file_new();
-   const gchar *branch_file_path = _au_get_legacy_branch_file_path();
-   const gchar *user_prefs_path = _au_get_user_preferences_file_path();
    g_autoptr(GError) local_error = NULL;
 
    g_return_val_if_fail(atomupd != NULL, FALSE);
@@ -2338,50 +2403,6 @@ _au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
                                          error))
          return FALSE;
    }
-
-   /* If we still have a legacy "steamos-branch" file, we try to load it first.
-    * Jupiter images older than 3.6 only update the "steamos-branch" file, so if
-    * a user switches several times between 3.6 and 3.5 images, we can be sure
-    * that "steamos-branch" holds the most up to date selected branch. While
-    * "preferences.conf" could store outdated info. */
-   if (!_au_load_legacy_preferences(branch_file_path, &variant, &branch, &local_error)) {
-      g_debug("%s", local_error->message);
-      g_clear_error(&local_error);
-   }
-
-   /* Try preferences.conf if we couldn't load the legacy config */
-   if (!variant && !_au_load_user_preferences_file(user_prefs_path, &variant, &branch,
-                                                   &local_error)) {
-      g_debug("%s", local_error->message);
-      g_clear_error(&local_error);
-   }
-
-   /* As our last resort we try to parse the image manifest file */
-   if (!variant) {
-      if (!_au_load_preferences_from_manifest(atomupd->manifest_path, &variant, &branch,
-                                              error)) {
-         return FALSE;
-      }
-   }
-
-   g_debug("Tracking the variant %s and branch %s", variant, branch);
-
-   au_atomupd1_set_variant((AuAtomupd1 *)atomupd, variant);
-   au_atomupd1_set_branch((AuAtomupd1 *)atomupd, branch);
-
-   system_build_id = _au_get_current_system_build_id(atomupd->manifest_path, error);
-   if (system_build_id == NULL)
-      return FALSE;
-   system_version = _au_get_current_system_version(atomupd->manifest_path, error);
-   if (system_version == NULL)
-      return FALSE;
-
-   if (!_is_buildid_valid(system_build_id, &atomupd->buildid_date,
-                          &atomupd->buildid_increment, error))
-      return FALSE;
-
-   au_atomupd1_set_current_build_id((AuAtomupd1 *)atomupd, system_build_id);
-   au_atomupd1_set_current_version((AuAtomupd1 *)atomupd, system_version);
 
    return TRUE;
 }
@@ -2571,6 +2592,12 @@ au_atomupd1_impl_new(const gchar *config_directory,
       atomupd->manifest_path = g_strdup(AU_DEFAULT_MANIFEST);
    else
       atomupd->manifest_path = g_strdup(manifest_preference);
+
+   if (!_au_parse_preferences(atomupd, error))
+      return NULL;
+
+   if (!_au_parse_manifest(atomupd, error))
+      return NULL;
 
    if (!_au_select_and_load_configuration(atomupd, error))
       return NULL;
