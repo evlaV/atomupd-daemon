@@ -1494,6 +1494,9 @@ _au_download_remote_info(const AuAtomupd1Impl *atomupd, GError **error)
    return TRUE;
 }
 
+static gboolean
+_au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error);
+
 static void
 au_check_for_updates_authorized_cb(AuAtomupd1 *object,
                                    GDBusMethodInvocation *invocation,
@@ -1514,6 +1517,23 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
 
    g_return_if_fail(self->config_path != NULL);
    g_return_if_fail(self->manifest_path != NULL);
+
+   if (!g_file_test(_au_get_remote_info_path(), G_FILE_TEST_EXISTS)) {
+      g_debug("We don't have a remote info file, trying to download it again...");
+      if (_au_download_remote_info(self, &error)) {
+         if (!_au_select_and_load_configuration(self, &error)) {
+            g_dbus_method_invocation_return_error(
+               g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+               "An error occurred while reloading the configuration, please fix your "
+               "conf file and retry: %s",
+               error->message);
+            return;
+         }
+      } else {
+         g_debug("Failed to download the remote info: %s", error->message);
+         g_clear_error(&error);
+      }
+   }
 
    g_variant_iter_init(&iter, arg_options);
 

@@ -855,6 +855,85 @@ test_dev_config(Fixture *f, gconstpointer context)
 }
 
 static void
+test_remote_config(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GSubprocess) http_server_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *tmp_config_dir = NULL;
+   g_autofree gchar *config_path = NULL;
+   g_autofree gchar *local_server_dir = NULL;
+   const gchar *client_variants[] = { "steamdeck", NULL };
+   const gchar *client_branches[] = { "stable", "rc", "beta", "bc", "main", NULL };
+   const gchar *client_remote_variants[] = { "steamdeck", "vanilla", NULL };
+   const gchar *client_remote_branches[] = { "stable",  "rc", "beta", "bc",
+                                             "preview", "pc", "main", NULL };
+   g_autoptr(AtomupdProperties) atomupd_properties = NULL;
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   tmp_config_dir = g_dir_make_tmp("atomupd-daemon-prop-XXXXXX", &error);
+   g_assert_no_error(error);
+   config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+
+   /* Fill the client.conf file */
+   {
+      g_autofree gchar *source_config_path = NULL;
+      g_autoptr(GFile) source_file = NULL;
+      g_autoptr(GFile) dest_file = NULL;
+
+      source_config_path = g_build_filename(f->srcdir, "data", "client.conf", NULL);
+      source_file = g_file_new_for_path(source_config_path);
+      dest_file = g_file_new_for_path(config_path);
+      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
+                  &error);
+      g_assert_no_error(error);
+   }
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+
+   /* We didn't start the http server, so we don't expect to have the remote-info file */
+   g_assert_false(g_file_test(f->remote_info_path, G_FILE_TEST_EXISTS));
+
+   _call_check_for_updates(bus, NULL, NULL);
+   g_assert_false(g_file_test(f->remote_info_path, G_FILE_TEST_EXISTS));
+
+   local_server_dir = g_build_filename(f->srcdir, "data", "client_meta", NULL);
+   http_server_proc = au_tests_start_local_http_server(local_server_dir);
+
+   /* This time we expect the remote-info file to be downloaded */
+   _call_check_for_updates(bus, NULL, NULL);
+   g_assert_true(g_file_test(f->remote_info_path, G_FILE_TEST_EXISTS));
+
+   atomupd_properties = _get_atomupd_properties(bus);
+   /* We expect the new remote-info to be loaded */
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_remote_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_remote_branches);
+
+   g_file_set_contents(f->remote_info_path, "pre-existing file", -1, &error);
+   g_assert_no_error(error);
+   _send_atomupd_message_with_null_reply(bus, "ReloadConfiguration", "(a{sv})", NULL);
+
+   _call_check_for_updates(bus, NULL, NULL);
+   g_clear_pointer(&atomupd_properties, atomupd_properties_free);
+   atomupd_properties = _get_atomupd_properties(bus);
+   /* When calling CheckForUpdates, we already had a remote-info.conf file locally.
+    * For this reason we don't expect atomupd to re-download it again. */
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_branches);
+
+   au_tests_stop_process(daemon_proc);
+   au_tests_stop_process(http_server_proc);
+
+   if (!rm_rf(tmp_config_dir))
+      g_debug("Unable to remove temp directory: %s", tmp_config_dir);
+}
+
+static void
 _check_message_reply(GDBusConnection *bus,
                      const gchar *method,
                      const gchar *message_type,
@@ -2012,6 +2091,7 @@ main(int argc, char **argv)
    test_add("/daemon/query_updates_4xx", test_query_updates_4xx);
    test_add("/daemon/default_properties", test_default_properties);
    test_add("/daemon/dev_config", test_dev_config);
+   test_add("/daemon/remote_config", test_remote_config);
    test_add("/daemon/unexpected_methods", test_unexpected_methods);
    test_add("/daemon/start_pause_stop_update", test_start_pause_stop_update);
    test_add("/daemon/progress_default", test_progress_default);
