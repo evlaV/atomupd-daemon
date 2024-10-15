@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2023 Collabora Ltd.
+ * Copyright © 2022-2024 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -135,6 +135,55 @@ au_tests_start_daemon_service(GDBusConnection *bus,
    g_assert_cmpint(i, <, max_wait);
 
    g_debug("The service successfully started");
+
+   return g_steal_pointer(&proc);
+}
+
+GSubprocess *
+au_tests_start_local_http_server(const gchar *path)
+{
+   g_autoptr(GSubprocessLauncher) proc_launcher = NULL;
+   g_autoptr(GSubprocess) proc = NULL;
+   g_autoptr(CURL) curl = NULL;
+   CURLcode r = CURLE_COULDNT_CONNECT;
+   gulong wait = 0.5 * G_USEC_PER_SEC;
+   gsize max_wait = 10;
+   gsize i = 0;
+   g_autoptr(GError) error = NULL;
+
+   g_return_val_if_fail(path != NULL, NULL);
+
+   const gchar *server_argv[] = {
+      "/usr/bin/python3", "-m", "http.server", "--directory", path, "12312", NULL,
+   };
+
+   /* Valgrind is really slow, so we need to increase our default wait time */
+   if (g_getenv("AU_TEST_VALGRIND") != NULL)
+      wait = 4 * wait;
+
+   proc_launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
+   proc = g_subprocess_launcher_spawnv(proc_launcher, server_argv, &error);
+   g_assert_no_error(error);
+
+   g_debug("Executed the local HTTP server");
+
+   curl = curl_easy_init();
+   g_assert_nonnull(curl);
+
+   curl_easy_setopt(curl, CURLOPT_URL, "http://localhost:12312");
+   curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+
+   while (r != CURLE_OK && i < max_wait) {
+      g_usleep(wait);
+
+      g_debug("Waiting for the local HTTP server to start: %li", i);
+      r = curl_easy_perform(curl);
+      i++;
+   }
+
+   g_assert(r == CURLE_OK);
+
+   g_debug("Local HTTP server started");
 
    return g_steal_pointer(&proc);
 }

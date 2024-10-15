@@ -1,5 +1,5 @@
 /*
- * Copyright © 2023 Collabora Ltd.
+ * Copyright © 2023-2024 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -23,7 +23,9 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <curl/curl.h>
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
 
 #include "utils.h"
@@ -307,6 +309,67 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
       if (!g_file_set_contents_full(desync_conf_path, json_output, -1,
                                     G_FILE_SET_CONTENTS_CONSISTENT, 0600, error))
          return FALSE;
+   }
+
+   return TRUE;
+}
+
+/*
+ * _au_download_file:
+ * @target: (not nullable): Path where to store the downloaded file
+ * @url: (not nullable): URL that needs to be downloaded
+ * @error: Used to raise an error on failure
+ *
+ * Downloads the @url to the provided @target. If @target already exists, it will be
+ * replaced. During the download, the temporary file is stored at @target with the `.part`
+ * suffix.
+ *
+ * Returns: %TRUE on success
+ */
+gboolean
+_au_download_file(const gchar *target, const gchar *url, GError **error)
+{
+   g_autofree gchar *tmp_file = NULL;
+   g_autoptr(CURL) curl = NULL;
+   CURLcode r;
+   FILE *fp = NULL;
+
+   g_return_val_if_fail(target != NULL, FALSE);
+   g_return_val_if_fail(url != NULL, FALSE);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   tmp_file = g_strdup_printf("%s.part", target);
+
+   curl = curl_easy_init();
+   if (curl == NULL)
+      return au_throw_error(error, "Libcurl failed to initialize");
+
+   fp = fopen(tmp_file, "wb");
+   if (fp == NULL)
+      return au_throw_error(error, "Failed opening the temporary file %s", tmp_file);
+
+   curl_easy_setopt(curl, CURLOPT_URL, url);
+   curl_easy_setopt(curl, CURLOPT_NETRC, CURL_NETRC_OPTIONAL);
+   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+   curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+   /* We are aggressive with the timeout because at the moment this is only used to
+    * download very small text files. Additionally, if the download fails, it is not
+    * a fatal error and we can continue regardless. */
+   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+
+   r = curl_easy_perform(curl);
+   fclose(fp);
+
+   if (r != CURLE_OK) {
+      g_unlink(tmp_file);
+      return au_throw_error(error, "The download from '%s' failed", url);
+   }
+
+   if (g_rename(tmp_file, target) != 0) {
+      g_unlink(tmp_file);
+      return au_throw_error(error, "Failed to move the temporary file to '%s'", target);
    }
 
    return TRUE;

@@ -73,7 +73,7 @@ foreach test_name : ['au-atomupd1-impl', 'impl', 'manager', 'utils']
   exe = executable(
     'test-' + test_name,
     sources : [test_name + '.c', 'fixture.c', 'mock-defines.h', 'services.c', 'tests-utils.c', atomupd1],
-    dependencies : [glib, gio, gio_unix, json_glib, polkit_gobject, atomupd1_impl_dep],
+    dependencies : [glib, gio, gio_unix, json_glib, libcurl, polkit_gobject, atomupd1_impl_dep],
     include_directories : project_include_dirs,
     install : get_option('install_tests'),
     install_dir : tests_dir,

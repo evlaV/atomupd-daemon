@@ -486,6 +486,8 @@ typedef struct {
    const gchar *config_name;
    const gchar *variants[5];
    const gchar *branches[10];
+   const gchar *existing_info_file_content;
+   const gchar *local_server_relative_path;
    gboolean fail;
 } PropertiesTest;
 
@@ -529,13 +531,94 @@ static const PropertiesTest properties_test[] = {
       .variants = { "steamdeck", "vanilla", NULL },
       .branches = { "beta", "bc", NULL },
    },
+
+   {
+      .config_name = "client.conf",
+      /* The list of variants and branches are from the remote-info.conf file */
+      .variants = { "steamdeck", "vanilla", NULL },
+      .branches = { "stable", "rc", "beta", "bc", "preview", "pc", "main", NULL },
+      .local_server_relative_path = "client_meta",
+   },
+
+   {
+      .config_name = "client.conf",
+      .variants = { "steamdeck", NULL },
+      .branches = { "stable", "rc", "beta", "bc", "main", NULL },
+      /* Simulate a server that returns 404 when looking for the remote-info.conf file */
+      .local_server_relative_path = "empty_meta",
+   },
+
+   {
+      .config_name = "client.conf",
+      /* The list of variants and branches are from the server side remote-info.conf file,
+       * which is expected to replace our older local version */
+      .variants = { "steamdeck", "vanilla", NULL },
+      .branches = { "stable", "rc", "beta", "bc", "preview", "pc", "main", NULL },
+      .local_server_relative_path = "client_meta",
+      .existing_info_file_content =
+         "[Server]\nVariants = steamtest\nBranches = stable;nightly",
+   },
+
+   {
+      .config_name = "client.conf",
+      /* We already have a remote-info.conf file, that is equal to the one on the server */
+      .variants = { "steamdeck", "vanilla", NULL },
+      .branches = { "stable", "rc", "beta", "bc", "preview", "pc", "main", NULL },
+      .local_server_relative_path = "client_meta",
+      .existing_info_file_content = "[Server]\
+Variants = steamdeck;vanilla\
+Branches = stable;rc;beta;bc;preview;pc;main",
+   },
+
+   {
+      .config_name = "client.conf",
+      /* Simulate the server being unavailable, we use the local remote-info.conf as-is */
+      .variants = { "steamtest", NULL },
+      .branches = { "stable", "nightly", NULL },
+      .existing_info_file_content =
+         "[Server]\nVariants = steamtest\nBranches = stable;nightly",
+   },
+
+   {
+      .config_name = "client.conf",
+      .variants = { "steamdeck", "vanilla", NULL },
+      .branches = { "stable", "rc", "beta", "bc", "preview", "pc", "main", NULL },
+      /* If the remote-info.conf file has additional values, they should be ignored */
+      .local_server_relative_path = "extra_fields_meta",
+   },
+
+   {
+      .config_name = "client.conf",
+      .variants = { "steamtest", NULL },
+      .branches = { "stable", "rc", "beta", "bc", "main", NULL },
+      /* remote-info.conf with only the list of variants */
+      .existing_info_file_content = "[Server]\nVariants = steamtest",
+   },
+
+   {
+      .config_name = "client.conf",
+      .variants = { "steamdeck", NULL },
+      .branches = { "stable", "nightly", NULL },
+      /* remote-info.conf with only the list of branches */
+      .existing_info_file_content = "[Server]\nBranches = stable;nightly",
+   },
+
+   {
+      .config_name = "client.conf",
+      .variants = { "steamdeck", NULL },
+      .branches = { "stable", "rc", "beta", "bc", "main", NULL },
+      /* remote-info.conf has unexpected content */
+      .existing_info_file_content = "[Unexpected]\nUnexpected file",
+   },
 };
 
 static void
 _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest *test)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GSubprocess) http_server_proc = NULL;
    g_autofree gchar *tmp_config_dir = NULL;
+   g_autofree gchar *local_server_dir = NULL;
    g_autoptr(AtomupdProperties) atomupd_properties = NULL;
    g_autoptr(GError) error = NULL;
 
@@ -563,6 +646,21 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
       return;
    }
 
+   if (test->existing_info_file_content != NULL) {
+      g_file_set_contents(f->remote_info_path, test->existing_info_file_content, -1,
+                          &error);
+      g_assert_no_error(error);
+   } else {
+      /* Cleanup any eventual remote info file from previous executions */
+      g_unlink(f->remote_info_path);
+   }
+
+   if (test->local_server_relative_path != NULL) {
+      local_server_dir =
+         g_build_filename(f->srcdir, "data", test->local_server_relative_path, NULL);
+      http_server_proc = au_tests_start_local_http_server(local_server_dir);
+   }
+
    daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
                                                f->test_envp, FALSE);
 
@@ -587,6 +685,9 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
 
    au_tests_stop_process(daemon_proc);
 
+   if (test->local_server_relative_path != NULL)
+      au_tests_stop_process(http_server_proc);
+
    if (!rm_rf(tmp_config_dir))
       g_debug("Unable to remove temp directory: %s", tmp_config_dir);
 }
@@ -609,14 +710,19 @@ static void
 test_dev_config(Fixture *f, gconstpointer context)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GSubprocess) http_server_proc = NULL;
    g_autoptr(GDBusConnection) bus = NULL;
    g_autofree gchar *tmp_config_dir = NULL;
    g_autofree gchar *config_path = NULL;
    g_autofree gchar *config_dev_path = NULL;
+   g_autofree gchar *local_server_dir = NULL;
    const gchar *client_variants[] = { "steamdeck", NULL };
    const gchar *client_branches[] = { "stable", "rc", "beta", "bc", "main", NULL };
    const gchar *client_dev_variants[] = { "steamdeck", "vanilla", NULL };
    const gchar *client_dev_branches[] = { "beta", "bc", NULL };
+   const gchar *client_remote_variants[] = { "steamdeck", "vanilla", NULL };
+   const gchar *client_remote_branches[] = { "stable",  "rc", "beta", "bc",
+                                             "preview", "pc", "main", NULL };
    g_autoptr(AtomupdProperties) atomupd_properties = NULL;
    g_autoptr(GError) error = NULL;
 
@@ -666,6 +772,10 @@ test_dev_config(Fixture *f, gconstpointer context)
       g_assert_no_error(error);
    }
 
+   g_file_set_contents(f->remote_info_path,
+                       "[Server]\nVariants = steamtest\nBranches = stable;nightly", -1,
+                       &error);
+
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
    atomupd_properties = _get_atomupd_properties(bus);
    /* The daemon was already running when we created the client dev file.
@@ -678,9 +788,29 @@ test_dev_config(Fixture *f, gconstpointer context)
 
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
    atomupd_properties = _get_atomupd_properties(bus);
-   /* We expect the dev file to take precedence here */
+   /* We expect the dev file to take precedence here.
+    * Even if we have a local remote-info.conf file, it should be skipped because we are
+    * using a -dev config file. */
    g_assert_cmpstrv(atomupd_properties->known_variants, client_dev_variants);
    g_assert_cmpstrv(atomupd_properties->known_branches, client_dev_branches);
+
+   au_tests_stop_process(daemon_proc);
+   g_clear_pointer(&atomupd_properties, atomupd_properties_free);
+   g_clear_object(&daemon_proc);
+   g_unlink(f->remote_info_path);
+
+   local_server_dir = g_build_filename(f->srcdir, "data", "client_meta", NULL);
+   http_server_proc = au_tests_start_local_http_server(local_server_dir);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+
+   atomupd_properties = _get_atomupd_properties(bus);
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_dev_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_dev_branches);
+   /* We expect to have downloaded the remote-info.conf file, even if we are not currently
+    * using it due to the -dev config taking precedence. */
+   g_assert_true(g_file_test(f->remote_info_path, G_FILE_TEST_EXISTS));
 
    au_tests_stop_process(daemon_proc);
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
@@ -705,11 +835,20 @@ test_dev_config(Fixture *f, gconstpointer context)
                                                f->test_envp, FALSE);
 
    atomupd_properties = _get_atomupd_properties(bus);
-   /* We expect the canonical file to be picked up as a fallback */
-   g_assert_cmpstrv(atomupd_properties->known_variants, client_variants);
-   g_assert_cmpstrv(atomupd_properties->known_branches, client_branches);
+   /* We expect the canonical file plus the remote-info to be picked up as a fallback */
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_remote_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_remote_branches);
+
+   /* Reload, we should still use the canonical file plus the remote-info */
+   _send_atomupd_message_with_null_reply(bus, "ReloadConfiguration", "(a{sv})", NULL);
+
+   g_clear_pointer(&atomupd_properties, atomupd_properties_free);
+   atomupd_properties = _get_atomupd_properties(bus);
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_remote_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_remote_branches);
 
    au_tests_stop_process(daemon_proc);
+   au_tests_stop_process(http_server_proc);
 
    if (!rm_rf(tmp_config_dir))
       g_debug("Unable to remove temp directory: %s", tmp_config_dir);

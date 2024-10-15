@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2023 Collabora Ltd.
+ * Copyright © 2022-2024 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -114,7 +114,6 @@ mock_polkit_set_allowed(const gchar **allowed, gsize n_elements)
    g_assert_no_error(error);
 }
 
-
 void
 au_tests_setup(Fixture *f, gconstpointer context)
 {
@@ -162,6 +161,12 @@ au_tests_setup(Fixture *f, gconstpointer context)
    /* Start with the preferences configuration file not available */
    g_assert_cmpint(g_unlink(f->preferences_path), ==, 0);
 
+   fd = g_file_open_tmp("remote-info-XXXXXX", &f->remote_info_path, &error);
+   g_assert_no_error(error);
+   close(fd);
+   /* Start with the remote info file not available */
+   g_assert_cmpint(g_unlink(f->remote_info_path), ==, 0);
+
    f->test_envp = g_get_environ();
    f->test_envp =
       g_environ_setenv(f->test_envp, "AU_UPDATES_JSON_FILE", f->updates_json, TRUE);
@@ -169,6 +174,8 @@ au_tests_setup(Fixture *f, gconstpointer context)
                                    f->rauc_pid_path, TRUE);
    f->test_envp = g_environ_setenv(f->test_envp, "AU_USER_PREFERENCES_FILE",
                                    f->preferences_path, TRUE);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "AU_REMOTE_INFO_PATH", f->remote_info_path, TRUE);
 
    system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
    g_assert_no_error(error);
@@ -193,6 +200,9 @@ au_tests_teardown(Fixture *f, gconstpointer context)
 
    g_unlink(f->preferences_path);
    g_free(f->preferences_path);
+
+   g_unlink(f->remote_info_path);
+   g_free(f->remote_info_path);
 
    _stop_mock_polkit(f->polkit_pid);
 }

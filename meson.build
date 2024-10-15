@@ -1,4 +1,4 @@
-# Copyright © 2021 Collabora Ltd.
+# Copyright © 2021-2024 Collabora Ltd.
 #
 # SPDX-License-Identifier: MIT
 #
@@ -136,6 +136,10 @@ gio_unix = dependency(
 json_glib = dependency(
   'json-glib-1.0',
   version : '>= 1.6.0',
+)
+libcurl = dependency(
+  'libcurl',
+  version : '>=7.88.0',
 )
 
 polkit_gobject = dependency('polkit-gobject-1')

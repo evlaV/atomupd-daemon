@@ -43,6 +43,7 @@ guint ATOMUPD_VERSION = 5;
 
 const gchar *AU_CONFIG = "client.conf";
 const gchar *AU_DEV_CONFIG = "client-dev.conf";
+const gchar *AU_REMOTE_INFO = "remote-info.conf";
 const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
 const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json";
 
@@ -50,6 +51,13 @@ const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json"
 const gchar *AU_DEFAULT_BRANCH_PATH = "/var/lib/steamos-branch";
 
 const gchar *AU_USER_PREFERENCES = "/etc/steamos-atomupd/preferences.conf";
+
+/* This file is not expected to be preserved when applying a system update.
+ * It is not a problem if this happens to be preserved across updates, e.g.
+ * if a user adds `/etc/steamos-atomupd/\*` to `/etc/atomic-update.conf.d/`,
+ * because when atomupd-daemon starts up it always tries to replace the local
+ * remote-info.conf file with the latest version from the server. */
+const gchar *AU_REMOTE_INFO_PATH = "/etc/steamos-atomupd/remote-info.conf";
 
 /* Please keep this in sync with steamos-customizations common.mk */
 const gchar *AU_REBOOT_FOR_UPDATE = "/run/steamos-atomupd/reboot_for_update";
@@ -218,6 +226,22 @@ _au_get_user_preferences_file_path(void)
    }
 
    return user_preferences_file;
+}
+
+static const gchar *
+_au_get_remote_info_path(void)
+{
+   static const gchar *remote_info = NULL;
+
+   if (remote_info == NULL) {
+      /* This environment variable is used for debugging and automated tests */
+      remote_info = g_getenv("AU_REMOTE_INFO_PATH");
+
+      if (remote_info == NULL)
+         remote_info = AU_REMOTE_INFO_PATH;
+   }
+
+   return remote_info;
 }
 
 /*
@@ -669,6 +693,32 @@ static gchar **
 _au_get_known_branches_from_config(GKeyFile *client_config, GError **error)
 {
    return _au_get_list_from_config(client_config, "Branches", error);
+}
+
+/*
+ * _au_get_meta_url_from_default_config:
+ * @atomupd: (not nullable): An AuAtomupd1Impl object
+ *
+ * Get the meta URL value from the default AU_CONFIG file located in the @atomupd config
+ * directory. I.e. this skips the client-dev.conf file, even if it is present.
+ *
+ * Returns: (type filename) (transfer full): The MetaUrl value from the configuration.
+ */
+static gchar *
+_au_get_meta_url_from_default_config(const AuAtomupd1Impl *atomupd, GError **error)
+{
+   g_autofree gchar *default_config_path = NULL;
+   g_autoptr(GKeyFile) client_config = g_key_file_new();
+
+   g_return_val_if_fail(atomupd != NULL, NULL);
+
+   default_config_path = g_build_filename(atomupd->config_directory, AU_CONFIG, NULL);
+
+   if (!g_key_file_load_from_file(client_config, default_config_path, G_KEY_FILE_NONE,
+                                  error))
+      return NULL;
+
+   return g_key_file_get_string(client_config, "Server", "MetaUrl", error);
 }
 
 /*
@@ -1299,6 +1349,10 @@ _au_switch_to_variant(AuAtomupd1 *object,
    if (!_au_update_user_preferences(variant, branch, error))
       return FALSE;
 
+   /* When changing variant in theory we could re-download the remote-info.conf file.
+    * However, the chances of being different from the one we were already supposed to
+    * have are very slim. So, in practice there is no real need to do it. */
+
    if (clear_available_updates)
       _au_clear_available_updates(object);
 
@@ -1386,6 +1440,58 @@ au_atomupd1_impl_handle_switch_to_branch(AuAtomupd1 *object,
                   g_free);
 
    return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static gboolean
+_au_download_remote_info(const AuAtomupd1Impl *atomupd, GError **error)
+{
+   g_autofree gchar *meta_url = NULL;
+   g_autofree gchar *remote_info_url = NULL;
+   const gchar *release = NULL;
+   const gchar *product = NULL;
+   const gchar *architecture = NULL;
+   const gchar *variant = NULL;
+   JsonNode *json_node = NULL;     /* borrowed */
+   JsonObject *json_object = NULL; /* borrowed */
+   g_autoptr(JsonParser) parser = NULL;
+
+   g_return_val_if_fail(atomupd != NULL, FALSE);
+   g_return_val_if_fail(atomupd->manifest_path != NULL, FALSE);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   parser = json_parser_new();
+   if (!json_parser_load_from_file(parser, atomupd->manifest_path, error))
+      return FALSE;
+
+   json_node = json_parser_get_root(parser);
+   if (json_node == NULL)
+      return au_throw_error(error, "failed to parse the manifest JSON \"%s\"",
+                            atomupd->manifest_path);
+
+   json_object = json_node_get_object(json_node);
+
+   release = json_object_get_string_member_with_default(json_object, "release", NULL);
+   product = json_object_get_string_member_with_default(json_object, "product", NULL);
+   architecture = json_object_get_string_member_with_default(json_object, "arch", NULL);
+
+   if (release == NULL || product == NULL || architecture == NULL)
+      return au_throw_error(error,
+                            "the manifest JSON \"%s\" does not have the expected keys",
+                            atomupd->manifest_path);
+
+   variant = au_atomupd1_get_variant((AuAtomupd1 *)atomupd);
+   meta_url = _au_get_meta_url_from_default_config(atomupd, error);
+
+   if (meta_url == NULL)
+      return FALSE;
+
+   remote_info_url = g_build_filename(meta_url, release, product, architecture, variant,
+                                      AU_REMOTE_INFO, NULL);
+
+   if (!_au_download_file(_au_get_remote_info_path(), remote_info_url, error))
+      return FALSE;
+
+   return TRUE;
 }
 
 static void
@@ -2338,7 +2444,7 @@ _au_parse_manifest(AuAtomupd1Impl *atomupd, GError **error)
 }
 
 static gboolean
-_au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
+_au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError **error)
 {
    g_autofree gchar *username = NULL;
    g_autofree gchar *password = NULL;
@@ -2346,6 +2452,7 @@ _au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
    g_auto(GStrv) known_variants = NULL;
    g_auto(GStrv) known_branches = NULL;
    g_autoptr(GKeyFile) client_config = g_key_file_new();
+   g_autoptr(GKeyFile) remote_info = g_key_file_new();
    g_autoptr(GError) local_error = NULL;
 
    g_return_val_if_fail(atomupd != NULL, FALSE);
@@ -2355,18 +2462,45 @@ _au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
                                   error))
       return FALSE;
 
+   if (include_remote_info &&
+       !g_key_file_load_from_file(remote_info, _au_get_remote_info_path(),
+                                  G_KEY_FILE_NONE, &local_error)) {
+      /* This could happen if for example the Steam Deck is in offline mode, or the server
+       * doesn't have a remote info file at all. In those cases we simply continue to use
+       * the local info */
+      g_debug("Failed to use the additional remote info: %s", local_error->message);
+      g_debug("Continuing anyway...");
+      g_clear_error(&local_error);
+   }
+
    g_debug("Getting the list of known variants and branches");
 
-   known_variants = _au_get_known_variants_from_config(client_config, error);
-   if (known_variants == NULL)
-      return FALSE;
+   if (include_remote_info) {
+      known_variants = _au_get_known_variants_from_config(remote_info, NULL);
+      if (known_variants != NULL)
+         g_debug("Using the list of known variants from the remote info file");
+   }
+
+   if (known_variants == NULL) {
+      known_variants = _au_get_known_variants_from_config(client_config, error);
+      if (known_variants == NULL)
+         return FALSE;
+   }
 
    au_atomupd1_set_known_variants((AuAtomupd1 *)atomupd,
                                   (const gchar *const *)known_variants);
 
-   known_branches = _au_get_known_branches_from_config(client_config, error);
-   if (known_branches == NULL)
-      return FALSE;
+   if (include_remote_info) {
+      known_branches = _au_get_known_branches_from_config(remote_info, NULL);
+      if (known_branches != NULL)
+         g_debug("Using the list of known branches from the remote info file");
+   }
+
+   if (known_branches == NULL) {
+      known_branches = _au_get_known_branches_from_config(client_config, error);
+      if (known_branches == NULL)
+         return FALSE;
+   }
 
    au_atomupd1_set_known_branches((AuAtomupd1 *)atomupd,
                                   (const gchar *const *)known_branches);
@@ -2423,7 +2557,10 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
    if (g_file_test(dev_config_path, G_FILE_TEST_EXISTS)) {
       atomupd->config_path = g_steal_pointer(&dev_config_path);
 
-      if (_au_parse_config(atomupd, &local_error)) {
+      /* We don't load the remote info file when using a development configuration.
+       * We could have additional custom variants/branches, and we don't want to replace
+       * them with the ones from the server side. */
+      if (_au_parse_config(atomupd, FALSE, &local_error)) {
          g_debug("Loaded the configuration file '%s'", dev_config_path);
          return TRUE;
       }
@@ -2435,7 +2572,7 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
    }
 
    atomupd->config_path = g_build_filename(atomupd->config_directory, AU_CONFIG, NULL);
-   if (!_au_parse_config(atomupd, error))
+   if (!_au_parse_config(atomupd, TRUE, error))
       return FALSE;
 
    return TRUE;
@@ -2598,6 +2735,12 @@ au_atomupd1_impl_new(const gchar *config_directory,
 
    if (!_au_parse_manifest(atomupd, error))
       return NULL;
+
+   if (!_au_download_remote_info(atomupd, &local_error)) {
+      g_info("Failed to download the remote info: %s", local_error->message);
+      g_info("Continuing anyway...");
+      g_clear_error(&local_error);
+   }
 
    if (!_au_select_and_load_configuration(atomupd, error))
       return NULL;

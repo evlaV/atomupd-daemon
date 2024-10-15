@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2023 Collabora Ltd.
+ * Copyright © 2022-2024 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -33,6 +33,7 @@ typedef struct {
    gchar *manifest_path;
    gchar *conf_dir;
    gchar *preferences_path;
+   gchar *remote_info_path;
    gchar *updates_json;
    /* Text file where we store the mock RAUC service pid */
    gchar *rauc_pid_path;

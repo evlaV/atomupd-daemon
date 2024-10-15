@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022 Collabora Ltd.
+ * Copyright © 2022-2024 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <curl/curl.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -56,6 +57,9 @@ extern const gchar *AU_DEFAULT_BRANCH_PATH;
 
 extern const gchar *AU_REBOOT_FOR_UPDATE;
 
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(CURL, curl_easy_cleanup)
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(CURLU, curl_url_cleanup)
+
 gchar *_au_get_host_from_url(const gchar *url);
 
 gboolean _au_ensure_urls_in_netrc(const gchar *netrc_path,
@@ -68,6 +72,10 @@ gboolean _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
                                        const gchar *url,
                                        const gchar *auth_encoded,
                                        GError **error);
+
+gboolean _au_download_file(const gchar *target,
+                           const gchar *url,
+                           GError **error);
 
 gboolean au_throw_error(GError **error,
                         const char *format, ...) G_GNUC_PRINTF(2, 3);

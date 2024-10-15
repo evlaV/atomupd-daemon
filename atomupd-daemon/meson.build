@@ -1,4 +1,4 @@
-# Copyright © 2021-2023 Collabora Ltd.
+# Copyright © 2021-2024 Collabora Ltd.
 #
 # SPDX-License-Identifier: MIT
 #
@@ -81,7 +81,7 @@ atomupd1_impl_dep = declare_dependency(
 executable(
   'atomupd-daemon',
   sources: ['main.c', atomupd1],
-  dependencies : [glib, gio, gio_unix, json_glib, polkit_gobject, atomupd1_impl_dep],
+  dependencies : [glib, gio, gio_unix, json_glib, libcurl, polkit_gobject, atomupd1_impl_dep],
   install : true,
   install_dir : get_option('prefix') / get_option('libexecdir'),
 )
@@ -89,6 +89,6 @@ executable(
 executable(
   'atomupd-manager',
   sources: ['atomupd-manager.c', 'au-atomupd1-impl.c', atomupd1, enums],
-  dependencies : [glib, gio, gio_unix, json_glib, polkit_gobject, atomupd1_impl_dep, systemd],
+  dependencies : [glib, gio, gio_unix, json_glib, libcurl, polkit_gobject, atomupd1_impl_dep, systemd],
   install : true,
 )

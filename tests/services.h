@@ -41,4 +41,7 @@ au_tests_start_daemon_service(GDBusConnection *bus,
                               gboolean expected_to_fail);
 
 GSubprocess *
+au_tests_start_local_http_server(const gchar *path);
+
+GSubprocess *
 au_tests_launch_rauc_service(const gchar *rauc_pid_path);
