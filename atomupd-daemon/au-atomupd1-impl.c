@@ -2469,6 +2469,8 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
    g_autofree gchar *username = NULL;
    g_autofree gchar *password = NULL;
    g_autofree gchar *auth_encoded = NULL;
+   g_autofree gchar *default_variant = NULL;
+   g_autofree gchar *default_branch = NULL;
    g_auto(GStrv) known_variants = NULL;
    g_auto(GStrv) known_branches = NULL;
    g_autoptr(GKeyFile) client_config = g_key_file_new();
@@ -2507,6 +2509,17 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
          return FALSE;
    }
 
+   /* As a security measure against misconfigurations, we ensure that in the list of
+    * known variants there is at least the default variant */
+   default_variant = _au_get_default_variant(atomupd->manifest_path, NULL);
+   if (default_variant != NULL && !g_strv_contains((const gchar *const *)known_variants, default_variant)) {
+      gsize length = g_strv_length(known_variants);
+
+      known_variants = g_realloc(known_variants, (length + 2) * sizeof(gchar *));
+      known_variants[length] = g_steal_pointer(&default_variant);
+      known_variants[length + 1] = NULL;
+   }
+
    au_atomupd1_set_known_variants((AuAtomupd1 *)atomupd,
                                   (const gchar *const *)known_variants);
 
@@ -2520,6 +2533,17 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
       known_branches = _au_get_known_branches_from_config(client_config, error);
       if (known_branches == NULL)
          return FALSE;
+   }
+
+   /* As a security measure against misconfigurations, we ensure that in the list of
+    * known branches there is at least the default branch */
+   default_branch = _au_get_default_branch(atomupd->manifest_path);
+   if (!g_strv_contains((const gchar *const *)known_branches, default_branch)) {
+      gsize length = g_strv_length(known_branches);
+
+      known_branches = g_realloc(known_branches, (length + 2) * sizeof(gchar *));
+      known_branches[length] = g_steal_pointer(&default_branch);
+      known_branches[length + 1] = NULL;
    }
 
    au_atomupd1_set_known_branches((AuAtomupd1 *)atomupd,

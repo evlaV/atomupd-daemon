@@ -505,7 +505,8 @@ static const PropertiesTest properties_test[] = {
 
    {
       .config_name = "client_empty_variants.conf",
-      .variants = { NULL },
+      /* "steamdeck" is coming from the image manifest */
+      .variants = { "steamdeck" },
       .branches = { "stable", "beta", NULL },
    },
 
@@ -529,7 +530,8 @@ static const PropertiesTest properties_test[] = {
    {
       .config_name = "client_semicolon.conf", /* The lists end with a semicolon */
       .variants = { "steamdeck", "vanilla", NULL },
-      .branches = { "beta", "bc", NULL },
+      /* "stable" is coming from the image manifest */
+      .branches = { "beta", "bc", "stable", NULL },
    },
 
    {
@@ -572,8 +574,9 @@ Branches = stable;rc;beta;bc;preview;pc;main",
 
    {
       .config_name = "client.conf",
-      /* Simulate the server being unavailable, we use the local remote-info.conf as-is */
-      .variants = { "steamtest", NULL },
+      /* Simulate the server being unavailable, we use the local remote-info.conf as-is.
+       * "steamdeck" is coming from the image manifest */
+      .variants = { "steamtest", "steamdeck", NULL },
       .branches = { "stable", "nightly", NULL },
       .existing_info_file_content =
          "[Server]\nVariants = steamtest\nBranches = stable;nightly",
@@ -589,7 +592,8 @@ Branches = stable;rc;beta;bc;preview;pc;main",
 
    {
       .config_name = "client.conf",
-      .variants = { "steamtest", NULL },
+      /* "steamdeck" is coming from the image manifest */
+      .variants = { "steamtest", "steamdeck", NULL },
       .branches = { "stable", "rc", "beta", "bc", "main", NULL },
       /* remote-info.conf with only the list of variants */
       .existing_info_file_content = "[Server]\nVariants = steamtest",
@@ -598,9 +602,10 @@ Branches = stable;rc;beta;bc;preview;pc;main",
    {
       .config_name = "client.conf",
       .variants = { "steamdeck", NULL },
-      .branches = { "stable", "nightly", NULL },
+      /* "stable" is appended from the image manifest */
+      .branches = { "daily", "nightly", "stable", NULL },
       /* remote-info.conf with only the list of branches */
-      .existing_info_file_content = "[Server]\nBranches = stable;nightly",
+      .existing_info_file_content = "[Server]\nBranches = daily;nightly;",
    },
 
    {
@@ -719,7 +724,8 @@ test_dev_config(Fixture *f, gconstpointer context)
    const gchar *client_variants[] = { "steamdeck", NULL };
    const gchar *client_branches[] = { "stable", "rc", "beta", "bc", "main", NULL };
    const gchar *client_dev_variants[] = { "steamdeck", "vanilla", NULL };
-   const gchar *client_dev_branches[] = { "beta", "bc", NULL };
+   /* Dev branches, including "stable" from the image manifest */
+   const gchar *client_dev_branches[] = { "beta", "bc", "stable", NULL };
    const gchar *client_remote_variants[] = { "steamdeck", "vanilla", NULL };
    const gchar *client_remote_branches[] = { "stable",  "rc", "beta", "bc",
                                              "preview", "pc", "main", NULL };
