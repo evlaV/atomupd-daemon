@@ -2581,7 +2581,7 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
        * We could have additional custom variants/branches, and we don't want to replace
        * them with the ones from the server side. */
       if (_au_parse_config(atomupd, FALSE, &local_error)) {
-         g_debug("Loaded the configuration file '%s'", dev_config_path);
+         g_debug("Loaded the configuration file '%s'", atomupd->config_path);
          return TRUE;
       }
 
