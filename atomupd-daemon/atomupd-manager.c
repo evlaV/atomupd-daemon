@@ -581,7 +581,7 @@ switch_branch(GOptionContext *context, GDBusConnection *bus, const gchar *branch
 
    if (g_str_equal(branch, "staging"))
       g_print("The staging branch has a high risk of breaking.\n"
-              "Do NOT use it unless you know what you are doing.");
+              "Do NOT use it unless you know what you are doing.\n");
 
    if (!_send_atomupd_message(bus, "SwitchToBranch", g_variant_new("(s)", branch), &reply,
                               &error)) {
