@@ -50,6 +50,8 @@ const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json"
 /* Please keep this in sync with steamos-select-branch */
 const gchar *AU_DEFAULT_BRANCH_PATH = "/var/lib/steamos-branch";
 
+const gchar *AU_FALLBACK_CONFIG_PATH = "/usr/lib/steamos-atomupd";
+
 const gchar *AU_USER_PREFERENCES = "/etc/steamos-atomupd/preferences.conf";
 
 /* This file is not expected to be preserved when applying a system update.
@@ -210,6 +212,22 @@ _au_get_legacy_branch_file_path(void)
    }
 
    return branch_file;
+}
+
+static const gchar *
+_au_get_fallback_config_path(void)
+{
+   static const gchar *config_path = NULL;
+
+   if (config_path == NULL) {
+      /* This environment variable is used for debugging and automated tests */
+      config_path = g_getenv("AU_FALLBACK_CONFIG_PATH");
+
+      if (config_path == NULL)
+         config_path = AU_FALLBACK_CONFIG_PATH;
+   }
+
+   return config_path;
 }
 
 static const gchar *
@@ -701,6 +719,8 @@ _au_get_known_branches_from_config(GKeyFile *client_config, GError **error)
  *
  * Get the meta URL value from the default AU_CONFIG file located in the @atomupd config
  * directory. I.e. this skips the client-dev.conf file, even if it is present.
+ * If the default configuration file is malformed, also the fallback config path will be
+ * used as a last resort attempt.
  *
  * Returns: (type filename) (transfer full): The MetaUrl value from the configuration.
  */
@@ -708,17 +728,36 @@ static gchar *
 _au_get_meta_url_from_default_config(const AuAtomupd1Impl *atomupd, GError **error)
 {
    g_autofree gchar *default_config_path = NULL;
-   g_autoptr(GKeyFile) client_config = g_key_file_new();
+   g_autofree gchar *fallback_config_path = NULL;
+   g_autoptr(GError) local_error = NULL;
+   gsize i;
 
    g_return_val_if_fail(atomupd != NULL, NULL);
 
    default_config_path = g_build_filename(atomupd->config_directory, AU_CONFIG, NULL);
+   fallback_config_path = g_build_filename(_au_get_fallback_config_path(), AU_CONFIG, NULL);
 
-   if (!g_key_file_load_from_file(client_config, default_config_path, G_KEY_FILE_NONE,
-                                  error))
-      return NULL;
+   const gchar *config_path[] = { default_config_path, fallback_config_path, NULL };
 
-   return g_key_file_get_string(client_config, "Server", "MetaUrl", error);
+   for (i = 0; config_path[i] != NULL; i++) {
+      g_autofree gchar *meta_url = NULL;
+      g_autoptr(GKeyFile) client_config = g_key_file_new();
+
+      g_clear_error(&local_error);
+
+      if (g_key_file_load_from_file(client_config, config_path[i], G_KEY_FILE_NONE,
+               &local_error)) {
+         meta_url = g_key_file_get_string(client_config, "Server", "MetaUrl", &local_error);
+         if (meta_url != NULL)
+            return g_steal_pointer(&meta_url);
+      }
+
+      g_info("Failed to load the MetaUrl property from '%s': %s", config_path[i],
+         local_error->message);
+   }
+
+   g_propagate_error (error, g_steal_pointer (&local_error));
+   return NULL;
 }
 
 /*
@@ -2616,10 +2655,23 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
    }
 
    atomupd->config_path = g_build_filename(atomupd->config_directory, AU_CONFIG, NULL);
-   if (!_au_parse_config(atomupd, TRUE, error))
-      return FALSE;
+   if (_au_parse_config(atomupd, TRUE, &local_error)) {
+      g_debug("Loaded the configuration file '%s'", atomupd->config_path);
+      return TRUE;
+   }
 
-   return TRUE;
+   /* If we can't load the configuration file, as a last resort, we try the hardcoded
+    * AU_FALLBACK_CONFIG_PATH. This is a last attempt to avoid breaking the atomic
+    * updates in use cases where we have an invalid configuration file in the canonical
+    * path. */
+   g_warning("Failed to load '%s': %s\n Using the hardcoded path '%s' as a last resort attempt.",
+             atomupd->config_path, local_error->message, _au_get_fallback_config_path());
+   g_clear_error(&local_error);
+   g_clear_pointer(&atomupd->config_path, g_free);
+
+   atomupd->config_path = g_build_filename(_au_get_fallback_config_path(), AU_CONFIG, NULL);
+
+   return _au_parse_config(atomupd, TRUE, error);
 }
 
 static void

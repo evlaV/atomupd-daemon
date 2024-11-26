@@ -861,6 +861,74 @@ test_dev_config(Fixture *f, gconstpointer context)
 }
 
 static void
+test_fallback_config(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *tmp_config_dir = NULL;
+   g_autofree gchar *config_path = NULL;
+   const gchar *client_fallback_variants[] = { "steamdeck", NULL };
+   const gchar *client_fallback_branches[] = { "stable", "rc", "beta", "bc", "main", NULL };
+   const gchar *client_canonical_variants[] = { "steamdeck", "vanilla", NULL };
+   /* Canonical branches, including "stable" from the image manifest */
+   const gchar *client_canonical_branches[] = { "beta", "bc", "stable", NULL };
+   g_autoptr(AtomupdProperties) atomupd_properties = NULL;
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   tmp_config_dir = g_dir_make_tmp("atomupd-daemon-prop-XXXXXX", &error);
+   g_assert_no_error(error);
+   config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+
+   /* Empty client.conf with a valid fallback */
+   {
+      g_autofree gchar *fallback_client_path = NULL;
+      fallback_client_path = g_build_filename(f->srcdir, "data", NULL);
+      f->test_envp =
+         g_environ_setenv(f->test_envp, "AU_FALLBACK_CONFIG_PATH", fallback_client_path, TRUE);
+   }
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+
+   atomupd_properties = _get_atomupd_properties(bus);
+   /* Variants and branches taken from the fallback file */
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_fallback_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_fallback_branches);
+
+   /* Fill the client.conf file */
+   {
+      g_autofree gchar *source_config_path = NULL;
+      g_autoptr(GFile) source_file = NULL;
+      g_autoptr(GFile) dest_file = NULL;
+
+      source_config_path =
+         g_build_filename(f->srcdir, "data", "client_semicolon.conf", NULL);
+      source_file = g_file_new_for_path(source_config_path);
+      dest_file = g_file_new_for_path(config_path);
+      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
+                  &error);
+      g_assert_no_error(error);
+   }
+
+   g_clear_pointer(&atomupd_properties, atomupd_properties_free);
+   _send_atomupd_message_with_null_reply(bus, "ReloadConfiguration", "(a{sv})", NULL);
+   atomupd_properties = _get_atomupd_properties(bus);
+
+   /* We expect the canonical client.conf to take precedence */
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_canonical_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_canonical_branches);
+
+   au_tests_stop_process(daemon_proc);
+
+   if (!rm_rf(tmp_config_dir))
+      g_debug("Unable to remove temp directory: %s", tmp_config_dir);
+}
+
+static void
 test_remote_config(Fixture *f, gconstpointer context)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
@@ -2097,6 +2165,7 @@ main(int argc, char **argv)
    test_add("/daemon/query_updates_4xx", test_query_updates_4xx);
    test_add("/daemon/default_properties", test_default_properties);
    test_add("/daemon/dev_config", test_dev_config);
+   test_add("/daemon/fallback_config", test_fallback_config);
    test_add("/daemon/remote_config", test_remote_config);
    test_add("/daemon/unexpected_methods", test_unexpected_methods);
    test_add("/daemon/start_pause_stop_update", test_start_pause_stop_update);
