@@ -735,7 +735,8 @@ _au_get_meta_url_from_default_config(const AuAtomupd1Impl *atomupd, GError **err
    g_return_val_if_fail(atomupd != NULL, NULL);
 
    default_config_path = g_build_filename(atomupd->config_directory, AU_CONFIG, NULL);
-   fallback_config_path = g_build_filename(_au_get_fallback_config_path(), AU_CONFIG, NULL);
+   fallback_config_path =
+      g_build_filename(_au_get_fallback_config_path(), AU_CONFIG, NULL);
 
    const gchar *config_path[] = { default_config_path, fallback_config_path, NULL };
 
@@ -746,17 +747,18 @@ _au_get_meta_url_from_default_config(const AuAtomupd1Impl *atomupd, GError **err
       g_clear_error(&local_error);
 
       if (g_key_file_load_from_file(client_config, config_path[i], G_KEY_FILE_NONE,
-               &local_error)) {
-         meta_url = g_key_file_get_string(client_config, "Server", "MetaUrl", &local_error);
+                                    &local_error)) {
+         meta_url =
+            g_key_file_get_string(client_config, "Server", "MetaUrl", &local_error);
          if (meta_url != NULL)
             return g_steal_pointer(&meta_url);
       }
 
       g_info("Failed to load the MetaUrl property from '%s': %s", config_path[i],
-         local_error->message);
+             local_error->message);
    }
 
-   g_propagate_error (error, g_steal_pointer (&local_error));
+   g_propagate_error(error, g_steal_pointer(&local_error));
    return NULL;
 }
 
@@ -2664,12 +2666,14 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
     * AU_FALLBACK_CONFIG_PATH. This is a last attempt to avoid breaking the atomic
     * updates in use cases where we have an invalid configuration file in the canonical
     * path. */
-   g_warning("Failed to load '%s': %s\n Using the hardcoded path '%s' as a last resort attempt.",
-             atomupd->config_path, local_error->message, _au_get_fallback_config_path());
+   g_warning(
+      "Failed to load '%s': %s\n Using the hardcoded path '%s' as a last resort attempt.",
+      atomupd->config_path, local_error->message, _au_get_fallback_config_path());
    g_clear_error(&local_error);
    g_clear_pointer(&atomupd->config_path, g_free);
 
-   atomupd->config_path = g_build_filename(_au_get_fallback_config_path(), AU_CONFIG, NULL);
+   atomupd->config_path =
+      g_build_filename(_au_get_fallback_config_path(), AU_CONFIG, NULL);
 
    return _au_parse_config(atomupd, TRUE, error);
 }

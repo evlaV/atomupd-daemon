@@ -868,7 +868,9 @@ test_fallback_config(Fixture *f, gconstpointer context)
    g_autofree gchar *tmp_config_dir = NULL;
    g_autofree gchar *config_path = NULL;
    const gchar *client_fallback_variants[] = { "steamdeck", NULL };
-   const gchar *client_fallback_branches[] = { "stable", "rc", "beta", "bc", "main", NULL };
+   const gchar *client_fallback_branches[] = {
+      "stable", "rc", "beta", "bc", "main", NULL
+   };
    const gchar *client_canonical_variants[] = { "steamdeck", "vanilla", NULL };
    /* Canonical branches, including "stable" from the image manifest */
    const gchar *client_canonical_branches[] = { "beta", "bc", "stable", NULL };
@@ -887,8 +889,8 @@ test_fallback_config(Fixture *f, gconstpointer context)
    {
       g_autofree gchar *fallback_client_path = NULL;
       fallback_client_path = g_build_filename(f->srcdir, "data", NULL);
-      f->test_envp =
-         g_environ_setenv(f->test_envp, "AU_FALLBACK_CONFIG_PATH", fallback_client_path, TRUE);
+      f->test_envp = g_environ_setenv(f->test_envp, "AU_FALLBACK_CONFIG_PATH",
+                                      fallback_client_path, TRUE);
    }
 
    daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
