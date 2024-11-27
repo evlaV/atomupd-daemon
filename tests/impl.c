@@ -924,6 +924,52 @@ test_fallback_config(Fixture *f, gconstpointer context)
    g_assert_cmpstrv(atomupd_properties->known_variants, client_canonical_variants);
    g_assert_cmpstrv(atomupd_properties->known_branches, client_canonical_branches);
 
+   /* Fill the client.conf file with a malformed config that is missing MetaUrl */
+   {
+      g_autofree gchar *source_config_path = NULL;
+      g_autoptr(GFile) source_file = NULL;
+      g_autoptr(GFile) dest_file = NULL;
+
+      source_config_path =
+         g_build_filename(f->srcdir, "data", "client_no_meta.conf", NULL);
+      source_file = g_file_new_for_path(source_config_path);
+      dest_file = g_file_new_for_path(config_path);
+      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
+                  &error);
+      g_assert_no_error(error);
+   }
+
+   g_clear_pointer(&atomupd_properties, atomupd_properties_free);
+   _send_atomupd_message_with_null_reply(bus, "ReloadConfiguration", "(a{sv})", NULL);
+   atomupd_properties = _get_atomupd_properties(bus);
+
+   /* Variants and branches taken from the fallback file */
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_fallback_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_fallback_branches);
+
+   /* Fill the client.conf file with another malformed config that is missing ImagesUrl */
+   {
+      g_autofree gchar *source_config_path = NULL;
+      g_autoptr(GFile) source_file = NULL;
+      g_autoptr(GFile) dest_file = NULL;
+
+      source_config_path =
+         g_build_filename(f->srcdir, "data", "client_no_images.conf", NULL);
+      source_file = g_file_new_for_path(source_config_path);
+      dest_file = g_file_new_for_path(config_path);
+      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
+                  &error);
+      g_assert_no_error(error);
+   }
+
+   g_clear_pointer(&atomupd_properties, atomupd_properties_free);
+   _send_atomupd_message_with_null_reply(bus, "ReloadConfiguration", "(a{sv})", NULL);
+   atomupd_properties = _get_atomupd_properties(bus);
+
+   /* Variants and branches taken from the fallback file */
+   g_assert_cmpstrv(atomupd_properties->known_variants, client_fallback_variants);
+   g_assert_cmpstrv(atomupd_properties->known_branches, client_fallback_branches);
+
    au_tests_stop_process(daemon_proc);
 
    if (!rm_rf(tmp_config_dir))

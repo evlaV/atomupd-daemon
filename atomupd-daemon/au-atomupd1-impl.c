@@ -2507,6 +2507,7 @@ _au_parse_manifest(AuAtomupd1Impl *atomupd, GError **error)
 static gboolean
 _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError **error)
 {
+   const gchar *server_mandatory_key[] = { "ImagesUrl", "MetaUrl", NULL };
    g_autofree gchar *username = NULL;
    g_autofree gchar *password = NULL;
    g_autofree gchar *auth_encoded = NULL;
@@ -2517,6 +2518,7 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
    g_autoptr(GKeyFile) client_config = g_key_file_new();
    g_autoptr(GKeyFile) remote_info = g_key_file_new();
    g_autoptr(GError) local_error = NULL;
+   gsize i;
 
    g_return_val_if_fail(atomupd != NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
@@ -2524,6 +2526,15 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
    if (!g_key_file_load_from_file(client_config, atomupd->config_path, G_KEY_FILE_NONE,
                                   error))
       return FALSE;
+
+   /* Ensure that the configuration has all the mandatory fields */
+   for (i = 0; server_mandatory_key[i] != NULL; i++) {
+      if (!g_key_file_has_key(client_config, "Server", server_mandatory_key[i], NULL)) {
+         return au_throw_error(
+            error, "The config file \"%s\" doesn't have the expected \"%s\" entry",
+            atomupd->config_path, server_mandatory_key[i]);
+      }
+   }
 
    if (include_remote_info &&
        !g_key_file_load_from_file(remote_info, _au_get_remote_info_path(),
