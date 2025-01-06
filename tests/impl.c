@@ -1785,6 +1785,11 @@ test_preferences(Fixture *f, gconstpointer context)
       /* The daemon should always create the preferences file */
       g_assert_true(g_file_test(preferences_path, G_FILE_TEST_EXISTS));
 
+      /* We expect the daemon to migrate to the new preferences file, unless it is unable to delete the
+       * legacy file */
+      if (!test.unreadable_legacy_conf_file)
+         g_assert_false(g_file_test(legacy_steamos_branch, G_FILE_TEST_EXISTS));
+
       if (test.switch_to_variant != NULL)
          _send_atomupd_message_with_null_reply(bus, "SwitchToVariant", "(s)",
                                                test.switch_to_variant);
@@ -1811,8 +1816,6 @@ test_preferences(Fixture *f, gconstpointer context)
 
       if (test.unreadable_legacy_conf_file)
          g_rmdir(legacy_steamos_branch);
-      else
-         g_unlink(legacy_steamos_branch);
 
       g_unlink(preferences_path);
    }

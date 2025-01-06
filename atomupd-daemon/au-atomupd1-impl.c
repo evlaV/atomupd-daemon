@@ -369,6 +369,7 @@ _au_load_legacy_preferences(const gchar *branch_file_path,
 
    if (!g_file_get_contents(branch_file_path, &legacy_variant, &len, error)) {
       g_warning("The legacy config file '%s' is probably malformed", branch_file_path);
+      g_unlink(branch_file_path);
       return FALSE;
    }
 
@@ -386,6 +387,7 @@ _au_load_legacy_preferences(const gchar *branch_file_path,
          g_warning(
             "The legacy config file '%s' has multiple lines, seems to be malformed",
             branch_file_path);
+         g_unlink(branch_file_path);
          return au_throw_error(error, "Failed to parse the legacy config file '%s'",
                                branch_file_path);
       }
@@ -409,8 +411,8 @@ _au_load_legacy_preferences(const gchar *branch_file_path,
    g_debug("The user preferences have been migrated to the new '%s' file",
            user_prefs_path);
 
-   /* TODO: When all Jupiter images use the new variant+branch (when 3.6 hits stable),
-    * we should clean up the old branch file and just leave the new "preferences.conf". */
+   /* After migrating the preferences we can remove the deprecated old branch file */
+   g_unlink(branch_file_path);
 
    *variant_out = g_steal_pointer(&variant);
    *branch_out = g_steal_pointer(&branch);
@@ -1328,48 +1330,6 @@ success:
                                           available, available_later);
 }
 
-static void
-_au_update_legacy_branch_file(const gchar *variant, const gchar *branch)
-{
-   /* TODO This is used to maintain backward compatibility when downgrading to older
-    * images. When Jupiter images in all branches are using the new variant+branch
-    * concept (when 3.6 hits stable), we should remove the legacy "steamos-branch" file
-    * entirely. */
-
-   const gchar *contracted_legacy_variant;
-   const gchar *legacy_branch_file = _au_get_legacy_branch_file_path();
-   g_autoptr(GError) error = NULL;
-
-   if (!g_str_equal(variant, "steamdeck")) {
-      /* Only the variant "steamdeck" was supported by the old Jupiter images.
-       * By removing the file, in case of downgrades, steamos-atomupd will fallback
-       * to parse the image manifest. */
-      g_unlink(legacy_branch_file);
-      return;
-   }
-
-   if (g_str_equal(branch, "stable")) {
-      contracted_legacy_variant = "rel";
-   } else {
-      contracted_legacy_variant = branch;
-   }
-
-   /* If this is not a known legacy variant, it similarly isn't supported by old images. */
-   g_autofree gchar *test_variant = NULL;
-   g_autofree gchar *test_branch = NULL;
-   if (!_au_convert_from_legacy_variant(contracted_legacy_variant, &test_variant,
-                                        &test_branch)) {
-      g_unlink(legacy_branch_file);
-      return;
-   }
-
-   if (!g_file_set_contents(legacy_branch_file, contracted_legacy_variant, -1, &error)) {
-      /* This is only for the legacy file, it is not a critical error */
-      g_warning("An error occurred while updating the legacy branch file: %s",
-                error->message);
-   }
-}
-
 static gboolean
 _au_switch_to_variant(AuAtomupd1 *object,
                       gchar *variant,
@@ -1384,8 +1344,6 @@ _au_switch_to_variant(AuAtomupd1 *object,
       g_debug("We are already tracking the variant %s, nothing to do", variant);
       return TRUE;
    }
-
-   _au_update_legacy_branch_file(variant, branch);
 
    if (!_au_update_user_preferences(variant, branch, error))
       return FALSE;
@@ -1442,8 +1400,6 @@ _au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error)
       g_debug("We are already tracking the branch %s, nothing to do", branch);
       return TRUE;
    }
-
-   _au_update_legacy_branch_file(variant, branch);
 
    if (!_au_update_user_preferences(variant, branch, error))
       return FALSE;
@@ -2444,11 +2400,8 @@ _au_parse_preferences(AuAtomupd1Impl *atomupd, GError **error)
    g_return_val_if_fail(atomupd != NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
-   /* If we still have a legacy "steamos-branch" file, we try to load it first.
-    * Jupiter images older than 3.6 only update the "steamos-branch" file, so if
-    * a user switches several times between 3.6 and 3.5 images, we can be sure
-    * that "steamos-branch" holds the most up-to-date selected branch. While
-    * "preferences.conf" could store outdated info. */
+   /* If we still have a legacy "steamos-branch" file, we try to load it first and
+    * then convert it to the new preferences.conf */
    if (!_au_load_legacy_preferences(branch_file_path, &variant, &branch, &local_error)) {
       g_debug("%s", local_error->message);
       g_clear_error(&local_error);
