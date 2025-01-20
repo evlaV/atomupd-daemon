@@ -129,6 +129,7 @@ au_tests_setup(Fixture *f, gconstpointer context)
       "com.steampowered.atomupd1.start-downgrade",
       "com.steampowered.atomupd1.start-upgrade",
       "com.steampowered.atomupd1.switch-variant-or-branch",
+      "com.steampowered.atomupd1.manage-http-proxy",
    };
 
    f->srcdir = g_strdup(g_getenv("G_TEST_SRCDIR"));

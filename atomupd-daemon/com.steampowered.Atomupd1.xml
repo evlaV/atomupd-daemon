@@ -38,7 +38,7 @@
         Version:
 
         The version of this interface implemented by this object.
-        This file documents version 5 of the interface.
+        This file documents version 6 of the interface.
     -->
     <property name="Version" type="u" access="read"/>
 
@@ -124,6 +124,19 @@
         if a branch was never explicitly chosen.
     -->
     <property name="Branch" type="s" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+
+    <!--
+        HttpProxy:
+
+        Tuple that represents the HTTP proxy settings. The content is:
+          - A string (s): The HTTP proxy address
+          - An integer (i): The HTTP proxy port number
+        If no proxy is set, the address is the empty string "" and the port number
+        is zero.
+    -->
+    <property name="HttpProxy" type="(si)" access="read">
       <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
     </property>
 
@@ -349,6 +362,28 @@
         Cancel the update that is currently in progress, if any.
     -->
     <method name="CancelUpdate">
+    </method>
+
+    <!--
+        EnableHttpProxy:
+        @address: HTTP proxy address
+        @port: HTTP proxy port number
+        @options: Reserved for future use
+
+        Set the HTTP/HTTPS proxy settings to use when checking and applying system updates.
+    -->
+    <method name="EnableHttpProxy">
+      <arg type="s" name="address" direction="in"/>
+      <arg type="i" name="port" direction="in"/>
+      <arg type="a{sv}" name="options" direction="in"/>
+    </method>
+
+    <!--
+        DisableHttpProxy:
+
+        Remove the HTTP/HTTPS proxy settings, if any.
+    -->
+    <method name="DisableHttpProxy">
     </method>
 
   </interface>

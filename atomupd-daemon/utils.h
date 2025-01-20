@@ -75,6 +75,7 @@ gboolean _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
 
 gboolean _au_download_file(const gchar *target,
                            const gchar *url,
+                           const gchar *proxy,
                            GError **error);
 
 gboolean au_throw_error(GError **error,

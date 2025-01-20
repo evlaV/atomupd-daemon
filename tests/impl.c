@@ -39,8 +39,8 @@
 #include "services.h"
 #include "tests-utils.h"
 
-#define _send_atomupd_message_with_null_reply(_bus, _method, _type, _content)            \
-   g_assert_null(_send_atomupd_message(_bus, _method, _type, _content))
+#define _send_atomupd_message_with_null_reply(_bus, _method, _format, ...)               \
+   g_assert_null(_send_atomupd_message(_bus, _method, _format, __VA_ARGS__))
 
 #define _send_atomupd_message(_bus, _method, _format, ...)                               \
    send_atomupd_message(_bus, AU_ATOMUPD1_PATH, AU_ATOMUPD1_INTERFACE, _method, _format, \
@@ -329,6 +329,22 @@ _check_updates_property(GDBusConnection *bus,
    g_variant_get(reply, "a{?*}", &updates_iter);
 
    _check_available_updates(updates_iter, updates_available);
+}
+
+static void
+_check_http_proxy_property(GDBusConnection *bus,
+                           const gchar *http_proxy_address,
+                           int http_proxy_port)
+{
+   g_autoptr(GVariant) reply = NULL;
+   const gchar *address;
+   gint port;
+
+   reply = _get_atomupd_property(bus, "HttpProxy");
+   g_variant_get(reply, "(&si)", &address, &port);
+
+   g_assert_cmpstr(address, ==, http_proxy_address);
+   g_assert_cmpint(port, ==, http_proxy_port);
 }
 
 static void
@@ -1445,19 +1461,25 @@ test_pending_reboot_check(Fixture *f, gconstpointer context)
 typedef struct {
    const gchar *variant;
    const gchar *branch;
+   const gchar *http_proxy_address;
+   int http_proxy_port;
 } PrefsEntries;
 
 typedef struct {
    const gchar *custom_manifest; /* Use a custom manifest instead of f->manifest_path */
    const gchar *legacy_conf_file_content; /* Content of the legacy "steamos-branch" file */
    gboolean unreadable_legacy_conf_file;
-   PrefsEntries
-      initial_file; /* Initial variant and branch values in the preferences file */
+   PrefsEntries initial_file; /* Initial values in the preferences file */
    gboolean preferences_file_missing;
    PrefsEntries initial_expected;
    const gchar *switch_to_variant; /* Change variant with the SwitchToVariant method */
    const gchar *switch_to_branch;  /* Change branch with the SwitchToBranch method */
-   PrefsEntries switch_expected;   /* Expected values in the preferences file */
+   const gchar
+      *enable_http_proxy_address; /* Set a different HTTP proxy address and port */
+   int enable_http_proxy_port;
+   gboolean disable_http_proxy;  /* If the HTTP proxy needs to be disabled with
+                                    DisableHttpProxy method */
+   PrefsEntries switch_expected; /* Expected values in the preferences file */
 } PreferencesTest;
 
 static const PreferencesTest preferences_test[] = {
@@ -1508,16 +1530,24 @@ static const PreferencesTest preferences_test[] = {
       .initial_file = {
          .variant = "steamdeck",
          .branch = "main",
+         .http_proxy_address = "127.0.0.1",
+         .http_proxy_port = 3128,
       },
       .initial_expected = {
          /* Preferences takes precedence, so the borked manifest shouldn't be an issue */
          .variant = "steamdeck",
          .branch = "main",
+         .http_proxy_address = "127.0.0.1",
+         .http_proxy_port = 3128,
       },
       .switch_to_branch = "stable",
+      .enable_http_proxy_address = "localhost",
+      .enable_http_proxy_port = 31280,
       .switch_expected = {
          .variant = "steamdeck",
          .branch = "stable",
+         .http_proxy_address = "localhost",
+         .http_proxy_port = 31280,
       },
    },
 
@@ -1542,9 +1572,13 @@ static const PreferencesTest preferences_test[] = {
          .branch = "main",
       },
       .switch_to_variant = "vanilla",
+      .enable_http_proxy_address = "127.0.0.1",
+      .enable_http_proxy_port = 3128,
       .switch_expected = {
          .variant = "vanilla",
          .branch = "main",
+         .http_proxy_address = "127.0.0.1",
+         .http_proxy_port = 3128,
       },
    },
 
@@ -1555,6 +1589,8 @@ static const PreferencesTest preferences_test[] = {
       .initial_file = {
          .variant = "steamdeck",
          .branch = "main",
+         .http_proxy_address = "127.0.0.1",
+         .http_proxy_port = 3128,
       },
       .initial_expected = {
          .variant = "steamdeck",
@@ -1569,9 +1605,12 @@ static const PreferencesTest preferences_test[] = {
    },
 
    {
+      /* The preferences file is missing the HTTP proxy port. The daemon should
+       * continue and skip the wrongly configured proxy. */
       .initial_file = {
          .variant = "vanilla",
          .branch = "stable",
+         .http_proxy_address = "127.0.0.1",
       },
       .initial_expected = {
          .variant = "vanilla",
@@ -1591,12 +1630,17 @@ static const PreferencesTest preferences_test[] = {
       .initial_file = {
          .variant = "steamdeck",
          .branch = "main",
+         .http_proxy_address = "localhost",
+         .http_proxy_port = 3128,
       },
       .initial_expected = {
          .variant = "steamdeck",
          .branch = "main",
+         .http_proxy_address = "localhost",
+         .http_proxy_port = 3128,
       },
       .switch_to_variant = "vanilla",
+      .disable_http_proxy = TRUE,
       .switch_expected = {
          .variant = "vanilla",
          .branch = "main",
@@ -1719,7 +1763,10 @@ test_preferences(Fixture *f, gconstpointer context)
       g_autofree gchar *preferences_path = NULL;
       g_autofree gchar *parsed_variant = NULL;
       g_autofree gchar *parsed_branch = NULL;
+      g_autofree gchar *parsed_http_proxy_address = NULL;
+      int parsed_http_proxy_port;
       g_autofree gchar *manifest_path = NULL;
+      g_autofree gchar *preferences_content = NULL;
       g_autoptr(GKeyFile) parsed_preferences = NULL;
       int fd;
 
@@ -1764,8 +1811,21 @@ test_preferences(Fixture *f, gconstpointer context)
             g_key_file_set_string(preferences, "Choices", "Branch",
                                   test.initial_file.branch);
 
+         if (test.initial_file.http_proxy_address != NULL)
+            g_key_file_set_string(preferences, "Proxy", "Address",
+                                  test.initial_file.http_proxy_address);
+
+         if (test.initial_file.http_proxy_port != 0)
+            g_key_file_set_integer(preferences, "Proxy", "Port",
+                                   test.initial_file.http_proxy_port);
+
          g_key_file_save_to_file(preferences, preferences_path, &error);
          g_assert_no_error(error);
+
+      g_autofree gchar *content = NULL;
+      g_file_get_contents(preferences_path, &content, NULL, &error);
+      g_assert_no_error(error);
+      g_debug("Preferences Content during setup (%s):\n%s", preferences_path, content);
 
       } else {
          g_unlink(preferences_path);
@@ -1781,12 +1841,17 @@ test_preferences(Fixture *f, gconstpointer context)
 
       _check_string_property(bus, "Variant", test.initial_expected.variant);
       _check_string_property(bus, "Branch", test.initial_expected.branch);
+      _check_http_proxy_property(bus,
+                                 test.initial_expected.http_proxy_address == NULL
+                                    ? ""
+                                    : test.initial_expected.http_proxy_address,
+                                 test.initial_expected.http_proxy_port);
 
       /* The daemon should always create the preferences file */
       g_assert_true(g_file_test(preferences_path, G_FILE_TEST_EXISTS));
 
-      /* We expect the daemon to migrate to the new preferences file, unless it is unable to delete the
-       * legacy file */
+      /* We expect the daemon to migrate to the new preferences file, unless it is unable
+       * to delete the legacy file */
       if (!test.unreadable_legacy_conf_file)
          g_assert_false(g_file_test(legacy_steamos_branch, G_FILE_TEST_EXISTS));
 
@@ -1797,6 +1862,18 @@ test_preferences(Fixture *f, gconstpointer context)
       if (test.switch_to_branch != NULL)
          _send_atomupd_message_with_null_reply(bus, "SwitchToBranch", "(s)",
                                                test.switch_to_branch);
+
+      if (test.enable_http_proxy_address != NULL)
+         _send_atomupd_message_with_null_reply(bus, "EnableHttpProxy", "(sia{sv})",
+                                               test.enable_http_proxy_address,
+                                               test.enable_http_proxy_port, NULL);
+
+      if (test.disable_http_proxy)
+         _send_atomupd_message_with_null_reply(bus, "DisableHttpProxy", NULL, NULL);
+
+      g_file_get_contents(preferences_path, &preferences_content, NULL, &error);
+      g_assert_no_error(error);
+      g_debug("Preferences Content (%s):\n%s", preferences_path, preferences_content);
 
       parsed_preferences = g_key_file_new();
       g_key_file_load_from_file(parsed_preferences, preferences_path, G_KEY_FILE_NONE,
@@ -1809,8 +1886,16 @@ test_preferences(Fixture *f, gconstpointer context)
          g_key_file_get_string(parsed_preferences, "Choices", "Branch", &error);
       g_assert_no_error(error);
 
+      parsed_http_proxy_address =
+         g_key_file_get_string(parsed_preferences, "Proxy", "Address", NULL);
+      parsed_http_proxy_port =
+         g_key_file_get_integer(parsed_preferences, "Proxy", "Port", NULL);
+
       g_assert_cmpstr(parsed_variant, ==, test.switch_expected.variant);
       g_assert_cmpstr(parsed_branch, ==, test.switch_expected.branch);
+      g_assert_cmpstr(parsed_http_proxy_address, ==,
+                      test.switch_expected.http_proxy_address);
+      g_assert_cmpint(parsed_http_proxy_port, ==, test.switch_expected.http_proxy_port);
 
       au_tests_stop_process(daemon_proc);
 
@@ -1849,6 +1934,18 @@ test_unauthorized(Fixture *f, gconstpointer context)
    _check_message_reply(bus, "PauseUpdate", NULL, NULL, expected_reply);
    _check_message_reply(bus, "ResumeUpdate", NULL, NULL, expected_reply);
    _check_message_reply(bus, "CancelUpdate", NULL, NULL, expected_reply);
+   _check_message_reply(bus, "DisableHttpProxy", NULL, NULL, expected_reply);
+
+   {
+      g_autoptr(GVariant) reply = NULL;
+      g_autofree gchar *reply_str = NULL;
+
+      reply = _send_atomupd_message(bus, "EnableHttpProxy", "(sia{sv})", "192.168.10.1",
+                                    1234, NULL);
+      g_variant_get(reply, "(s)", &reply_str);
+
+      g_assert_cmpstr(reply_str, ==, expected_reply);
+   }
 
    au_tests_stop_process(daemon_proc);
 }

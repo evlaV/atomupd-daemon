@@ -5,6 +5,7 @@ polkit.addRule(function(action, subject) {
         && subject.local == true
         && (
             action.id === "com.steampowered.atomupd1.switch-variant-or-branch"
+            || action.id == "com.steampowered.atomupd1.manage-http-proxy"
             || action.id === "com.steampowered.atomupd1.start-downgrade"
             || action.id === "com.steampowered.atomupd1.reload-configuration"
         )

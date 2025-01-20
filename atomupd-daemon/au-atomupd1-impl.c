@@ -39,7 +39,7 @@
 #include <json-glib/json-glib.h>
 
 /* The version of this interface, exposed in the "Version" property */
-guint ATOMUPD_VERSION = 5;
+guint ATOMUPD_VERSION = 6;
 
 const gchar *AU_CONFIG = "client.conf";
 const gchar *AU_DEV_CONFIG = "client-dev.conf";
@@ -266,12 +266,16 @@ _au_get_remote_info_path(void)
  * _au_update_user_preferences:
  * @variant: Which variant to track
  * @branch: Which branch to track
+ * @http_proxy: (nullable): Which HTTP/HTTPS proxy to use, if any
  * @error: (out) (optional): Used to return an error on failure
  *
  * Returns: %TRUE if the user preferences were successfully written to a file
  */
 static gboolean
-_au_update_user_preferences(const gchar *variant, const gchar *branch, GError **error)
+_au_update_user_preferences(const gchar *variant,
+                            const gchar *branch,
+                            GVariant *http_proxy,
+                            GError **error)
 {
    const gchar *user_prefs_path = _au_get_user_preferences_file_path();
    g_autoptr(GKeyFile) preferences = g_key_file_new();
@@ -291,6 +295,21 @@ _au_update_user_preferences(const gchar *variant, const gchar *branch, GError **
 
    g_key_file_set_string(preferences, "Choices", "Variant", variant);
    g_key_file_set_string(preferences, "Choices", "Branch", branch);
+
+   /* Remove the old HTTP proxy values, if present */
+   g_key_file_remove_group(preferences, "Proxy", NULL);
+
+   if (http_proxy != NULL) {
+      const gchar *address = NULL;
+      gint port;
+
+      g_variant_get(http_proxy, "(&si)", &address, &port);
+
+      if (g_strcmp0(address, "") != 0) {
+         g_key_file_set_string(preferences, "Proxy", "Address", address);
+         g_key_file_set_integer(preferences, "Proxy", "Port", port);
+      }
+   }
 
    return g_key_file_save_to_file(preferences, user_prefs_path, error);
 }
@@ -402,7 +421,7 @@ _au_load_legacy_preferences(const gchar *branch_file_path,
                             branch_file_path);
    }
 
-   if (!_au_update_user_preferences(variant, branch, error)) {
+   if (!_au_update_user_preferences(variant, branch, NULL, error)) {
       g_warning("An error occurred while migrating to the new '%s' file: %s",
                 user_prefs_path, (*error)->message);
       return FALSE;
@@ -435,15 +454,21 @@ static gboolean
 _au_load_user_preferences_file(const gchar *user_prefs_path,
                                gchar **variant_out,
                                gchar **branch_out,
+                               GVariant **http_proxy_out,
                                GError **error)
 {
    g_autofree gchar *variant = NULL;
    g_autofree gchar *branch = NULL;
+   g_autofree gchar *proxy_address = NULL;
+   int proxy_port = -1;
+   g_autoptr(GVariant) http_proxy = NULL;
    g_autoptr(GKeyFile) user_prefs = g_key_file_new();
+   g_autoptr(GError) local_error = NULL;
 
    g_return_val_if_fail(user_prefs_path != NULL, FALSE);
    g_return_val_if_fail(variant_out != NULL && *variant_out == NULL, FALSE);
    g_return_val_if_fail(branch_out != NULL && *branch_out == NULL, FALSE);
+   g_return_val_if_fail(http_proxy_out != NULL && *http_proxy_out == NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
    if (!g_file_test(user_prefs_path, G_FILE_TEST_EXISTS)) {
@@ -472,8 +497,25 @@ _au_load_user_preferences_file(const gchar *user_prefs_path,
       return FALSE;
    }
 
+   proxy_address = g_key_file_get_string(user_prefs, "Proxy", "Address", NULL);
+   if (proxy_address == NULL) {
+      g_debug("The user preferences config file doesn't have an HTTP proxy configured");
+   } else {
+      proxy_port = g_key_file_get_integer(user_prefs, "Proxy", "Port", &local_error);
+      if (local_error == NULL) {
+         http_proxy =
+            g_variant_ref_sink(g_variant_new("(si)", proxy_address, proxy_port));
+      } else {
+         g_warning("Failed to parse the configured Proxy Port from '%s': %s, trying to "
+                   "continue...",
+                   user_prefs_path, local_error->message);
+         g_clear_error(&local_error);
+      }
+   }
+
    *variant_out = g_steal_pointer(&variant);
    *branch_out = g_steal_pointer(&branch);
+   *http_proxy_out = g_steal_pointer(&http_proxy);
    return TRUE;
 }
 
@@ -519,7 +561,7 @@ _au_load_preferences_from_manifest(const gchar *manifest_path,
 
    branch = _au_get_default_branch(manifest_path);
 
-   if (!_au_update_user_preferences(variant, branch, error))
+   if (!_au_update_user_preferences(variant, branch, NULL, error))
       return FALSE;
 
    *variant_out = g_steal_pointer(&variant);
@@ -1337,6 +1379,7 @@ _au_switch_to_variant(AuAtomupd1 *object,
                       GError **error)
 {
    const gchar *branch = au_atomupd1_get_branch(object);
+   GVariant *http_proxy = au_atomupd1_get_http_proxy(object); /* borrowed */
 
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
@@ -1345,7 +1388,7 @@ _au_switch_to_variant(AuAtomupd1 *object,
       return TRUE;
    }
 
-   if (!_au_update_user_preferences(variant, branch, error))
+   if (!_au_update_user_preferences(variant, branch, http_proxy, error))
       return FALSE;
 
    /* When changing variant in theory we could re-download the remote-info.conf file.
@@ -1393,6 +1436,7 @@ static gboolean
 _au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error)
 {
    const gchar *variant = au_atomupd1_get_variant(object);
+   GVariant *http_proxy = au_atomupd1_get_http_proxy(object); /* borrowed */
 
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
@@ -1401,7 +1445,7 @@ _au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error)
       return TRUE;
    }
 
-   if (!_au_update_user_preferences(variant, branch, error))
+   if (!_au_update_user_preferences(variant, branch, http_proxy, error))
       return FALSE;
 
    _au_clear_available_updates(object);
@@ -1439,11 +1483,30 @@ au_atomupd1_impl_handle_switch_to_branch(AuAtomupd1 *object,
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
+static gchar *
+_au_get_http_proxy_address_and_port(AuAtomupd1 *object)
+{
+   const gchar *address = NULL;
+   gint port;
+   GVariant *http_proxy = au_atomupd1_get_http_proxy(object); /* borrowed */
+
+   if (http_proxy == NULL)
+      return NULL;
+
+   g_variant_get(http_proxy, "(&si)", &address, &port);
+
+   if (g_strcmp0(address, "") == 0)
+      return NULL;
+
+   return g_strdup_printf("%s:%i", address, port);
+}
+
 static gboolean
 _au_download_remote_info(const AuAtomupd1Impl *atomupd, GError **error)
 {
    g_autofree gchar *meta_url = NULL;
    g_autofree gchar *remote_info_url = NULL;
+   g_autofree gchar *http_proxy = NULL;
    const gchar *release = NULL;
    const gchar *product = NULL;
    const gchar *architecture = NULL;
@@ -1485,7 +1548,9 @@ _au_download_remote_info(const AuAtomupd1Impl *atomupd, GError **error)
    remote_info_url = g_build_filename(meta_url, release, product, architecture, variant,
                                       AU_REMOTE_INFO, NULL);
 
-   if (!_au_download_file(_au_get_remote_info_path(), remote_info_url, error))
+   http_proxy = _au_get_http_proxy_address_and_port((AuAtomupd1 *)atomupd);
+
+   if (!_au_download_file(_au_get_remote_info_path(), remote_info_url, http_proxy, error))
       return FALSE;
 
    return TRUE;
@@ -1502,12 +1567,14 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    GVariant *arg_options = arg_options_pointer;
    const gchar *variant = NULL;
    const gchar *branch = NULL;
+   g_autofree gchar *http_proxy = NULL;
    const gchar *key = NULL;
    GVariant *value = NULL;
    gboolean penultimate = FALSE;
    GVariantIter iter;
    GPid child_pid;
    g_autoptr(QueryData) data = au_query_data_new();
+   g_auto(GStrv) launch_environ = g_get_environ();
    g_autoptr(GPtrArray) argv = NULL;
    g_autoptr(GError) error = NULL;
    AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
@@ -1552,6 +1619,12 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
       return;
    }
 
+   http_proxy = _au_get_http_proxy_address_and_port(object);
+   if (http_proxy != NULL) {
+      launch_environ = g_environ_setenv(launch_environ, "https_proxy", http_proxy, TRUE);
+      launch_environ = g_environ_setenv(launch_environ, "http_proxy", http_proxy, TRUE);
+   }
+
    variant = au_atomupd1_get_variant(object);
    branch = au_atomupd1_get_branch(object);
 
@@ -1576,8 +1649,8 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
 
    g_ptr_array_add(argv, NULL);
 
-   if (!g_spawn_async_with_pipes(NULL,                        /* working directory */
-                                 (gchar **)argv->pdata, NULL, /* envp */
+   if (!g_spawn_async_with_pipes(NULL, /* working directory */
+                                 (gchar **)argv->pdata, launch_environ,
                                  G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
                                  NULL,                         /* child setup */
                                  NULL,                         /* user data */
@@ -2182,6 +2255,8 @@ au_start_update_authorized_cb(AuAtomupd1 *object,
    const gchar *arg_id = arg_id_pointer;
    AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
    g_autoptr(GPtrArray) argv = NULL;
+   g_autofree gchar *http_proxy = NULL;
+   g_auto(GStrv) launch_environ = g_get_environ();
    g_autoptr(GFileIOStream) stream = NULL;
    g_autoptr(GInputStream) unix_stream = NULL;
    GVariant *updates_available = NULL; /* borrowed */
@@ -2238,6 +2313,12 @@ au_start_update_authorized_cb(AuAtomupd1 *object,
       au_atomupd1_set_update_version(object, NULL);
    }
 
+   http_proxy = _au_get_http_proxy_address_and_port(object);
+   if (http_proxy != NULL) {
+      launch_environ = g_environ_setenv(launch_environ, "https_proxy", http_proxy, TRUE);
+      launch_environ = g_environ_setenv(launch_environ, "http_proxy", http_proxy, TRUE);
+   }
+
    /* Create a copy of the json file because we will pass that to the
     * 'steamos-atomupd-client' helper and, if in the meantime we check again
     * for updates, we may replace that file with a newer version. */
@@ -2278,8 +2359,8 @@ au_start_update_authorized_cb(AuAtomupd1 *object,
    g_ptr_array_add(argv, NULL);
 
    au_start_update_clear(self);
-   if (!g_spawn_async_with_pipes(NULL,                        /* working directory */
-                                 (gchar **)argv->pdata, NULL, /* envp */
+   if (!g_spawn_async_with_pipes(NULL, /* working directory */
+                                 (gchar **)argv->pdata, launch_environ,
                                  G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
                                  NULL,                     /* child setup */
                                  NULL,                     /* user data */
@@ -2393,6 +2474,7 @@ _au_parse_preferences(AuAtomupd1Impl *atomupd, GError **error)
 {
    g_autofree gchar *variant = NULL;
    g_autofree gchar *branch = NULL;
+   g_autoptr(GVariant) http_proxy = NULL;
    const gchar *branch_file_path = _au_get_legacy_branch_file_path();
    const gchar *user_prefs_path = _au_get_user_preferences_file_path();
    g_autoptr(GError) local_error = NULL;
@@ -2409,7 +2491,7 @@ _au_parse_preferences(AuAtomupd1Impl *atomupd, GError **error)
 
    /* Try preferences.conf if we couldn't load the legacy config */
    if (!variant && !_au_load_user_preferences_file(user_prefs_path, &variant, &branch,
-                                                   &local_error)) {
+                                                   &http_proxy, &local_error)) {
       g_debug("%s", local_error->message);
       g_clear_error(&local_error);
    }
@@ -2422,10 +2504,14 @@ _au_parse_preferences(AuAtomupd1Impl *atomupd, GError **error)
       }
    }
 
+   if (http_proxy == NULL)
+      http_proxy = g_variant_ref_sink(g_variant_new("(si)", "", 0));
+
    g_debug("Tracking the variant %s and branch %s", variant, branch);
 
    au_atomupd1_set_variant((AuAtomupd1 *)atomupd, variant);
    au_atomupd1_set_branch((AuAtomupd1 *)atomupd, branch);
+   au_atomupd1_set_http_proxy((AuAtomupd1 *)atomupd, http_proxy);
 
    return TRUE;
 }
@@ -2517,7 +2603,8 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
    /* As a security measure against misconfigurations, we ensure that in the list of
     * known variants there is at least the default variant */
    default_variant = _au_get_default_variant(atomupd->manifest_path, NULL);
-   if (default_variant != NULL && !g_strv_contains((const gchar *const *)known_variants, default_variant)) {
+   if (default_variant != NULL &&
+       !g_strv_contains((const gchar *const *)known_variants, default_variant)) {
       gsize length = g_strv_length(known_variants);
 
       known_variants = g_realloc(known_variants, (length + 2) * sizeof(gchar *));
@@ -2677,6 +2764,77 @@ au_atomupd1_impl_handle_reload_configuration(AuAtomupd1 *object,
 }
 
 static void
+au_enable_http_proxy_authorized_cb(AuAtomupd1 *object,
+                                   GDBusMethodInvocation *invocation,
+                                   gpointer arg_proxy_data_pointer)
+{
+   GVariant *arg_proxy_data = arg_proxy_data_pointer;
+   const gchar *variant = au_atomupd1_get_variant(object);
+   const gchar *branch = au_atomupd1_get_branch(object);
+   g_autoptr(GError) error = NULL;
+
+   if (!_au_update_user_preferences(variant, branch, arg_proxy_data, &error)) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "An error occurred while enabling the HTTP proxy : %s", error->message);
+      return;
+   }
+
+   au_atomupd1_set_http_proxy(object, arg_proxy_data);
+
+   au_atomupd1_complete_enable_http_proxy(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_enable_http_proxy(AuAtomupd1 *object,
+                                          GDBusMethodInvocation *invocation,
+                                          const gchar *arg_address,
+                                          gint arg_port,
+                                          GVariant *arg_options)
+{
+   g_autoptr(GVariant) proxy_data =
+      g_variant_ref_sink(g_variant_new("(si)", arg_address, arg_port));
+
+   _au_check_auth(object, "com.steampowered.atomupd1.manage-http-proxy",
+                  au_enable_http_proxy_authorized_cb, invocation,
+                  g_steal_pointer(&proxy_data), (GDestroyNotify)g_variant_unref);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static void
+au_disable_http_proxy_authorized_cb(AuAtomupd1 *object,
+                                    GDBusMethodInvocation *invocation,
+                                    gpointer data_pointer)
+{
+   const gchar *variant = au_atomupd1_get_variant(object);
+   const gchar *branch = au_atomupd1_get_branch(object);
+   g_autoptr(GVariant) proxy_data = g_variant_ref_sink(g_variant_new("(si)", "", 0));
+   g_autoptr(GError) error = NULL;
+
+   if (!_au_update_user_preferences(variant, branch, NULL, &error)) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "An error occurred while disabling the HTTP proxy : %s", error->message);
+      return;
+   }
+
+   au_atomupd1_set_http_proxy(object, proxy_data);
+
+   au_atomupd1_complete_disable_http_proxy(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_disable_http_proxy(AuAtomupd1 *object,
+                                           GDBusMethodInvocation *invocation)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.manage-http-proxy",
+                  au_disable_http_proxy_authorized_cb, invocation, NULL, NULL);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static void
 init_atomupd1_iface(AuAtomupd1Iface *iface)
 {
    iface->handle_cancel_update = au_atomupd1_impl_handle_cancel_update;
@@ -2687,6 +2845,8 @@ init_atomupd1_iface(AuAtomupd1Iface *iface)
    iface->handle_start_update = au_atomupd1_impl_handle_start_update;
    iface->handle_switch_to_variant = au_atomupd1_impl_handle_switch_to_variant;
    iface->handle_switch_to_branch = au_atomupd1_impl_handle_switch_to_branch;
+   iface->handle_enable_http_proxy = au_atomupd1_impl_handle_enable_http_proxy;
+   iface->handle_disable_http_proxy = au_atomupd1_impl_handle_disable_http_proxy;
 }
 
 G_DEFINE_TYPE_WITH_CODE(AuAtomupd1Impl,

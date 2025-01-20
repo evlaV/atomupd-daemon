@@ -318,6 +318,7 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
  * _au_download_file:
  * @target: (not nullable): Path where to store the downloaded file
  * @url: (not nullable): URL that needs to be downloaded
+ * @proxy: Eventual HTTP/HTTPS proxy to use
  * @error: Used to raise an error on failure
  *
  * Downloads the @url to the provided @target. If @target already exists, it will be
@@ -327,7 +328,7 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
  * Returns: %TRUE on success
  */
 gboolean
-_au_download_file(const gchar *target, const gchar *url, GError **error)
+_au_download_file(const gchar *target, const gchar *url, const gchar *proxy, GError **error)
 {
    g_autofree gchar *tmp_file = NULL;
    g_autoptr(CURL) curl = NULL;
@@ -358,6 +359,9 @@ _au_download_file(const gchar *target, const gchar *url, GError **error)
     * download very small text files. Additionally, if the download fails, it is not
     * a fatal error and we can continue regardless. */
    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+
+   if (proxy != NULL)
+      curl_easy_setopt(curl, CURLOPT_PROXY, proxy);
 
    r = curl_easy_perform(curl);
    fclose(fp);
