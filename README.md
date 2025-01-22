@@ -18,7 +18,6 @@ For example, if you want to test a steamdeck build from your local server, you c
 create a `client-dev.conf` file similar to this one:
 ```ini
 [Server]
-QueryUrl = http://example.home.arpa/updates
 ImagesUrl = http://example-images.home.arpa/
 MetaUrl = http://example.home.arpa/meta
 Variants = rel;beta;main
