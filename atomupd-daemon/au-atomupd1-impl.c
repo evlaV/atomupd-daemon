@@ -544,6 +544,7 @@ _au_load_preferences_from_manifest(const gchar *manifest_path,
 {
    g_autofree gchar *variant = NULL;
    g_autofree gchar *branch = NULL;
+   g_autoptr(GError) local_error = NULL;
 
    g_return_val_if_fail(manifest_path != NULL, FALSE);
    g_return_val_if_fail(variant_out != NULL && *variant_out == NULL, FALSE);
@@ -561,8 +562,12 @@ _au_load_preferences_from_manifest(const gchar *manifest_path,
 
    branch = _au_get_default_branch(manifest_path);
 
-   if (!_au_update_user_preferences(variant, branch, NULL, error))
-      return FALSE;
+   if (!_au_update_user_preferences(variant, branch, NULL, &local_error)) {
+      /* If we can't save the preferences file, e.g. because /etc is full, we
+       * try to continue anyway */
+      g_warning("Failed to save the preferences: %s", local_error->message);
+      g_clear_error(&local_error);
+   }
 
    *variant_out = g_steal_pointer(&variant);
    *branch_out = g_steal_pointer(&branch);
@@ -1380,6 +1385,7 @@ _au_switch_to_variant(AuAtomupd1 *object,
 {
    const gchar *branch = au_atomupd1_get_branch(object);
    GVariant *http_proxy = au_atomupd1_get_http_proxy(object); /* borrowed */
+   g_autoptr(GError) local_error = NULL;
 
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
@@ -1388,8 +1394,12 @@ _au_switch_to_variant(AuAtomupd1 *object,
       return TRUE;
    }
 
-   if (!_au_update_user_preferences(variant, branch, http_proxy, error))
-      return FALSE;
+   if (!_au_update_user_preferences(variant, branch, http_proxy, &local_error)) {
+      /* If we can't save the preferences file, e.g. because /etc is full, we
+       * try to continue anyway */
+      g_warning("Failed to save the preferences: %s", local_error->message);
+      g_clear_error(&local_error);
+   }
 
    /* When changing variant in theory we could re-download the remote-info.conf file.
     * However, the chances of being different from the one we were already supposed to
@@ -1437,6 +1447,7 @@ _au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error)
 {
    const gchar *variant = au_atomupd1_get_variant(object);
    GVariant *http_proxy = au_atomupd1_get_http_proxy(object); /* borrowed */
+   g_autoptr(GError) local_error = NULL;
 
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
@@ -1445,8 +1456,12 @@ _au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error)
       return TRUE;
    }
 
-   if (!_au_update_user_preferences(variant, branch, http_proxy, error))
-      return FALSE;
+   if (!_au_update_user_preferences(variant, branch, http_proxy, &local_error)) {
+      /* If we can't save the preferences file, e.g. because /etc is full, we
+       * try to continue anyway */
+      g_warning("Failed to save the preferences: %s", local_error->message);
+      g_clear_error(&local_error);
+   }
 
    _au_clear_available_updates(object);
    au_atomupd1_set_branch(object, branch);
