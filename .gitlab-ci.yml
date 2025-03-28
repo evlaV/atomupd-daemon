@@ -20,7 +20,7 @@ stages:
   stage: build
   tags:
     - x86_64-linux-kvm-docker
-  image: archlinux:base-devel
+  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/archlinux:base-devel
   script:
     - |
       set -eux
