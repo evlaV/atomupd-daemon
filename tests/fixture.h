@@ -30,6 +30,7 @@
 typedef struct {
    gchar *srcdir;
    gchar *builddir;
+   gchar *desync_conf_path;
    gchar *manifest_path;
    gchar *conf_dir;
    gchar *preferences_path;

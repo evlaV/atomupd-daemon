@@ -2661,6 +2661,7 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
       g_autoptr(GHashTable) url_table = NULL;
       g_autoptr(GList) urls = NULL;
       const gchar *images_url;
+      const gchar *desync_config_path;
 
       url_table = _au_get_urls_from_config(client_config, error);
       if (url_table == NULL) {
@@ -2682,7 +2683,11 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
          return FALSE;
       }
 
-      if (!_au_ensure_url_in_desync_conf(AU_DESYNC_CONFIG_PATH, images_url, auth_encoded,
+      desync_config_path = g_getenv("AU_DESYNC_CONFIG_PATH");
+      if (desync_config_path == NULL)
+         desync_config_path = AU_DESYNC_CONFIG_PATH;
+
+      if (!_au_ensure_url_in_desync_conf(desync_config_path, images_url, auth_encoded,
                                          error))
          return FALSE;
    }
@@ -2949,6 +2954,7 @@ au_atomupd1_impl_new(const gchar *config_directory,
    g_autoptr(GFile) updates_json_parent = NULL;
    const gchar *updates_json_path;
    const gchar *reboot_for_update;
+   const gchar *desync_config_path;
    g_autoptr(GError) local_error = NULL;
    gint64 client_pid = -1;
    gint64 rauc_pid = -1;
@@ -2966,6 +2972,30 @@ au_atomupd1_impl_new(const gchar *config_directory,
       atomupd->manifest_path = g_strdup(AU_DEFAULT_MANIFEST);
    else
       atomupd->manifest_path = g_strdup(manifest_preference);
+
+   /* This environment variable is used for debugging and automated tests */
+   desync_config_path = g_getenv("AU_DESYNC_CONFIG_PATH");
+   if (desync_config_path == NULL)
+      desync_config_path = AU_DESYNC_CONFIG_PATH;
+
+   /* We always expect the Desync config file to be present, alongside its parent
+    * directories. Otherwise RAUC will not be able to apply the updates. */
+   if (!g_file_test(desync_config_path, G_FILE_TEST_EXISTS)) {
+      g_autofree gchar *desync_conf_dir = g_path_get_dirname(desync_config_path);
+
+      if (!g_file_test(desync_conf_dir, G_FILE_TEST_EXISTS)) {
+         if (g_mkdir_with_parents(desync_conf_dir, 0755) != 0) {
+            g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+                        "Failed to create parent directory '%s'", desync_conf_dir);
+            return FALSE;
+         }
+      }
+
+      g_info("The Desync config file is unexpectedly missing, creating one...");
+      if (!g_file_set_contents_full(desync_config_path, "{ }", -1,
+                                    G_FILE_SET_CONTENTS_CONSISTENT, 0600, error))
+         return FALSE;
+   }
 
    if (!_au_parse_preferences(atomupd, error))
       return NULL;

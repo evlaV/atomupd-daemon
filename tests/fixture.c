@@ -168,6 +168,12 @@ au_tests_setup(Fixture *f, gconstpointer context)
    /* Start with the remote info file not available */
    g_assert_cmpint(g_unlink(f->remote_info_path), ==, 0);
 
+   fd = g_file_open_tmp("desync-conf-XXXXXX", &f->desync_conf_path, &error);
+   g_assert_no_error(error);
+   close(fd);
+   /* Start with the desync config file not available */
+   g_assert_cmpint(g_unlink(f->desync_conf_path), ==, 0);
+
    f->test_envp = g_get_environ();
    f->test_envp =
       g_environ_setenv(f->test_envp, "AU_UPDATES_JSON_FILE", f->updates_json, TRUE);
@@ -177,6 +183,8 @@ au_tests_setup(Fixture *f, gconstpointer context)
                                    f->preferences_path, TRUE);
    f->test_envp =
       g_environ_setenv(f->test_envp, "AU_REMOTE_INFO_PATH", f->remote_info_path, TRUE);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "AU_DESYNC_CONFIG_PATH", f->desync_conf_path, TRUE);
 
    system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
    g_assert_no_error(error);
@@ -204,6 +212,9 @@ au_tests_teardown(Fixture *f, gconstpointer context)
 
    g_unlink(f->remote_info_path);
    g_free(f->remote_info_path);
+
+   g_unlink(f->desync_conf_path);
+   g_free(f->desync_conf_path);
 
    _stop_mock_polkit(f->polkit_pid);
 }

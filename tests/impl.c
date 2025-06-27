@@ -767,6 +767,9 @@ test_dev_config(Fixture *f, gconstpointer context)
       g_assert_no_error(error);
    }
 
+   /* By default we setup the fixture with a missing Desync config file */
+   g_assert_false(g_file_test(f->desync_conf_path, G_FILE_TEST_EXISTS));
+
    daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
                                                f->test_envp, FALSE);
 
@@ -774,6 +777,17 @@ test_dev_config(Fixture *f, gconstpointer context)
    /* We only have the client.conf file */
    g_assert_cmpstrv(atomupd_properties->known_variants, client_variants);
    g_assert_cmpstrv(atomupd_properties->known_branches, client_branches);
+
+   /* The daemon should automatically create a Desync config with an empty JSON "{ }" content */
+   g_assert_true(g_file_test(f->desync_conf_path, G_FILE_TEST_EXISTS));
+   {
+      g_autofree gchar *content = NULL;
+      g_file_get_contents(f->desync_conf_path, &content, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(content, ==, "{ }");
+
+      g_file_set_contents(f->desync_conf_path, "{ \"store-options\": {} }", -1, NULL);
+   }
 
    /* Fill the client-dev.conf file */
    {
@@ -829,6 +843,14 @@ test_dev_config(Fixture *f, gconstpointer context)
    /* We expect to have downloaded the remote-info.conf file, even if we are not currently
     * using it due to the -dev config taking precedence. */
    g_assert_true(g_file_test(f->remote_info_path, G_FILE_TEST_EXISTS));
+
+   /* The pre-existing Desync config should not be overridden */
+   {
+      g_autofree gchar *content = NULL;
+      g_file_get_contents(f->desync_conf_path, &content, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(content, ==, "{ \"store-options\": {} }");
+   }
 
    au_tests_stop_process(daemon_proc);
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
