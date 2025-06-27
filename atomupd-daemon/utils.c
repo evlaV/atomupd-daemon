@@ -72,7 +72,7 @@ _au_get_host_from_url(const gchar *url)
    if (host_end != NULL)
       host = g_string_truncate(host, host_end - host->str);
 
-   return g_string_free(g_steal_pointer (&host), FALSE);
+   return g_string_free(g_steal_pointer(&host), FALSE);
 }
 
 /**
@@ -124,9 +124,10 @@ _au_ensure_urls_in_netrc(const gchar *netrc_path,
       gint saved_errno = errno;
 
       if (errno == ENOENT) {
-         g_debug ("There isn't a netrc file");
+         g_debug("There isn't a netrc file");
       } else {
-         return au_throw_error(error, "Failed to open the netrc file: %s", g_strerror(saved_errno));
+         return au_throw_error(error, "Failed to open the netrc file: %s",
+                               g_strerror(saved_errno));
       }
    }
 
@@ -157,37 +158,35 @@ _au_ensure_urls_in_netrc(const gchar *netrc_path,
             if (!g_str_equal(parts[2], login)) {
                g_debug("The login information for %s has been updated", parts[1]);
                netrc_updated = TRUE;
-               g_string_append_printf(updated_netrc, "machine %s %s\n",
-                                    parts[1], login);
+               g_string_append_printf(updated_netrc, "machine %s %s\n", parts[1], login);
                continue;
             }
          }
 
          /* This entry was either not edited or only available in the netrc,
-         * keeping it as-is */
+          * keeping it as-is */
          g_string_append(updated_netrc, line);
          g_string_append_c(updated_netrc, '\n');
       }
    }
 
    /* Sort the hosts to get consistent values in output */
-   new_hosts = g_list_sort (g_hash_table_get_keys (hosts), (GCompareFunc) strcmp);
+   new_hosts = g_list_sort(g_hash_table_get_keys(hosts), (GCompareFunc)strcmp);
    for (const GList *u = new_hosts; u != NULL; u = u->next) {
       netrc_updated = TRUE;
       g_string_append_printf(updated_netrc, "machine %s %s\n", (gchar *)u->data, login);
    }
 
-
    if (netrc_updated) {
       g_debug("Updating the netrc file...");
       if (!g_file_set_contents_full(netrc_path, updated_netrc->str, updated_netrc->len,
                                     G_FILE_SET_CONTENTS_CONSISTENT, 0600, error)) {
-         g_clear_pointer (&fp, fclose);
+         g_clear_pointer(&fp, fclose);
          return FALSE;
       }
    }
 
-   g_clear_pointer (&fp, fclose);
+   g_clear_pointer(&fp, fclose);
    return TRUE;
 }
 
@@ -216,7 +215,7 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
    JsonObject *store_options = NULL;
    const gchar *store_options_literal = "store-options";
    gboolean updated = FALSE;
-   g_autoptr(GString) url_entry = g_string_new (NULL);
+   g_autoptr(GString) url_entry = g_string_new(NULL);
    gsize i;
 
    g_return_val_if_fail(desync_conf_path != NULL, FALSE);
@@ -238,10 +237,10 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
 
    root = json_parser_get_root(parser);
 
-   if (root == NULL || !JSON_NODE_HOLDS_OBJECT (root)) {
+   if (root == NULL || !JSON_NODE_HOLDS_OBJECT(root)) {
       if (error != NULL)
-         g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                      "Expected to find a JSON object in \"%s\"", desync_conf_path);
+         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                     "Expected to find a JSON object in \"%s\"", desync_conf_path);
       return FALSE;
    }
 
@@ -255,25 +254,23 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
    /* Use three `*` because the the first element is the image name, usually
     * "steamdeck", then the version and finally the "castr" directory.
     * We only add two `*` here, because the third will be added in the for loop. */
-   g_string_printf (url_entry,
-                    "%s%s%s",
-                    url,
-                    g_str_has_suffix (url, "/") ? "" : "/",
-                    "*/*/");
+   g_string_printf(url_entry, "%s%s%s", url, g_str_has_suffix(url, "/") ? "" : "/",
+                   "*/*/");
 
    /* The server isn't too strict on the paths used. In order to cover any reasonable
     * additional sub directories that the server might add in the future, we iterate
     * a couple additional times to reach up to five `*` in the URL. */
    for (i = 0; i < 3; i++) {
-      g_string_append (url_entry, "*/");
+      g_string_append(url_entry, "*/");
 
-      if (json_object_has_member (store_options, url_entry->str)) {
+      if (json_object_has_member(store_options, url_entry->str)) {
          const gchar *old_auth = NULL;
          JsonObject *url_object = NULL;
 
          url_object = json_object_get_object_member(store_options, url_entry->str);
 
-         old_auth = json_object_get_string_member_with_default(url_object, "http-auth", NULL);
+         old_auth =
+            json_object_get_string_member_with_default(url_object, "http-auth", NULL);
 
          if (g_strcmp0(old_auth, auth_encoded) != 0) {
             g_debug("The auth token for %s has been updated", url_entry->str);
@@ -283,14 +280,15 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
          }
       }
 
-      if (!json_object_has_member (store_options, url_entry->str)) {
+      if (!json_object_has_member(store_options, url_entry->str)) {
          g_autoptr(JsonObject) url_object = json_object_new();
 
          json_object_set_string_member(url_object, "http-auth", auth_encoded);
          /* Set the error retry base interval to 1 second to let Desync wait a sane
-         * amount of time before re-trying a failed HTTP request */
+          * amount of time before re-trying a failed HTTP request */
          json_object_set_int_member(url_object, "error-retry-base-interval", 1000000000);
-         json_object_set_object_member(store_options, url_entry->str, g_steal_pointer(&url_object));
+         json_object_set_object_member(store_options, url_entry->str,
+                                       g_steal_pointer(&url_object));
 
          updated = TRUE;
       }
@@ -302,9 +300,9 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
 
       g_debug("Updating the Desync config file...");
       generator = json_generator_new();
-      json_generator_set_root (generator, root);
-      json_generator_set_pretty (generator, TRUE);
-      json_output = json_generator_to_data (generator, NULL);
+      json_generator_set_root(generator, root);
+      json_generator_set_pretty(generator, TRUE);
+      json_output = json_generator_to_data(generator, NULL);
 
       if (!g_file_set_contents_full(desync_conf_path, json_output, -1,
                                     G_FILE_SET_CONTENTS_CONSISTENT, 0600, error))

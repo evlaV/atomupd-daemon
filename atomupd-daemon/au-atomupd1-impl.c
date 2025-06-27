@@ -1104,9 +1104,7 @@ _au_parse_candidates(JsonNode *json_node,
       G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE("a{sa{sv}}"));
    /* We expect the update candidates to be under the "minor" key for legacy reasons */
    const gchar *type_string = "minor";
-   g_autofree gchar *
-      requires
-   = NULL;
+   g_autofree gchar *requires = NULL;
    JsonObject *json_object = NULL; /* borrowed */
    JsonObject *sub_obj = NULL;     /* borrowed */
    JsonNode *sub_node = NULL;      /* borrowed */

@@ -277,9 +277,7 @@ _check_available_updates(GVariantIter *available_iter,
       g_autoptr(GVariant) version = NULL;
       g_autoptr(GVariant) variant = NULL;
       g_autoptr(GVariant) estimated_size = NULL;
-      g_autoptr(GVariant)
-         requires
-      = NULL;
+      g_autoptr(GVariant) requires = NULL;
       const gchar *requires_str = NULL;
       const UpdatesTest *expected_update = &updates_available[i];
 
@@ -296,9 +294,7 @@ _check_available_updates(GVariantIter *available_iter,
                        g_variant_get_uint64(estimated_size));
 
       requires = g_variant_lookup_value(values, "requires", type_string);
-      requires_str =
-         requires ==
-                     NULL ? NULL : g_variant_get_string(requires, NULL);
+      requires_str = requires == NULL ? NULL : g_variant_get_string(requires, NULL);
       g_assert_cmpstr(expected_update->requires_buildid, ==, requires_str);
    }
    g_assert_cmpstr(updates_available[i].buildid, ==, NULL);
@@ -1822,10 +1818,10 @@ test_preferences(Fixture *f, gconstpointer context)
          g_key_file_save_to_file(preferences, preferences_path, &error);
          g_assert_no_error(error);
 
-      g_autofree gchar *content = NULL;
-      g_file_get_contents(preferences_path, &content, NULL, &error);
-      g_assert_no_error(error);
-      g_debug("Preferences Content during setup (%s):\n%s", preferences_path, content);
+         g_autofree gchar *content = NULL;
+         g_file_get_contents(preferences_path, &content, NULL, &error);
+         g_assert_no_error(error);
+         g_debug("Preferences Content during setup (%s):\n%s", preferences_path, content);
 
       } else {
          g_unlink(preferences_path);
