@@ -26,6 +26,7 @@
 #pragma once
 
 #include <curl/curl.h>
+#include <gio/gio.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -48,6 +49,15 @@ typedef enum {
    AU_UPDATE_STATUS_CANCELLED = 5,
 } AuUpdateStatus;
 
+typedef struct {
+   /* Path where to store the downloaded file */
+   gchar *target;
+   /* URL that needs to be downloaded */
+   gchar *url;
+   /* Eventual HTTP/HTTPS proxy to use */
+   gchar *proxy;
+} DownloadData;
+
 extern guint ATOMUPD_VERSION;
 
 extern const gchar *AU_DEFAULT_CONFIG;
@@ -59,6 +69,10 @@ extern const gchar *AU_REBOOT_FOR_UPDATE;
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(CURL, curl_easy_cleanup)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(CURLU, curl_url_cleanup)
+
+void download_data_free(DownloadData *data);
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(DownloadData, download_data_free)
 
 gchar *_au_get_host_from_url(const gchar *url);
 
@@ -73,10 +87,10 @@ gboolean _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
                                        const gchar *auth_encoded,
                                        GError **error);
 
-gboolean _au_download_file(const gchar *target,
-                           const gchar *url,
-                           const gchar *proxy,
-                           GError **error);
+void _au_download_thread_func(GTask *task,
+                              gpointer source_object,
+                              gpointer task_data,
+                              GCancellable *cancellable);
 
 gboolean au_throw_error(GError **error,
                         const char *format, ...) G_GNUC_PRINTF(2, 3);

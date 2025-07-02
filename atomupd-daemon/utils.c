@@ -312,67 +312,87 @@ _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
    return TRUE;
 }
 
+void
+download_data_free(DownloadData *data)
+{
+   if (data == NULL)
+      return;
+
+   g_free(data->target);
+   g_free(data->url);
+   g_free(data->proxy);
+   g_free(data);
+}
+
 /*
- * _au_download_file:
- * @target: (not nullable): Path where to store the downloaded file
- * @url: (not nullable): URL that needs to be downloaded
- * @proxy: Eventual HTTP/HTTPS proxy to use
- * @error: Used to raise an error on failure
+ * _au_download_thread_func:
+ * @task_data: (not nullable): DownloadData pointer
  *
- * Downloads the @url to the provided @target. If @target already exists, it will be
- * replaced. During the download, the temporary file is stored at @target with the `.part`
- * suffix.
- *
- * Returns: %TRUE on success
+ * Downloads the @task_data->url to the provided @task_data->target. If @task_data->target
+ * already exists, it will be replaced. During the download, the temporary file is stored
+ * at @task_data->target with the `.part` suffix.
  */
-gboolean
-_au_download_file(const gchar *target, const gchar *url, const gchar *proxy, GError **error)
+void
+_au_download_thread_func(GTask *task,
+                         gpointer source_object,
+                         gpointer task_data,
+                         GCancellable *cancellable)
 {
    g_autofree gchar *tmp_file = NULL;
    g_autoptr(CURL) curl = NULL;
    CURLcode r;
    FILE *fp = NULL;
+   g_autoptr(GError) error = NULL;
+   const DownloadData *data = task_data;
 
-   g_return_val_if_fail(target != NULL, FALSE);
-   g_return_val_if_fail(url != NULL, FALSE);
-   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+   g_return_if_fail(data != NULL);
+   g_return_if_fail(data->target != NULL);
+   g_return_if_fail(data->url != NULL);
 
-   tmp_file = g_strdup_printf("%s.part", target);
+   tmp_file = g_strdup_printf("%s.part", data->target);
 
    curl = curl_easy_init();
-   if (curl == NULL)
-      return au_throw_error(error, "Libcurl failed to initialize");
+   if (curl == NULL) {
+      g_set_error(&error, G_IO_ERROR, G_IO_ERROR_FAILED, "Libcurl failed to initialize");
+      return g_task_return_error(task, g_steal_pointer(&error));
+   }
 
    fp = fopen(tmp_file, "wb");
-   if (fp == NULL)
-      return au_throw_error(error, "Failed opening the temporary file %s", tmp_file);
+   if (fp == NULL) {
+      g_set_error(&error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                  "Failed opening the temporary file %s", tmp_file);
+      return g_task_return_error(task, g_steal_pointer(&error));
+   }
 
-   curl_easy_setopt(curl, CURLOPT_URL, url);
+   curl_easy_setopt(curl, CURLOPT_URL, data->url);
    curl_easy_setopt(curl, CURLOPT_NETRC, CURL_NETRC_OPTIONAL);
    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-   /* We are aggressive with the timeout because at the moment this is only used to
-    * download very small text files. Additionally, if the download fails, it is not
-    * a fatal error and we can continue regardless. */
-   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+   /* We don't have to be too aggressive with the timeout because the download
+    * is done out of band and we are not blocking anything in the meantime. */
+   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
 
-   if (proxy != NULL)
-      curl_easy_setopt(curl, CURLOPT_PROXY, proxy);
+   if (data->proxy != NULL)
+      curl_easy_setopt(curl, CURLOPT_PROXY, data->proxy);
 
    r = curl_easy_perform(curl);
    fclose(fp);
 
    if (r != CURLE_OK) {
       g_unlink(tmp_file);
-      return au_throw_error(error, "The download from '%s' failed", url);
+      g_set_error(&error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                  "The download from '%s' failed", data->url);
+      return g_task_return_error(task, g_steal_pointer(&error));
    }
 
-   if (g_rename(tmp_file, target) != 0) {
+   if (g_rename(tmp_file, data->target) != 0) {
       g_unlink(tmp_file);
-      return au_throw_error(error, "Failed to move the temporary file to '%s'", target);
+      g_set_error(&error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                  "Failed to move the temporary file to '%s'", data->target);
+      return g_task_return_error(task, g_steal_pointer(&error));
    }
 
-   return TRUE;
+   g_task_return_boolean(task, TRUE);
 }

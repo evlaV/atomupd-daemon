@@ -837,6 +837,9 @@ test_dev_config(Fixture *f, gconstpointer context)
    daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
                                                f->test_envp, FALSE);
 
+   /* Wait for the remote-info file to be downloaded off band */
+   g_usleep(2 * G_USEC_PER_SEC);
+
    atomupd_properties = _get_atomupd_properties(bus);
    g_assert_cmpstrv(atomupd_properties->known_variants, client_dev_variants);
    g_assert_cmpstrv(atomupd_properties->known_branches, client_dev_branches);
@@ -873,6 +876,9 @@ test_dev_config(Fixture *f, gconstpointer context)
 
    daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
                                                f->test_envp, FALSE);
+
+   /* Wait for the remote-info file to be downloaded off band */
+   g_usleep(2 * G_USEC_PER_SEC);
 
    atomupd_properties = _get_atomupd_properties(bus);
    /* We expect the canonical file plus the remote-info to be picked up as a fallback */
@@ -1063,6 +1069,8 @@ test_remote_config(Fixture *f, gconstpointer context)
 
    /* This time we expect the remote-info file to be downloaded */
    _call_check_for_updates(bus, NULL, NULL);
+   /* Wait for the remote-info file to be downloaded off band */
+   g_usleep(2 * G_USEC_PER_SEC);
    g_assert_true(g_file_test(f->remote_info_path, G_FILE_TEST_EXISTS));
 
    atomupd_properties = _get_atomupd_properties(bus);

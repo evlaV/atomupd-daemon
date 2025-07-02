@@ -85,6 +85,7 @@ struct _AuAtomupd1Impl {
    GDataInputStream *start_update_stdout_stream;
    gint64 buildid_date;
    gint64 buildid_increment;
+   gboolean info_dl_in_progress;
 };
 
 typedef struct {
@@ -1515,7 +1516,36 @@ _au_get_http_proxy_address_and_port(AuAtomupd1 *object)
 }
 
 static gboolean
-_au_download_remote_info(const AuAtomupd1Impl *atomupd, GError **error)
+_au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error);
+
+static void
+_au_remote_info_done(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+   g_autoptr(AuAtomupd1) object = user_data;
+   AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
+   g_autoptr(GError) error = NULL;
+
+   self->info_dl_in_progress = FALSE;
+
+   if (!g_task_propagate_boolean(G_TASK(res), &error)) {
+      g_info("An error occurred while downloading the remote info: %s", error->message);
+      return;
+   }
+
+   g_debug("Remote info file successfully downloaded");
+
+   if (!_au_select_and_load_configuration(self, &error)) {
+      g_warning("An error occurred while reloading the configuration, please fix your "
+                "conf file and retry: %s",
+                error->message);
+      return;
+   }
+
+   g_debug("Reloaded the config to include the remote info");
+}
+
+static gboolean
+_au_download_remote_info(AuAtomupd1Impl *atomupd, GError **error)
 {
    g_autofree gchar *meta_url = NULL;
    g_autofree gchar *remote_info_url = NULL;
@@ -1527,10 +1557,17 @@ _au_download_remote_info(const AuAtomupd1Impl *atomupd, GError **error)
    JsonNode *json_node = NULL;     /* borrowed */
    JsonObject *json_object = NULL; /* borrowed */
    g_autoptr(JsonParser) parser = NULL;
+   g_autoptr(GTask) task = NULL;
+   g_autoptr(DownloadData) data = g_new0(DownloadData, 1);
 
    g_return_val_if_fail(atomupd != NULL, FALSE);
    g_return_val_if_fail(atomupd->manifest_path != NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   if (atomupd->info_dl_in_progress) {
+      g_debug("There is already a download in progress for the remote info file");
+      return TRUE;
+   }
 
    parser = json_parser_new();
    if (!json_parser_load_from_file(parser, atomupd->manifest_path, error))
@@ -1563,14 +1600,18 @@ _au_download_remote_info(const AuAtomupd1Impl *atomupd, GError **error)
 
    http_proxy = _au_get_http_proxy_address_and_port((AuAtomupd1 *)atomupd);
 
-   if (!_au_download_file(_au_get_remote_info_path(), remote_info_url, http_proxy, error))
-      return FALSE;
+   data->target = g_strdup(_au_get_remote_info_path());
+   data->url = g_steal_pointer(&remote_info_url);
+   data->proxy = g_steal_pointer(&http_proxy);
+
+   atomupd->info_dl_in_progress = TRUE;
+
+   task = g_task_new(NULL, NULL, _au_remote_info_done, g_object_ref(atomupd));
+   g_task_set_task_data(task, g_steal_pointer(&data), (GDestroyNotify)download_data_free);
+   g_task_run_in_thread(task, _au_download_thread_func);
 
    return TRUE;
 }
-
-static gboolean
-_au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error);
 
 static void
 au_check_for_updates_authorized_cb(AuAtomupd1 *object,
@@ -1597,19 +1638,7 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
 
    if (!g_file_test(_au_get_remote_info_path(), G_FILE_TEST_EXISTS)) {
       g_debug("We don't have a remote info file, trying to download it again...");
-      if (_au_download_remote_info(self, &error)) {
-         if (!_au_select_and_load_configuration(self, &error)) {
-            g_dbus_method_invocation_return_error(
-               g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-               "An error occurred while reloading the configuration, please fix your "
-               "conf file and retry: %s",
-               error->message);
-            return;
-         }
-      } else {
-         g_debug("Failed to download the remote info: %s", error->message);
-         g_clear_error(&error);
-      }
+      _au_download_remote_info(self, NULL);
    }
 
    g_variant_iter_init(&iter, arg_options);
@@ -3003,12 +3032,6 @@ au_atomupd1_impl_new(const gchar *config_directory,
    if (!_au_parse_manifest(atomupd, error))
       return NULL;
 
-   if (!_au_download_remote_info(atomupd, &local_error)) {
-      g_info("Failed to download the remote info: %s", local_error->message);
-      g_info("Continuing anyway...");
-      g_clear_error(&local_error);
-   }
-
    if (!_au_select_and_load_configuration(atomupd, error))
       return NULL;
 
@@ -3127,6 +3150,15 @@ au_atomupd1_impl_new(const gchar *config_directory,
    atomupd->debug_controller_id =
       g_signal_connect(atomupd->debug_controller, "authorize",
                        G_CALLBACK(debug_controller_authorize_cb), NULL);
+
+   /* Download the remote info file at the very end, after we know we were able
+    * to successfully instantiate the atomupd. This download will happen in a
+    * separate GTask without blocking the main thread. */
+   if (!_au_download_remote_info(atomupd, &local_error)) {
+      g_info("Failed to download the remote info: %s", local_error->message);
+      g_info("Continuing anyway...");
+      g_clear_error(&local_error);
+   }
 
    return (AuAtomupd1 *)atomupd;
 }
