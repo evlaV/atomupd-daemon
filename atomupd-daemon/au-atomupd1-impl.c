@@ -2289,6 +2289,47 @@ _is_buildid_valid(const gchar *buildid, gint64 *date_out, gint64 *inc_out, GErro
    return TRUE;
 }
 
+static gboolean
+_au_spawn_update_helper(AuAtomupd1 *object, const GPtrArray *argv, GError **error)
+{
+   AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
+   g_autofree gchar *http_proxy = NULL;
+   g_auto(GStrv) launch_environ = g_get_environ();
+   g_autoptr(GInputStream) unix_stream = NULL;
+   gint client_stdout;
+
+   http_proxy = _au_get_http_proxy_address_and_port(object);
+   if (http_proxy != NULL) {
+      launch_environ = g_environ_setenv(launch_environ, "https_proxy", http_proxy, TRUE);
+      launch_environ = g_environ_setenv(launch_environ, "http_proxy", http_proxy, TRUE);
+   }
+
+   au_start_update_clear(self);
+   if (!g_spawn_async_with_pipes(NULL, /* working directory */
+                                 (gchar **)argv->pdata, launch_environ,
+                                 G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
+                                 NULL,                     /* child setup */
+                                 NULL,                     /* user data */
+                                 &self->install_pid, NULL, /* standard input */
+                                 &client_stdout, NULL,     /* standard error */
+                                 error)) {
+
+      return FALSE;
+   }
+
+   unix_stream = g_unix_input_stream_new(client_stdout, TRUE);
+   self->start_update_stdout_stream = g_data_input_stream_new(unix_stream);
+
+   g_data_input_stream_read_line_async(self->start_update_stdout_stream,
+                                       G_PRIORITY_DEFAULT, NULL,
+                                       _au_client_stdout_update_cb, g_object_ref(object));
+
+   self->install_event_source = g_child_watch_add(
+      self->install_pid, (GChildWatchFunc)child_watch_cb, g_object_ref(object));
+
+   return TRUE;
+}
+
 static void
 au_start_update_authorized_cb(AuAtomupd1 *object,
                               GDBusMethodInvocation *invocation,
@@ -2297,16 +2338,12 @@ au_start_update_authorized_cb(AuAtomupd1 *object,
    const gchar *arg_id = arg_id_pointer;
    AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
    g_autoptr(GPtrArray) argv = NULL;
-   g_autofree gchar *http_proxy = NULL;
-   g_auto(GStrv) launch_environ = g_get_environ();
    g_autoptr(GFileIOStream) stream = NULL;
-   g_autoptr(GInputStream) unix_stream = NULL;
    GVariant *updates_available = NULL; /* borrowed */
    g_autoptr(GVariantIter) updates_iter = NULL;
    gboolean found_buildid = FALSE;
    g_autoptr(GError) error = NULL;
    AuUpdateStatus current_status;
-   gint client_stdout;
 
    current_status = au_atomupd1_get_update_status(object);
    if (current_status == AU_UPDATE_STATUS_IN_PROGRESS ||
@@ -2355,12 +2392,6 @@ au_start_update_authorized_cb(AuAtomupd1 *object,
       au_atomupd1_set_update_version(object, NULL);
    }
 
-   http_proxy = _au_get_http_proxy_address_and_port(object);
-   if (http_proxy != NULL) {
-      launch_environ = g_environ_setenv(launch_environ, "https_proxy", http_proxy, TRUE);
-      launch_environ = g_environ_setenv(launch_environ, "http_proxy", http_proxy, TRUE);
-   }
-
    /* Create a copy of the json file because we will pass that to the
     * 'steamos-atomupd-client' helper and, if in the meantime we check again
     * for updates, we may replace that file with a newer version. */
@@ -2400,30 +2431,12 @@ au_start_update_authorized_cb(AuAtomupd1 *object,
 
    g_ptr_array_add(argv, NULL);
 
-   au_start_update_clear(self);
-   if (!g_spawn_async_with_pipes(NULL, /* working directory */
-                                 (gchar **)argv->pdata, launch_environ,
-                                 G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
-                                 NULL,                     /* child setup */
-                                 NULL,                     /* user data */
-                                 &self->install_pid, NULL, /* standard input */
-                                 &client_stdout, NULL,     /* standard error */
-                                 &error)) {
+   if (!_au_spawn_update_helper(object, argv, &error)) {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "Failed to launch the \"steamos-atomupd-client\" helper: %s", error->message);
       return;
    }
-
-   unix_stream = g_unix_input_stream_new(client_stdout, TRUE);
-   self->start_update_stdout_stream = g_data_input_stream_new(unix_stream);
-
-   g_data_input_stream_read_line_async(self->start_update_stdout_stream,
-                                       G_PRIORITY_DEFAULT, NULL,
-                                       _au_client_stdout_update_cb, g_object_ref(object));
-
-   self->install_event_source = g_child_watch_add(
-      self->install_pid, (GChildWatchFunc)child_watch_cb, g_object_ref(object));
 
    au_atomupd1_set_progress_percentage(object, 0);
    _au_atomupd1_set_update_status_and_error(object, AU_UPDATE_STATUS_IN_PROGRESS, NULL,
