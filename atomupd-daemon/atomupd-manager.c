@@ -474,7 +474,7 @@ check_updates(GOptionContext *context,
  * Launch an update and wait until it either completes or fails
  */
 static int
-launch_update(GOptionContext *context, GDBusConnection *bus, const gchar *update_id)
+launch_update(GDBusConnection *bus, const gchar *update_id)
 {
    g_autoptr(GDBusProxy) proxy = NULL;
    g_autoptr(GError) error = NULL;
@@ -482,11 +482,6 @@ launch_update(GOptionContext *context, GDBusConnection *bus, const gchar *update
    g_autoptr(sd_journal) journal = NULL;
    g_autoptr(GIOChannel) channel = NULL;
    gboolean edited_debug_value = FALSE;
-
-   if (update_id == NULL) {
-      g_print("It is not possible to apply an update without its ID\n\n");
-      return print_usage(context);
-   }
 
    main_loop = g_main_loop_new(NULL, FALSE);
 
@@ -546,6 +541,17 @@ cleanup:
    }
 
    return main_loop_result;
+}
+
+static int
+update_command(GOptionContext *context, GDBusConnection *bus, const gchar *update_id)
+{
+   if (update_id == NULL) {
+      g_print("It is not possible to apply an update without its ID\n\n");
+      return print_usage(context);
+   }
+
+   return launch_update(bus, update_id);
 }
 
 static int
@@ -819,7 +825,7 @@ static const LaunchCommands launch_commands[] = {
       .command = "update",
       .argument = "ID",
       .description = "Apply the update build ID",
-      .command_function = launch_update,
+      .command_function = update_command,
    },
 
    {
