@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2024 Collabora Ltd.
+ * Copyright © 2021-2025 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -2477,6 +2477,77 @@ au_atomupd1_impl_handle_start_update(AuAtomupd1 *object,
 }
 
 static void
+au_start_custom_update_authorized_cb(AuAtomupd1 *object,
+                                     GDBusMethodInvocation *invocation,
+                                     gpointer arg_options_pointer)
+{
+   GVariant *arg_options = arg_options_pointer;
+   AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
+   g_autoptr(GPtrArray) argv = NULL;
+   g_autoptr(GError) error = NULL;
+   AuUpdateStatus current_status;
+   const gchar *url = NULL;
+
+   current_status = au_atomupd1_get_update_status(object);
+   if (current_status == AU_UPDATE_STATUS_IN_PROGRESS ||
+       current_status == AU_UPDATE_STATUS_PAUSED) {
+      g_dbus_method_invocation_return_error(g_steal_pointer(&invocation), G_DBUS_ERROR,
+                                            G_DBUS_ERROR_FAILED,
+                                            "Failed to start a new update because one "
+                                            "is already in progress");
+      return;
+   }
+
+   if (!g_variant_lookup(arg_options, "url", "&s", &url) || url == NULL) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS,
+         "The 'url' option is mandatory and must be a string");
+      return;
+   }
+
+   /* For a custom update, buildid and version are unknown */
+   au_atomupd1_set_update_build_id(object, NULL);
+   au_atomupd1_set_update_version(object, NULL);
+
+   argv = g_ptr_array_new_with_free_func(g_free);
+   g_ptr_array_add(argv, g_strdup("steamos-atomupd-client"));
+   g_ptr_array_add(argv, g_strdup("--config"));
+   g_ptr_array_add(argv, g_strdup(self->config_path));
+   g_ptr_array_add(argv, g_strdup("--update-from-url"));
+   g_ptr_array_add(argv, g_strdup(url));
+
+   if (g_debug_controller_get_debug_enabled(self->debug_controller))
+      g_ptr_array_add(argv, g_strdup("--debug"));
+
+   g_ptr_array_add(argv, NULL);
+
+   if (!_au_spawn_update_helper(object, argv, &error)) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "Failed to launch the \"steamos-atomupd-client\" helper: %s", error->message);
+      return;
+   }
+
+   au_atomupd1_set_progress_percentage(object, 0);
+   _au_atomupd1_set_update_status_and_error(object, AU_UPDATE_STATUS_IN_PROGRESS, NULL,
+                                            NULL);
+
+   au_atomupd1_complete_start_custom_update(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_start_custom_update(AuAtomupd1 *object,
+                                            GDBusMethodInvocation *invocation,
+                                            GVariant *arg_options)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.start-custom-upgrade",
+                  au_start_custom_update_authorized_cb, invocation,
+                  g_variant_ref(arg_options), (GDestroyNotify)g_variant_unref);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static void
 au_resume_update_authorized_cb(AuAtomupd1 *object,
                                GDBusMethodInvocation *invocation,
                                gpointer data_pointer)
@@ -2903,6 +2974,7 @@ init_atomupd1_iface(AuAtomupd1Iface *iface)
    iface->handle_reload_configuration = au_atomupd1_impl_handle_reload_configuration;
    iface->handle_resume_update = au_atomupd1_impl_handle_resume_update;
    iface->handle_start_update = au_atomupd1_impl_handle_start_update;
+   iface->handle_start_custom_update = au_atomupd1_impl_handle_start_custom_update;
    iface->handle_switch_to_variant = au_atomupd1_impl_handle_switch_to_variant;
    iface->handle_switch_to_branch = au_atomupd1_impl_handle_switch_to_branch;
    iface->handle_enable_http_proxy = au_atomupd1_impl_handle_enable_http_proxy;

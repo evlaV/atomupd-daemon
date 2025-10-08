@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2024 Collabora Ltd.
+ * Copyright © 2022-2025 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -1305,8 +1305,29 @@ test_progress_default(Fixture *f, gconstpointer context)
    /* When we start an update, even if RAUC didn't print any progress yet, we
     * expect the progress percentage to be set by default to zero */
    g_assert_true(progress == 0);
+   g_clear_pointer(&reply, g_variant_unref);
 
    _send_atomupd_message_with_null_reply(bus, "CancelUpdate", NULL, NULL);
+
+   g_debug("Starting a custom update that is expected to complete in 1 second");
+   {
+      GVariantBuilder builder;
+      GVariant *params; /* floating */
+
+      g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+      g_variant_builder_add(&builder, "{sv}", "url",
+                            g_variant_new_string("https://example.com/update.raucb"));
+      params = g_variant_builder_end(&builder);
+
+      _send_atomupd_message_with_null_reply(bus, "StartCustomUpdate", "(@a{sv})", params);
+      /* Wait for 2x as much to ensure it really finished */
+      g_usleep(2 * G_USEC_PER_SEC);
+
+      reply = _get_atomupd_property(bus, "ProgressPercentage");
+      g_variant_get(reply, "d", &progress);
+      g_assert_true(progress == 100);
+   }
+
    au_tests_stop_process(daemon_proc);
 }
 
@@ -1968,6 +1989,23 @@ test_unauthorized(Fixture *f, gconstpointer context)
 
       reply = _send_atomupd_message(bus, "EnableHttpProxy", "(sia{sv})", "192.168.10.1",
                                     1234, NULL);
+      g_variant_get(reply, "(s)", &reply_str);
+
+      g_assert_cmpstr(reply_str, ==, expected_reply);
+   }
+
+   {
+      GVariantBuilder builder;
+      GVariant *params; /* floating */
+      g_autoptr(GVariant) reply = NULL;
+      g_autofree gchar *reply_str = NULL;
+
+      g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+      g_variant_builder_add(&builder, "{sv}", "url",
+                            g_variant_new_string("https://example.com/os.raucb"));
+      params = g_variant_builder_end(&builder);
+
+      reply = _send_atomupd_message(bus, "StartCustomUpdate", "(@a{sv})", params);
       g_variant_get(reply, "(s)", &reply_str);
 
       g_assert_cmpstr(reply_str, ==, expected_reply);

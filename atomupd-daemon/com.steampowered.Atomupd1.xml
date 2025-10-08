@@ -342,6 +342,18 @@
     </method>
 
     <!--
+        StartCustomUpdate:
+        @options: Vardict with update options. Currently, the available options are:
+          - 'url': which allows you to specify the direct URL to the update bundle
+
+        Start to apply a custom update, following the provided @options.
+    -->
+    <method name="StartCustomUpdate">
+      <arg type="a{sv}" name="options" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QVariantMap"/>
+    </method>
+
+    <!--
         PauseUpdate:
 
         Pauses the update that is currently in progress, if any.

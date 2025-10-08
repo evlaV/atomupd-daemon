@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022 Collabora Ltd.
+ * Copyright © 2022-2025 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -38,6 +38,7 @@ static volatile sig_atomic_t stopped = FALSE;
 static gchar *opt_config = NULL;
 static gchar *opt_manifest = NULL;
 static gchar *opt_update_file = NULL;
+static gchar *opt_update_from_url = NULL;
 static gchar *opt_update_version = NULL;
 static gchar *opt_variant = NULL;
 static gchar *opt_branch = NULL;
@@ -53,6 +54,8 @@ static GOptionEntry options[] = {
      NULL, "PATH" },
    { "update-file", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_FILENAME, &opt_update_file,
      NULL, "PATH" },
+   { "update-from-url", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_update_from_url,
+     NULL, "URL" },
    { "update-version", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_update_version,
      NULL, NULL },
    { "variant", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_variant, NULL, NULL },
@@ -116,12 +119,12 @@ main(int argc, char **argv)
       return EXIT_SUCCESS;
    }
 
-   if (opt_update_version == NULL)
+   if (opt_update_version == NULL && opt_update_from_url == NULL)
       return EXIT_FAILURE;
 
    setbuf(stdout, NULL);
 
-   if (g_str_equal(opt_update_version, MOCK_SUCCESS)) {
+   if (g_strcmp0(opt_update_version, MOCK_SUCCESS) == 0) {
       /* Simulates an update that after 1.5 seconds successfully completes */
       printf("0.00%%\n");
       g_usleep(delay);
@@ -132,7 +135,7 @@ main(int argc, char **argv)
       printf("100%%\n");
 
       return EXIT_SUCCESS;
-   } else if (g_str_equal(opt_update_version, MOCK_SLOW)) {
+   } else if (g_strcmp0(opt_update_version, MOCK_SLOW) == 0) {
       /* Simulates an update that after 8 seconds successfully completes */
       printf("0.00%%\n");
       g_usleep(delay);
@@ -143,7 +146,7 @@ main(int argc, char **argv)
       printf("100%%\n");
 
       return EXIT_SUCCESS;
-   } else if (g_str_equal(opt_update_version, MOCK_INFINITE)) {
+   } else if (g_strcmp0(opt_update_version, MOCK_INFINITE) == 0) {
       /* Simulate a very long update. To make it consistent for the testing
        * it always prints the same progress percentage and estimation. */
       while (!stopped) {
@@ -152,12 +155,21 @@ main(int argc, char **argv)
       }
       printf("17.50%% 05m50s\n");
       return EXIT_SUCCESS;
-   } else if (g_str_equal(opt_update_version, MOCK_STUCK)) {
+   } else if (g_strcmp0(opt_update_version, MOCK_STUCK) == 0) {
       /* Simulate an update that takes a very long time to start.
        * To make it consistent for the testing, we never print a single
        * progress update */
       while (!stopped)
          g_usleep(delay);
+
+      return EXIT_SUCCESS;
+   } else if (opt_update_from_url != NULL) {
+      /* Simulates an update that successfully completes */
+      printf("0.00%%\n");
+      g_usleep(delay);
+      printf("52.10%% 00m10s\n");
+      g_usleep(delay);
+      printf("100%%\n");
 
       return EXIT_SUCCESS;
    }
