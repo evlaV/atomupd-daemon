@@ -328,6 +328,45 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    au_tests_stop_process(daemon_proc);
 }
 
+static void
+test_custom_update(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                               f->test_envp, FALSE);
+
+   {
+      g_autofree gchar *output = NULL;
+      g_autofree gchar *update_status = NULL;
+
+      g_debug(
+         "Starting a custom update from URL that is expected to complete in 1.5 seconds");
+      output = _au_execute_manager("custom-update", "https://example.com/os.raucb", FALSE,
+                                   f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "Update completed"));
+      update_status =
+         _au_execute_manager("get-update-status", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(update_status, ==, "successful\n");
+   }
+
+   {
+      /* Calling "atomupd-manager custom-update" without a URL should result in the usage
+       * helper being printed */
+      _au_execute_manager("custom-update", NULL, FALSE, f->test_envp, &error);
+      g_assert_error(error, G_SPAWN_EXIT_ERROR, 64);
+   }
+
+   au_tests_stop_process(daemon_proc);
+}
+
 static gboolean
 get_daemon_debug_status(GDBusConnection *bus)
 {
@@ -623,6 +662,7 @@ main(int argc, char **argv)
 
    test_add("/manager/check_updates", test_check_updates);
    test_add("/manager/multiple_method_calls", test_multiple_method_calls);
+   test_add("/manager/custom_update", test_custom_update);
    test_add("/manager/verbose", test_verbose);
    test_add("/manager/dev_config", test_dev_config);
 

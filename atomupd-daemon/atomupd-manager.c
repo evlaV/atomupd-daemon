@@ -474,14 +474,16 @@ check_updates(GOptionContext *context,
  * Launch an update and wait until it either completes or fails
  */
 static int
-launch_update(GDBusConnection *bus, const gchar *update_id)
+launch_update(GDBusConnection *bus, const gchar *update_id, const gchar *update_url)
 {
    g_autoptr(GDBusProxy) proxy = NULL;
    g_autoptr(GError) error = NULL;
+   GVariant *body = NULL; /* floating */
    g_autoptr(GVariant) reply = NULL;
    g_autoptr(sd_journal) journal = NULL;
    g_autoptr(GIOChannel) channel = NULL;
    gboolean edited_debug_value = FALSE;
+   const gchar *method = NULL;
 
    main_loop = g_main_loop_new(NULL, FALSE);
 
@@ -520,8 +522,19 @@ launch_update(GDBusConnection *bus, const gchar *update_id)
       }
    }
 
-   if (!_send_atomupd_message(bus, "StartUpdate", g_variant_new("(s)", update_id), &reply,
-                              &error)) {
+   if (update_url != NULL) {
+      GVariantBuilder builder;
+
+      method = "StartCustomUpdate";
+      g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+      g_variant_builder_add(&builder, "{sv}", "url", g_variant_new_string(update_url));
+      body = g_variant_new("(@a{sv})", g_variant_builder_end(&builder));
+   } else {
+      method = "StartUpdate";
+      body = g_variant_new("(s)", update_id);
+   }
+
+   if (!_send_atomupd_message(bus, method, body, &reply, &error)) {
       g_print("An error occurred while starting the update: %s\n", error->message);
       main_loop_result = EXIT_FAILURE;
       goto cleanup;
@@ -551,7 +564,20 @@ update_command(GOptionContext *context, GDBusConnection *bus, const gchar *updat
       return print_usage(context);
    }
 
-   return launch_update(bus, update_id);
+   return launch_update(bus, update_id, NULL);
+}
+
+static int
+custom_update_command(GOptionContext *context,
+                      GDBusConnection *bus,
+                      const gchar *update_url)
+{
+   if (update_url == NULL) {
+      g_print("It is not possible to apply an update without its URL\n\n");
+      return print_usage(context);
+   }
+
+   return launch_update(bus, NULL, update_url);
 }
 
 static int
@@ -826,6 +852,13 @@ static const LaunchCommands launch_commands[] = {
       .argument = "ID",
       .description = "Apply the update build ID",
       .command_function = update_command,
+   },
+
+   {
+      .command = "custom-update",
+      .argument = "URL",
+      .description = "Apply a custom update from a specific RAUC bundle",
+      .command_function = custom_update_command,
    },
 
    {
