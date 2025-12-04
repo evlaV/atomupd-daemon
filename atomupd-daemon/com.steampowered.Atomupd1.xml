@@ -38,7 +38,7 @@
         Version:
 
         The version of this interface implemented by this object.
-        This file documents version 6 of the interface.
+        This file documents version 7 of the interface.
     -->
     <property name="Version" type="u" access="read"/>
 
@@ -269,6 +269,14 @@
     <property name="KnownBranches" type="as" access="read"/>
 
     <!--
+        KnownDevBranches:
+
+        Array of strings representing the known branches that may be signed
+        with the development keys.
+    -->
+    <property name="KnownDevBranches" type="as" access="read"/>
+
+    <!--
         ReloadConfiguration:
           @options: Reserved for future use
     -->
@@ -407,7 +415,7 @@
 
         Add development `pem` files to the list of trusted keys when installing an update.
         For example these may be required for new images from the `main` branch.
-        This option doesn't persist system updates.
+        This option doesn't persist across reboots.
     -->
     <method name="EnableDevKeys">
       <arg type="a{sv}" name="options" direction="in"/>

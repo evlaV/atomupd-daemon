@@ -40,7 +40,7 @@
 #include <json-glib/json-glib.h>
 
 /* The version of this interface, exposed in the "Version" property */
-guint ATOMUPD_VERSION = 6;
+guint ATOMUPD_VERSION = 7;
 
 const gchar *AU_CONFIG = "client.conf";
 const gchar *AU_DEV_CONFIG = "client-dev.conf";
@@ -767,6 +767,19 @@ _au_get_known_branches_from_config(GKeyFile *client_config, GError **error)
 }
 
 /*
+ * _au_get_known_dev_branches_from_config:
+ *
+ * Returns: (array zero-terminated=1) (transfer full) (nullable): The list
+ *  of known branches that require the development signing keys, or %NULL if
+ *  the configuration doesn't have the "BranchesDev" field.
+ */
+static gchar **
+_au_get_known_dev_branches_from_config(GKeyFile *client_config, GError **error)
+{
+   return _au_get_list_from_config(client_config, "BranchesDev", error);
+}
+
+/*
  * _au_get_meta_url_from_default_config:
  * @atomupd: (not nullable): An AuAtomupd1Impl object
  *
@@ -1445,6 +1458,45 @@ au_atomupd1_impl_handle_switch_to_variant(AuAtomupd1 *object,
 }
 
 static gboolean
+_au_enable_dev_keys(GError **error);
+
+static gboolean
+_au_disable_dev_keys(GError **error);
+
+static void
+_au_set_trusted_dev_keys(AuAtomupd1 *object)
+{
+   const gchar *const *known_dev_branches = NULL;
+   const gchar *branch = NULL;
+   g_autoptr(GError) local_error = NULL;
+
+   known_dev_branches = au_atomupd1_get_known_dev_branches(object);
+   if (known_dev_branches == NULL) {
+      g_debug("There are no known branches that require to trust the dev keys");
+      return;
+   }
+
+   branch = au_atomupd1_get_branch(object);
+
+   for (gsize i = 0; known_dev_branches[i] != NULL; i++) {
+      if (g_strcmp0(branch, known_dev_branches[i]) == 0) {
+         g_debug("Trusting the dev keys because of the selected branch %s", branch);
+         if (!_au_enable_dev_keys(&local_error)) {
+            /* We may not be able to install images signed with a dev key, but this
+             * is not a critical issue. */
+            g_warning("Unable to trust the dev keys: %s", local_error->message);
+         }
+         return;
+      }
+   }
+
+   g_debug("Images in branch %s shouldn't be signed with dev keys, disabling them...",
+           branch);
+   if (!_au_disable_dev_keys(&local_error))
+      g_warning("Unable to disable the dev keys: %s", local_error->message);
+}
+
+static gboolean
 _au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error)
 {
    const gchar *variant = au_atomupd1_get_variant(object);
@@ -1467,6 +1519,8 @@ _au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error)
 
    _au_clear_available_updates(object);
    au_atomupd1_set_branch(object, branch);
+
+   _au_set_trusted_dev_keys(object);
 
    return TRUE;
 }
@@ -2683,6 +2737,7 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
    g_autofree gchar *default_branch = NULL;
    g_auto(GStrv) known_variants = NULL;
    g_auto(GStrv) known_branches = NULL;
+   g_auto(GStrv) known_dev_branches = NULL;
    g_autoptr(GKeyFile) client_config = g_key_file_new();
    g_autoptr(GKeyFile) remote_info = g_key_file_new();
    g_autoptr(GError) local_error = NULL;
@@ -2721,6 +2776,14 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
       known_variants = _au_get_known_variants_from_config(remote_info, NULL);
       if (known_variants != NULL)
          g_debug("Using the list of known variants from the remote info file");
+
+      known_branches = _au_get_known_branches_from_config(remote_info, NULL);
+      if (known_branches != NULL)
+         g_debug("Using the list of known branches from the remote info file");
+
+      known_dev_branches = _au_get_known_dev_branches_from_config(remote_info, NULL);
+      if (known_dev_branches != NULL)
+         g_debug("Using the list of known dev branches from the remote info file");
    }
 
    if (known_variants == NULL) {
@@ -2744,12 +2807,6 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
    au_atomupd1_set_known_variants((AuAtomupd1 *)atomupd,
                                   (const gchar *const *)known_variants);
 
-   if (include_remote_info) {
-      known_branches = _au_get_known_branches_from_config(remote_info, NULL);
-      if (known_branches != NULL)
-         g_debug("Using the list of known branches from the remote info file");
-   }
-
    if (known_branches == NULL) {
       known_branches = _au_get_known_branches_from_config(client_config, error);
       if (known_branches == NULL)
@@ -2767,8 +2824,13 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
       known_branches[length + 1] = NULL;
    }
 
+   if (known_dev_branches == NULL)
+      known_dev_branches = _au_get_known_dev_branches_from_config(client_config, NULL);
+
    au_atomupd1_set_known_branches((AuAtomupd1 *)atomupd,
                                   (const gchar *const *)known_branches);
+   au_atomupd1_set_known_dev_branches((AuAtomupd1 *)atomupd,
+                                      (const gchar *const *)known_dev_branches);
 
    /* If the config has an HTTP auth, we need to ensure that netrc and Desync
     * have it too */
@@ -2807,6 +2869,8 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
                                          error))
          return FALSE;
    }
+
+   _au_set_trusted_dev_keys((AuAtomupd1 *)atomupd);
 
    return TRUE;
 }

@@ -75,6 +75,7 @@ typedef struct {
    gchar *current_build_id;
    GStrv known_variants;
    GStrv known_branches;
+   GStrv known_dev_branches;
 } AtomupdProperties;
 
 static void
@@ -89,6 +90,7 @@ atomupd_properties_free(AtomupdProperties *atomupd_properties)
    g_clear_pointer(&atomupd_properties->current_build_id, g_free);
    g_clear_pointer(&atomupd_properties->known_variants, g_strfreev);
    g_clear_pointer(&atomupd_properties->known_branches, g_strfreev);
+   g_clear_pointer(&atomupd_properties->known_dev_branches, g_strfreev);
 
    g_free(atomupd_properties);
 }
@@ -486,6 +488,7 @@ _get_atomupd_properties(GDBusConnection *bus)
    assert_variant("CurrentBuildID", "s", current_build_id);
    assert_variant("KnownVariants", "^as", known_variants);
    assert_variant("KnownBranches", "^as", known_branches);
+   assert_variant("KnownDevBranches", "^as", known_dev_branches);
 
    assert_variant_dict("UpdatesAvailable", available_iter, updates_available_n);
    assert_variant_dict("UpdatesAvailableLater", available_later_iter,
@@ -498,6 +501,7 @@ typedef struct {
    const gchar *config_name;
    const gchar *variants[5];
    const gchar *branches[10];
+   const gchar *branches_dev[5];
    const gchar *existing_info_file_content;
    const gchar *local_server_relative_path;
    gboolean fail;
@@ -513,6 +517,7 @@ static const PropertiesTest properties_test[] = {
       .config_name = "client.conf",
       .variants = { "steamdeck", NULL },
       .branches = { "stable", "rc", "beta", "bc", "main", NULL },
+      .branches_dev = { "main", "staging", NULL },
    },
 
    {
@@ -551,6 +556,7 @@ static const PropertiesTest properties_test[] = {
       /* The list of variants and branches are from the remote-info.conf file */
       .variants = { "steamdeck", "vanilla", NULL },
       .branches = { "stable", "rc", "beta", "bc", "preview", "pc", "main", NULL },
+      .branches_dev = { "pc", "main", "staging", NULL },
       .local_server_relative_path = "client_meta",
    },
 
@@ -558,6 +564,7 @@ static const PropertiesTest properties_test[] = {
       .config_name = "client.conf",
       .variants = { "steamdeck", NULL },
       .branches = { "stable", "rc", "beta", "bc", "main", NULL },
+      .branches_dev = { "main", "staging", NULL },
       /* Simulate a server that returns 404 when looking for the remote-info.conf file */
       .local_server_relative_path = "empty_meta",
    },
@@ -568,9 +575,10 @@ static const PropertiesTest properties_test[] = {
        * which is expected to replace our older local version */
       .variants = { "steamdeck", "vanilla", NULL },
       .branches = { "stable", "rc", "beta", "bc", "preview", "pc", "main", NULL },
+      .branches_dev = { "pc", "main", "staging", NULL },
       .local_server_relative_path = "client_meta",
       .existing_info_file_content =
-         "[Server]\nVariants = steamtest\nBranches = stable;nightly",
+         "[Server]\nVariants = steamtest\nBranches = stable;nightly\nBranchesDev = beta",
    },
 
    {
@@ -578,10 +586,12 @@ static const PropertiesTest properties_test[] = {
       /* We already have a remote-info.conf file, that is equal to the one on the server */
       .variants = { "steamdeck", "vanilla", NULL },
       .branches = { "stable", "rc", "beta", "bc", "preview", "pc", "main", NULL },
+      .branches_dev = { "pc", "main", "staging", NULL },
       .local_server_relative_path = "client_meta",
       .existing_info_file_content = "[Server]\
 Variants = steamdeck;vanilla\
-Branches = stable;rc;beta;bc;preview;pc;main",
+Branches = stable;rc;beta;bc;preview;pc;main\
+BranchesDev = pc;main;staging",
    },
 
    {
@@ -590,14 +600,16 @@ Branches = stable;rc;beta;bc;preview;pc;main",
        * "steamdeck" is coming from the image manifest */
       .variants = { "steamtest", "steamdeck", NULL },
       .branches = { "stable", "nightly", NULL },
-      .existing_info_file_content =
-         "[Server]\nVariants = steamtest\nBranches = stable;nightly",
+      .branches_dev = { "nightly", NULL },
+      .existing_info_file_content = "[Server]\nVariants = steamtest\nBranches = "
+                                    "stable;nightly\nBranchesDev = nightly",
    },
 
    {
       .config_name = "client.conf",
       .variants = { "steamdeck", "vanilla", NULL },
       .branches = { "stable", "rc", "beta", "bc", "preview", "pc", "main", NULL },
+      .branches_dev = { "main", "staging", NULL },
       /* If the remote-info.conf file has additional values, they should be ignored */
       .local_server_relative_path = "extra_fields_meta",
    },
@@ -607,6 +619,7 @@ Branches = stable;rc;beta;bc;preview;pc;main",
       /* "steamdeck" is coming from the image manifest */
       .variants = { "steamtest", "steamdeck", NULL },
       .branches = { "stable", "rc", "beta", "bc", "main", NULL },
+      .branches_dev = { "main", "staging", NULL },
       /* remote-info.conf with only the list of variants */
       .existing_info_file_content = "[Server]\nVariants = steamtest",
    },
@@ -616,6 +629,7 @@ Branches = stable;rc;beta;bc;preview;pc;main",
       .variants = { "steamdeck", NULL },
       /* "stable" is appended from the image manifest */
       .branches = { "daily", "nightly", "stable", NULL },
+      .branches_dev = { "main", "staging", NULL },
       /* remote-info.conf with only the list of branches */
       .existing_info_file_content = "[Server]\nBranches = daily;nightly;",
    },
@@ -624,6 +638,7 @@ Branches = stable;rc;beta;bc;preview;pc;main",
       .config_name = "client.conf",
       .variants = { "steamdeck", NULL },
       .branches = { "stable", "rc", "beta", "bc", "main", NULL },
+      .branches_dev = { "main", "staging", NULL },
       /* remote-info.conf has unexpected content */
       .existing_info_file_content = "[Unexpected]\nUnexpected file",
    },
@@ -699,6 +714,7 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
    g_assert_cmpstr(atomupd_properties->current_version, ==, "snapshot");
    g_assert_cmpstrv(atomupd_properties->known_variants, test->variants);
    g_assert_cmpstrv(atomupd_properties->known_branches, test->branches);
+   g_assert_cmpstrv(atomupd_properties->known_dev_branches, test->branches_dev);
 
    au_tests_stop_process(daemon_proc);
 
@@ -2519,6 +2535,170 @@ test_manage_trusted_keys(Fixture *f, gconstpointer context)
    au_tests_stop_process(daemon_proc);
 }
 
+typedef struct {
+   const gchar *config_name;
+   PrefsEntries initial_prefs;
+   const gchar *switch_to_branch;
+   gboolean expect_dev_keys_enabled;
+   gboolean expect_dev_keys_after_switch;
+} BranchDevKeysTest;
+
+static const BranchDevKeysTest branch_dev_keys_test[] = {
+   {
+      .config_name = "client.conf",
+      .initial_prefs = {
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+      .switch_to_branch = "staging",
+      .expect_dev_keys_enabled = FALSE,
+      .expect_dev_keys_after_switch = TRUE,
+   },
+
+   {
+      .config_name = "client.conf",
+      .initial_prefs = {
+         .variant = "steamdeck",
+         .branch = "main",
+      },
+      .expect_dev_keys_enabled = TRUE,
+   },
+
+   {
+      .config_name = "client.conf",
+      .initial_prefs = {
+         .variant = "steamdeck",
+         .branch = "staging",
+      },
+      .switch_to_branch = "main",
+      .expect_dev_keys_enabled = TRUE,
+      .expect_dev_keys_after_switch = TRUE,
+   },
+
+   {
+      .config_name = "client.conf",
+      .initial_prefs = {
+         .variant = "steamdeck",
+         .branch = "staging",
+      },
+      .switch_to_branch = "stable",
+      .expect_dev_keys_enabled = TRUE,
+      .expect_dev_keys_after_switch = FALSE,
+   },
+};
+
+static void
+test_branch_dev_keys(Fixture *f, gconstpointer context)
+{
+   gsize i;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   for (i = 0; i < G_N_ELEMENTS(branch_dev_keys_test); i++) {
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      g_autoptr(GKeyFile) preferences = NULL;
+      const BranchDevKeysTest *test = &branch_dev_keys_test[i];
+      g_autofree gchar *tmp_config_dir = NULL;
+      g_autofree gchar *config_path = NULL;
+      g_autofree gchar *preferences_path = NULL;
+      g_autofree gchar *keyring_dev1_path = NULL;
+      g_autofree gchar *keyring_dev1_symlink = NULL;
+      int fd;
+
+      g_debug("Running test iteration %zu", i);
+
+      tmp_config_dir = g_dir_make_tmp("atomupd-daemon-branch-dev-XXXXXX", &error);
+      g_assert_no_error(error);
+      config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+
+      {
+         g_autofree gchar *source_config_path = NULL;
+         g_autoptr(GFile) source_file = NULL;
+         g_autoptr(GFile) dest_file = NULL;
+
+         source_config_path =
+            g_build_filename(f->srcdir, "data", test->config_name, NULL);
+         source_file = g_file_new_for_path(source_config_path);
+         dest_file = g_file_new_for_path(config_path);
+         g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
+                     &error);
+         g_assert_no_error(error);
+      }
+
+      fd = g_file_open_tmp("preferences-XXXXXX", &preferences_path, &error);
+      g_assert_no_error(error);
+      close(fd);
+      f->test_envp = g_environ_setenv(f->test_envp, "AU_USER_PREFERENCES_FILE",
+                                      preferences_path, TRUE);
+
+      preferences = g_key_file_new();
+
+      g_key_file_set_string(preferences, "Choices", "Variant",
+                            test->initial_prefs.variant);
+      g_key_file_set_string(preferences, "Choices", "Branch", test->initial_prefs.branch);
+
+      g_key_file_save_to_file(preferences, preferences_path, &error);
+      g_assert_no_error(error);
+
+      keyring_dev1_path = g_build_filename(f->dev_keys_dir, "123abcde.0", NULL);
+      keyring_dev1_symlink =
+         g_build_filename(f->trusted_keys_dir, "123abcde.0", NULL);
+
+      g_file_set_contents(keyring_dev1_path, "dev cert 1", -1, &error);
+      g_assert_no_error(error);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                                  f->test_envp, FALSE);
+
+      /* Verify initial state */
+      _check_string_property(bus, "Variant", test->initial_prefs.variant);
+      _check_string_property(bus, "Branch", test->initial_prefs.branch);
+
+      if (test->expect_dev_keys_enabled) {
+         g_autofree gchar *actual_target = NULL;
+
+         g_assert_true(g_file_test(keyring_dev1_symlink, G_FILE_TEST_IS_SYMLINK));
+
+         actual_target = g_file_read_link(keyring_dev1_symlink, &error);
+         g_assert_no_error(error);
+         g_assert_cmpstr(actual_target, ==, keyring_dev1_path);
+      } else {
+         g_assert_false(g_file_test(keyring_dev1_symlink, G_FILE_TEST_EXISTS));
+      }
+
+      if (test->switch_to_branch != NULL) {
+         _send_atomupd_message_with_null_reply(bus, "SwitchToBranch", "(s)",
+                                               test->switch_to_branch);
+
+         _check_string_property(bus, "Branch", test->switch_to_branch);
+
+         if (test->expect_dev_keys_after_switch) {
+            g_autofree gchar *actual_target = NULL;
+
+            g_assert_true(g_file_test(keyring_dev1_symlink, G_FILE_TEST_IS_SYMLINK));
+
+            actual_target = g_file_read_link(keyring_dev1_symlink, &error);
+            g_assert_no_error(error);
+            g_assert_cmpstr(actual_target, ==, keyring_dev1_path);
+         } else {
+            g_assert_false(g_file_test(keyring_dev1_symlink, G_FILE_TEST_EXISTS));
+         }
+      }
+
+      au_tests_stop_process(daemon_proc);
+      g_unlink(preferences_path);
+      g_unlink(keyring_dev1_path);
+      g_unlink(keyring_dev1_symlink);
+
+      if (!rm_rf(tmp_config_dir))
+         g_debug("Unable to remove temp directory: %s", tmp_config_dir);
+   }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2550,6 +2730,7 @@ main(int argc, char **argv)
    test_add("/daemon/test_parsing_existing_updates_json",
             test_parsing_existing_updates_json);
    test_add("/daemon/manage_trusted_keys", test_manage_trusted_keys);
+   test_add("/daemon/branch_dev_keys", test_branch_dev_keys);
 
    ret = g_test_run();
    return ret;
