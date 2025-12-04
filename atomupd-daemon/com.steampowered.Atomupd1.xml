@@ -4,7 +4,7 @@
 
 
 <!--
-  Copyright © 2021-2024 Collabora Ltd.
+  Copyright © 2021-2025 Collabora Ltd.
   SPDX-License-Identifier: MIT
 
   Permission is hereby granted, free of charge, to any person obtaining
@@ -399,6 +399,30 @@
         Remove the HTTP/HTTPS proxy settings, if any.
     -->
     <method name="DisableHttpProxy">
+    </method>
+
+    <!--
+        EnableDevKeys:
+        @options: Reserved for future use
+
+        Add development `pem` files to the list of trusted keys when installing an update.
+        For example these may be required for new images from the `main` branch.
+        This option doesn't persist system updates.
+    -->
+    <method name="EnableDevKeys">
+      <arg type="a{sv}" name="options" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QVariantMap"/>
+    </method>
+
+    <!--
+        DisableDevKeys:
+        @options: Reserved for future use
+
+        Do not trust the development keys when installing an update.
+    -->
+    <method name="DisableDevKeys">
+      <arg type="a{sv}" name="options" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QVariantMap"/>
     </method>
 
   </interface>

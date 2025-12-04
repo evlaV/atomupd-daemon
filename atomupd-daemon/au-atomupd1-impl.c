@@ -23,6 +23,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <errno.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -46,6 +47,8 @@ const gchar *AU_DEV_CONFIG = "client-dev.conf";
 const gchar *AU_REMOTE_INFO = "remote-info.conf";
 const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
 const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json";
+const gchar *AU_DEFAULT_TRUSTED_KEYS = "/etc/rauc/trusted_keys";
+const gchar *AU_DEFAULT_DEV_KEYS = "/etc/rauc/development_keys";
 
 /* Please keep this in sync with steamos-select-branch */
 const gchar *AU_DEFAULT_BRANCH_PATH = "/var/lib/steamos-branch";
@@ -2965,6 +2968,163 @@ au_atomupd1_impl_handle_disable_http_proxy(AuAtomupd1 *object,
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
+static gboolean
+_au_enable_dev_keys(GError **error)
+{
+   const gchar *trusted_keys_dir = NULL;
+   const gchar *dev_keys_dir = NULL;
+   const gchar *filename;
+   g_autoptr(GDir) dir = NULL;
+   g_autoptr(GError) local_error = NULL;
+
+   /* These environment variables are used for debugging and automated tests */
+   trusted_keys_dir = g_getenv("AU_DEFAULT_TRUSTED_KEYS");
+   if (trusted_keys_dir == NULL)
+      trusted_keys_dir = AU_DEFAULT_TRUSTED_KEYS;
+
+   dev_keys_dir = g_getenv("AU_DEFAULT_DEV_KEYS");
+   if (dev_keys_dir == NULL)
+      dev_keys_dir = AU_DEFAULT_DEV_KEYS;
+
+   dir = g_dir_open(dev_keys_dir, 0, &local_error);
+   if (dir == NULL)
+      return au_throw_error(
+         error, "An error occurred while accessing the trusted dev keys directory: %s",
+         local_error->message);
+
+   while ((filename = g_dir_read_name(dir)) != NULL) {
+      g_autofree gchar *pem_path = NULL;
+      g_autofree gchar *symlink_path = NULL;
+      g_autofree gchar *existing_target = NULL;
+
+      if (g_str_has_suffix(filename, ".pem"))
+         g_warning("%s doesn't follow the X509_LOOKUP_hash_dir(3) naming convention, "
+                   "RAUC may not be able to use it",
+                   filename);
+
+      pem_path = g_build_filename(dev_keys_dir, filename, NULL);
+      symlink_path = g_build_filename(trusted_keys_dir, filename, NULL);
+      existing_target = g_file_read_link(symlink_path, NULL);
+      if (g_strcmp0(existing_target, pem_path) == 0) {
+         g_debug("There is already a symlink that points to '%s'...", pem_path);
+         continue;
+      }
+
+      g_unlink(symlink_path);
+      if (symlink(pem_path, symlink_path) != 0) {
+         int saved_errno = errno;
+         return au_throw_error(
+            error, "An error occurred while enabling the trusted dev keys: %s",
+            g_strerror(saved_errno));
+      }
+   }
+   return TRUE;
+}
+
+static void
+au_enable_dev_keys_authorized_cb(AuAtomupd1 *object,
+                                 GDBusMethodInvocation *invocation,
+                                 gpointer data_pointer)
+{
+   g_autoptr(GError) error = NULL;
+
+   if (!_au_enable_dev_keys(&error)) {
+      g_dbus_method_invocation_return_error_literal(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED, error->message);
+      return;
+   }
+
+   au_atomupd1_complete_enable_dev_keys(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_enable_dev_keys(AuAtomupd1 *object,
+                                        GDBusMethodInvocation *invocation,
+                                        GVariant *arg_options)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.manage-trusted-keys",
+                  au_enable_dev_keys_authorized_cb, invocation,
+                  arg_options ? g_variant_ref(arg_options) : NULL,
+                  (GDestroyNotify)g_variant_unref);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static gboolean
+_au_disable_dev_keys(GError **error)
+{
+   const gchar *trusted_keys_dir = NULL;
+   const gchar *dev_keys_dir = NULL;
+   const gchar *filename;
+   g_autoptr(GDir) dir = NULL;
+   g_autoptr(GError) local_error = NULL;
+
+   /* These environment variables are used for debugging and automated tests */
+   trusted_keys_dir = g_getenv("AU_DEFAULT_TRUSTED_KEYS");
+   if (trusted_keys_dir == NULL)
+      trusted_keys_dir = AU_DEFAULT_TRUSTED_KEYS;
+
+   dev_keys_dir = g_getenv("AU_DEFAULT_DEV_KEYS");
+   if (dev_keys_dir == NULL)
+      dev_keys_dir = AU_DEFAULT_DEV_KEYS;
+
+   dir = g_dir_open(trusted_keys_dir, 0, &local_error);
+   if (dir == NULL)
+      return au_throw_error(
+         error, "An error occurred while accessing the trusted dev keys directory: %s",
+         local_error->message);
+
+   while ((filename = g_dir_read_name(dir)) != NULL) {
+      g_autofree gchar *symlink_path = NULL;
+      g_autofree gchar *target = NULL;
+
+      symlink_path = g_build_filename(trusted_keys_dir, filename, NULL);
+      target = g_file_read_link(symlink_path, NULL);
+      if (target == NULL)
+         continue;
+
+      /* Remove the symlink only if it points to the development keys directory */
+      if (g_str_has_prefix(target, dev_keys_dir)) {
+         if (g_unlink(symlink_path) != 0) {
+            int saved_errno = errno;
+            return au_throw_error(
+               error, "An error occurred while disabling the trusted dev keys: %s",
+               g_strerror(saved_errno));
+         }
+      }
+   }
+   return TRUE;
+}
+
+static void
+au_disable_dev_keys_authorized_cb(AuAtomupd1 *object,
+                                  GDBusMethodInvocation *invocation,
+                                  gpointer data_pointer)
+{
+   g_autoptr(GError) error = NULL;
+
+   if (!_au_disable_dev_keys(&error)) {
+      g_dbus_method_invocation_return_error_literal(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED, error->message);
+      return;
+   }
+
+   au_atomupd1_complete_disable_dev_keys(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_disable_dev_keys(AuAtomupd1 *object,
+                                         GDBusMethodInvocation *invocation,
+                                         GVariant *arg_options)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.manage-trusted-keys",
+                  au_disable_dev_keys_authorized_cb, invocation,
+                  arg_options ? g_variant_ref(arg_options) : NULL,
+                  (GDestroyNotify)g_variant_unref);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
 static void
 init_atomupd1_iface(AuAtomupd1Iface *iface)
 {
@@ -2979,6 +3139,8 @@ init_atomupd1_iface(AuAtomupd1Iface *iface)
    iface->handle_switch_to_branch = au_atomupd1_impl_handle_switch_to_branch;
    iface->handle_enable_http_proxy = au_atomupd1_impl_handle_enable_http_proxy;
    iface->handle_disable_http_proxy = au_atomupd1_impl_handle_disable_http_proxy;
+   iface->handle_enable_dev_keys = au_atomupd1_impl_handle_enable_dev_keys;
+   iface->handle_disable_dev_keys = au_atomupd1_impl_handle_disable_dev_keys;
 }
 
 G_DEFINE_TYPE_WITH_CODE(AuAtomupd1Impl,

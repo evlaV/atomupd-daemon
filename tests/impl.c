@@ -2359,6 +2359,166 @@ test_query_updates_4xx(Fixture *f, gconstpointer context)
    }
 }
 
+static void
+test_manage_trusted_keys(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *keyring_default_symlink = NULL;
+   g_autofree gchar *keyring_dev1_path = NULL;
+   g_autofree gchar *keyring_dev2_path = NULL;
+   g_autofree gchar *keyring_dev1_symlink = NULL;
+   g_autofree gchar *keyring_dev2_symlink = NULL;
+   struct stat before_link_default_stat;
+   const gchar *keyring_default_target = "../keyring.pem";
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   keyring_dev1_path = g_build_filename(f->dev_keys_dir, "123abcde.0", NULL);
+   keyring_dev2_path = g_build_filename(f->dev_keys_dir, "aabbcc11.0", NULL);
+
+   keyring_dev1_symlink = g_build_filename(f->trusted_keys_dir, "123abcde.0", NULL);
+   keyring_dev2_symlink = g_build_filename(f->trusted_keys_dir, "aabbcc11.0", NULL);
+
+   keyring_default_symlink =
+      g_build_filename(f->trusted_keys_dir, "ba942c60.0", NULL);
+   g_assert_cmpint(symlink(keyring_default_target, keyring_default_symlink), ==, 0);
+   g_assert_cmpint(lstat(keyring_default_symlink, &before_link_default_stat), ==, 0);
+
+   g_file_set_contents(keyring_dev1_path, "cert 1", -1, &error);
+   g_assert_no_error(error);
+   g_file_set_contents(keyring_dev2_path, "cert 2", -1, &error);
+   g_assert_no_error(error);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                               f->test_envp, FALSE);
+
+   /* Initially, only the symlink to the default key should exist */
+   g_assert_false(g_file_test(keyring_dev1_symlink, G_FILE_TEST_EXISTS));
+   g_assert_false(g_file_test(keyring_dev2_symlink, G_FILE_TEST_EXISTS));
+   g_assert_true(g_file_test(keyring_default_symlink, G_FILE_TEST_IS_SYMLINK));
+
+   /* Enable the dev keys and ensure the expected symlinks get created */
+   {
+      g_autofree gchar *actual_target1 = NULL;
+      g_autofree gchar *actual_target2 = NULL;
+      struct stat after_link_default_stat;
+
+      _send_atomupd_message_with_null_reply(bus, "EnableDevKeys", "(a{sv})", NULL);
+
+      /* The pre-existing symlink to the non dev key should still be there */
+      g_assert_true(g_file_test(keyring_default_symlink, G_FILE_TEST_IS_SYMLINK));
+      g_assert_cmpint(lstat(keyring_default_symlink, &after_link_default_stat), ==, 0);
+      g_assert_cmpint(before_link_default_stat.st_ino, ==,
+                      after_link_default_stat.st_ino);
+
+      actual_target1 = g_file_read_link(keyring_dev1_symlink, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(actual_target1, ==, keyring_dev1_path);
+
+      actual_target2 = g_file_read_link(keyring_dev2_symlink, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(actual_target2, ==, keyring_dev2_path);
+   }
+
+   /* Running a second time EnableDevKeys should be a no-op */
+   {
+      struct stat before_link1_stat;
+      struct stat before_link2_stat;
+      struct stat after_link_default_stat;
+      struct stat after_link1_stat;
+      struct stat after_link2_stat;
+
+      g_assert_cmpint(lstat(keyring_dev1_symlink, &before_link1_stat), ==, 0);
+      g_assert_cmpint(lstat(keyring_dev2_symlink, &before_link2_stat), ==, 0);
+
+      _send_atomupd_message_with_null_reply(bus, "EnableDevKeys", "(a{sv})", NULL);
+
+      g_assert_cmpint(lstat(keyring_default_symlink, &after_link_default_stat), ==, 0);
+      g_assert_cmpint(lstat(keyring_dev1_symlink, &after_link1_stat), ==, 0);
+      g_assert_cmpint(lstat(keyring_dev2_symlink, &after_link2_stat), ==, 0);
+
+      g_assert_cmpint(before_link_default_stat.st_ino, ==,
+                      after_link_default_stat.st_ino);
+      g_assert_cmpint(before_link1_stat.st_ino, ==, after_link1_stat.st_ino);
+      g_assert_cmpint(before_link2_stat.st_ino, ==, after_link2_stat.st_ino);
+   }
+
+   /* Disable the dev keys */
+   {
+      _send_atomupd_message_with_null_reply(bus, "DisableDevKeys", "(a{sv})", NULL);
+      g_assert_true(g_file_test(keyring_default_symlink, G_FILE_TEST_IS_SYMLINK));
+      g_assert_false(g_file_test(keyring_dev1_symlink, G_FILE_TEST_EXISTS));
+      g_assert_false(g_file_test(keyring_dev2_symlink, G_FILE_TEST_EXISTS));
+
+      /* Do it a second time, */
+      _send_atomupd_message_with_null_reply(bus, "DisableDevKeys", "(a{sv})", NULL);
+      g_assert_true(g_file_test(keyring_default_symlink, G_FILE_TEST_IS_SYMLINK));
+      g_assert_false(g_file_test(keyring_dev1_symlink, G_FILE_TEST_EXISTS));
+      g_assert_false(g_file_test(keyring_dev2_symlink, G_FILE_TEST_EXISTS));
+   }
+
+   /* Create a symlink pointing to an unexpected location, EnableDevKeys should fix it */
+   {
+      struct stat after_link_default_stat;
+      g_autofree gchar *actual_target1 = NULL;
+      g_autofree gchar *actual_target2 = NULL;
+
+      g_assert_cmpint(symlink("/tmp/wrong.pem", keyring_dev1_symlink), ==, 0);
+
+      _send_atomupd_message_with_null_reply(bus, "EnableDevKeys", "(a{sv})", NULL);
+
+      g_assert_cmpint(lstat(keyring_default_symlink, &after_link_default_stat), ==, 0);
+      g_assert_cmpint(before_link_default_stat.st_ino, ==,
+                      after_link_default_stat.st_ino);
+
+      actual_target1 = g_file_read_link(keyring_dev1_symlink, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(actual_target1, ==, keyring_dev1_path);
+
+      actual_target2 = g_file_read_link(keyring_dev2_symlink, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(actual_target2, ==, keyring_dev2_path);
+   }
+
+   /* Test with a regular file instead of a symlink */
+   {
+      struct stat after_link_default_stat;
+      g_autofree gchar *actual_target1 = NULL;
+      g_autofree gchar *actual_target2 = NULL;
+
+      g_unlink(keyring_dev1_symlink);
+      g_unlink(keyring_dev2_symlink);
+
+      g_file_set_contents(keyring_dev1_symlink, "not a symlink", -1, &error);
+      g_assert_no_error(error);
+      g_file_set_contents(keyring_dev2_symlink, "also not a symlink", -1, &error);
+      g_assert_no_error(error);
+
+      g_assert_true(g_file_test(keyring_dev1_symlink, G_FILE_TEST_IS_REGULAR));
+      g_assert_true(g_file_test(keyring_dev2_symlink, G_FILE_TEST_IS_REGULAR));
+
+      _send_atomupd_message_with_null_reply(bus, "EnableDevKeys", "(a{sv})", NULL);
+
+      g_assert_cmpint(lstat(keyring_default_symlink, &after_link_default_stat), ==, 0);
+      g_assert_cmpint(before_link_default_stat.st_ino, ==,
+                      after_link_default_stat.st_ino);
+
+      actual_target1 = g_file_read_link(keyring_dev1_symlink, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(actual_target1, ==, keyring_dev1_path);
+
+      actual_target2 = g_file_read_link(keyring_dev2_symlink, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(actual_target2, ==, keyring_dev2_path);
+   }
+
+   au_tests_stop_process(daemon_proc);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2389,6 +2549,7 @@ main(int argc, char **argv)
    test_add("/daemon/test_unauthorized", test_unauthorized);
    test_add("/daemon/test_parsing_existing_updates_json",
             test_parsing_existing_updates_json);
+   test_add("/daemon/manage_trusted_keys", test_manage_trusted_keys);
 
    ret = g_test_run();
    return ret;

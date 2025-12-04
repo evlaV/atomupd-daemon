@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2024 Collabora Ltd.
+ * Copyright © 2022-2025 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -29,6 +29,7 @@
 #include <glib/gstdio.h>
 
 #include "fixture.h"
+#include "tests-utils.h"
 
 static GPid
 _start_mock_polkit(GDBusConnection *system_bus)
@@ -131,6 +132,7 @@ au_tests_setup(Fixture *f, gconstpointer context)
       "com.steampowered.atomupd1.start-upgrade",
       "com.steampowered.atomupd1.switch-variant-or-branch",
       "com.steampowered.atomupd1.manage-http-proxy",
+      "com.steampowered.atomupd1.manage-trusted-keys",
    };
 
    f->srcdir = g_strdup(g_getenv("G_TEST_SRCDIR"));
@@ -175,6 +177,12 @@ au_tests_setup(Fixture *f, gconstpointer context)
    /* Start with the desync config file not available */
    g_assert_cmpint(g_unlink(f->desync_conf_path), ==, 0);
 
+   f->trusted_keys_dir = g_dir_make_tmp("atomupd-daemon-keys-XXXXXX", &error);
+   g_assert_no_error(error);
+
+   f->dev_keys_dir = g_dir_make_tmp("atomupd-daemon-dev-keys-XXXXXX", &error);
+   g_assert_no_error(error);
+
    f->test_envp = g_get_environ();
    f->test_envp =
       g_environ_setenv(f->test_envp, "AU_UPDATES_JSON_FILE", f->updates_json, TRUE);
@@ -186,6 +194,8 @@ au_tests_setup(Fixture *f, gconstpointer context)
       g_environ_setenv(f->test_envp, "AU_REMOTE_INFO_PATH", f->remote_info_path, TRUE);
    f->test_envp =
       g_environ_setenv(f->test_envp, "AU_DESYNC_CONFIG_PATH", f->desync_conf_path, TRUE);
+   f->test_envp = g_environ_setenv(f->test_envp, "AU_DEFAULT_TRUSTED_KEYS", f->trusted_keys_dir, TRUE);
+   f->test_envp =g_environ_setenv(f->test_envp, "AU_DEFAULT_DEV_KEYS", f->dev_keys_dir, TRUE);
 
    system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
    g_assert_no_error(error);
@@ -216,6 +226,12 @@ au_tests_teardown(Fixture *f, gconstpointer context)
 
    g_unlink(f->desync_conf_path);
    g_free(f->desync_conf_path);
+
+   rm_rf(f->trusted_keys_dir);
+   g_free(f->trusted_keys_dir);
+
+   rm_rf(f->dev_keys_dir);
+   g_free(f->dev_keys_dir);
 
    _stop_mock_polkit(f->polkit_pid);
 }
