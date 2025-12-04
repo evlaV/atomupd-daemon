@@ -89,6 +89,7 @@ struct _AuAtomupd1Impl {
    gint64 buildid_date;
    gint64 buildid_increment;
    gboolean info_dl_in_progress;
+   gboolean is_using_dev_config;
 };
 
 typedef struct {
@@ -2727,7 +2728,7 @@ _au_parse_manifest(AuAtomupd1Impl *atomupd, GError **error)
 }
 
 static gboolean
-_au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError **error)
+_au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
 {
    const gchar *server_mandatory_key[] = { "ImagesUrl", "MetaUrl", NULL };
    g_autofree gchar *username = NULL;
@@ -2759,7 +2760,7 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
       }
    }
 
-   if (include_remote_info &&
+   if (!atomupd->is_using_dev_config &&
        !g_key_file_load_from_file(remote_info, _au_get_remote_info_path(),
                                   G_KEY_FILE_NONE, &local_error)) {
       /* This could happen if for example the Steam Deck is in offline mode, or the server
@@ -2772,7 +2773,10 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
 
    g_debug("Getting the list of known variants and branches");
 
-   if (include_remote_info) {
+   /* We don't load the remote info file when using a development configuration.
+    * We could have additional custom variants/branches, and we don't want to replace
+    * them with the ones from the server side. */
+   if (!atomupd->is_using_dev_config) {
       known_variants = _au_get_known_variants_from_config(remote_info, NULL);
       if (known_variants != NULL)
          g_debug("Using the list of known variants from the remote info file");
@@ -2890,11 +2894,9 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
    dev_config_path = g_build_filename(atomupd->config_directory, AU_DEV_CONFIG, NULL);
    if (g_file_test(dev_config_path, G_FILE_TEST_EXISTS)) {
       atomupd->config_path = g_steal_pointer(&dev_config_path);
+      atomupd->is_using_dev_config = TRUE;
 
-      /* We don't load the remote info file when using a development configuration.
-       * We could have additional custom variants/branches, and we don't want to replace
-       * them with the ones from the server side. */
-      if (_au_parse_config(atomupd, FALSE, &local_error)) {
+      if (_au_parse_config(atomupd, &local_error)) {
          g_debug("Loaded the configuration file '%s'", atomupd->config_path);
          return TRUE;
       }
@@ -2905,8 +2907,10 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
       g_clear_pointer(&atomupd->config_path, g_free);
    }
 
+   atomupd->is_using_dev_config = FALSE;
+
    atomupd->config_path = g_build_filename(atomupd->config_directory, AU_CONFIG, NULL);
-   if (_au_parse_config(atomupd, TRUE, &local_error)) {
+   if (_au_parse_config(atomupd, &local_error)) {
       g_debug("Loaded the configuration file '%s'", atomupd->config_path);
       return TRUE;
    }
@@ -2924,7 +2928,7 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
    atomupd->config_path =
       g_build_filename(_au_get_fallback_config_path(), AU_CONFIG, NULL);
 
-   return _au_parse_config(atomupd, TRUE, error);
+   return _au_parse_config(atomupd, error);
 }
 
 static void
