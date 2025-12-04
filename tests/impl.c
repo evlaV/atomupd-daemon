@@ -549,6 +549,7 @@ static const PropertiesTest properties_test[] = {
       .variants = { "steamdeck", "vanilla", NULL },
       /* "stable" is coming from the image manifest */
       .branches = { "beta", "bc", "stable", NULL },
+      .branches_dev = { "bc", NULL },
    },
 
    {
@@ -2537,6 +2538,7 @@ test_manage_trusted_keys(Fixture *f, gconstpointer context)
 
 typedef struct {
    const gchar *config_name;
+   const gchar *config_dev_name;
    PrefsEntries initial_prefs;
    const gchar *switch_to_branch;
    gboolean expect_dev_keys_enabled;
@@ -2585,6 +2587,19 @@ static const BranchDevKeysTest branch_dev_keys_test[] = {
       .expect_dev_keys_enabled = TRUE,
       .expect_dev_keys_after_switch = FALSE,
    },
+
+   {
+      .config_name = "client.conf",
+      .config_dev_name = "client_semicolon.conf",
+      .initial_prefs = {
+         .variant = "steamdeck",
+         .branch = "stable",
+      },
+      .switch_to_branch = "beta",
+      /* The dev keys should remain trusted because we are using a development config */
+      .expect_dev_keys_enabled = TRUE,
+      .expect_dev_keys_after_switch = TRUE,
+   },
 };
 
 static void
@@ -2604,6 +2619,7 @@ test_branch_dev_keys(Fixture *f, gconstpointer context)
       const BranchDevKeysTest *test = &branch_dev_keys_test[i];
       g_autofree gchar *tmp_config_dir = NULL;
       g_autofree gchar *config_path = NULL;
+      g_autofree gchar *config_dev_path = NULL;
       g_autofree gchar *preferences_path = NULL;
       g_autofree gchar *keyring_dev1_path = NULL;
       g_autofree gchar *keyring_dev1_symlink = NULL;
@@ -2614,6 +2630,7 @@ test_branch_dev_keys(Fixture *f, gconstpointer context)
       tmp_config_dir = g_dir_make_tmp("atomupd-daemon-branch-dev-XXXXXX", &error);
       g_assert_no_error(error);
       config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+      config_dev_path = g_build_filename(tmp_config_dir, "client-dev.conf", NULL);
 
       {
          g_autofree gchar *source_config_path = NULL;
@@ -2624,6 +2641,20 @@ test_branch_dev_keys(Fixture *f, gconstpointer context)
             g_build_filename(f->srcdir, "data", test->config_name, NULL);
          source_file = g_file_new_for_path(source_config_path);
          dest_file = g_file_new_for_path(config_path);
+         g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
+                     &error);
+         g_assert_no_error(error);
+      }
+
+      if (test->config_dev_name != NULL) {
+         g_autofree gchar *source_config_path = NULL;
+         g_autoptr(GFile) source_file = NULL;
+         g_autoptr(GFile) dest_file = NULL;
+
+         source_config_path =
+            g_build_filename(f->srcdir, "data", "client_semicolon.conf", NULL);
+         source_file = g_file_new_for_path(source_config_path);
+         dest_file = g_file_new_for_path(config_dev_path);
          g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
                      &error);
          g_assert_no_error(error);

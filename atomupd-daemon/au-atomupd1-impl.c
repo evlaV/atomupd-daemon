@@ -1469,7 +1469,18 @@ _au_set_trusted_dev_keys(AuAtomupd1 *object)
 {
    const gchar *const *known_dev_branches = NULL;
    const gchar *branch = NULL;
+   AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
    g_autoptr(GError) local_error = NULL;
+
+   if (self->is_using_dev_config) {
+      g_debug("Trusting the dev keys because we are using a development config");
+      if (!_au_enable_dev_keys(&local_error)) {
+         /* We may not be able to install images signed with a dev key, but this
+          * is not a critical issue. */
+         g_warning("Unable to trust the dev keys: %s", local_error->message);
+      }
+      return;
+   }
 
    known_dev_branches = au_atomupd1_get_known_dev_branches(object);
    if (known_dev_branches == NULL) {
