@@ -23,6 +23,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <errno.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -39,13 +40,15 @@
 #include <json-glib/json-glib.h>
 
 /* The version of this interface, exposed in the "Version" property */
-guint ATOMUPD_VERSION = 6;
+guint ATOMUPD_VERSION = 7;
 
 const gchar *AU_CONFIG = "client.conf";
 const gchar *AU_DEV_CONFIG = "client-dev.conf";
 const gchar *AU_REMOTE_INFO = "remote-info.conf";
 const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
 const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json";
+const gchar *AU_DEFAULT_TRUSTED_KEYS = "/etc/rauc/trusted_keys";
+const gchar *AU_DEFAULT_DEV_KEYS = "/etc/rauc/development_keys";
 
 /* Please keep this in sync with steamos-select-branch */
 const gchar *AU_DEFAULT_BRANCH_PATH = "/var/lib/steamos-branch";
@@ -86,6 +89,7 @@ struct _AuAtomupd1Impl {
    gint64 buildid_date;
    gint64 buildid_increment;
    gboolean info_dl_in_progress;
+   gboolean is_using_dev_config;
 };
 
 typedef struct {
@@ -761,6 +765,19 @@ static gchar **
 _au_get_known_branches_from_config(GKeyFile *client_config, GError **error)
 {
    return _au_get_list_from_config(client_config, "Branches", error);
+}
+
+/*
+ * _au_get_known_dev_branches_from_config:
+ *
+ * Returns: (array zero-terminated=1) (transfer full) (nullable): The list
+ *  of known branches that require the development signing keys, or %NULL if
+ *  the configuration doesn't have the "BranchesDev" field.
+ */
+static gchar **
+_au_get_known_dev_branches_from_config(GKeyFile *client_config, GError **error)
+{
+   return _au_get_list_from_config(client_config, "BranchesDev", error);
 }
 
 /*
@@ -1442,6 +1459,56 @@ au_atomupd1_impl_handle_switch_to_variant(AuAtomupd1 *object,
 }
 
 static gboolean
+_au_enable_dev_keys(GError **error);
+
+static gboolean
+_au_disable_dev_keys(GError **error);
+
+static void
+_au_set_trusted_dev_keys(AuAtomupd1 *object)
+{
+   const gchar *const *known_dev_branches = NULL;
+   const gchar *branch = NULL;
+   AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
+   g_autoptr(GError) local_error = NULL;
+
+   if (self->is_using_dev_config) {
+      g_debug("Trusting the dev keys because we are using a development config");
+      if (!_au_enable_dev_keys(&local_error)) {
+         /* We may not be able to install images signed with a dev key, but this
+          * is not a critical issue. */
+         g_warning("Unable to trust the dev keys: %s", local_error->message);
+      }
+      return;
+   }
+
+   known_dev_branches = au_atomupd1_get_known_dev_branches(object);
+   if (known_dev_branches == NULL) {
+      g_debug("There are no known branches that require to trust the dev keys");
+      return;
+   }
+
+   branch = au_atomupd1_get_branch(object);
+
+   for (gsize i = 0; known_dev_branches[i] != NULL; i++) {
+      if (g_strcmp0(branch, known_dev_branches[i]) == 0) {
+         g_debug("Trusting the dev keys because of the selected branch %s", branch);
+         if (!_au_enable_dev_keys(&local_error)) {
+            /* We may not be able to install images signed with a dev key, but this
+             * is not a critical issue. */
+            g_warning("Unable to trust the dev keys: %s", local_error->message);
+         }
+         return;
+      }
+   }
+
+   g_debug("Images in branch %s shouldn't be signed with dev keys, disabling them...",
+           branch);
+   if (!_au_disable_dev_keys(&local_error))
+      g_warning("Unable to disable the dev keys: %s", local_error->message);
+}
+
+static gboolean
 _au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error)
 {
    const gchar *variant = au_atomupd1_get_variant(object);
@@ -1464,6 +1531,8 @@ _au_switch_to_branch(AuAtomupd1 *object, gchar *branch, GError **error)
 
    _au_clear_available_updates(object);
    au_atomupd1_set_branch(object, branch);
+
+   _au_set_trusted_dev_keys(object);
 
    return TRUE;
 }
@@ -2670,7 +2739,7 @@ _au_parse_manifest(AuAtomupd1Impl *atomupd, GError **error)
 }
 
 static gboolean
-_au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError **error)
+_au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
 {
    const gchar *server_mandatory_key[] = { "ImagesUrl", "MetaUrl", NULL };
    g_autofree gchar *username = NULL;
@@ -2680,6 +2749,7 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
    g_autofree gchar *default_branch = NULL;
    g_auto(GStrv) known_variants = NULL;
    g_auto(GStrv) known_branches = NULL;
+   g_auto(GStrv) known_dev_branches = NULL;
    g_autoptr(GKeyFile) client_config = g_key_file_new();
    g_autoptr(GKeyFile) remote_info = g_key_file_new();
    g_autoptr(GError) local_error = NULL;
@@ -2701,7 +2771,7 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
       }
    }
 
-   if (include_remote_info &&
+   if (!atomupd->is_using_dev_config &&
        !g_key_file_load_from_file(remote_info, _au_get_remote_info_path(),
                                   G_KEY_FILE_NONE, &local_error)) {
       /* This could happen if for example the Steam Deck is in offline mode, or the server
@@ -2714,10 +2784,21 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
 
    g_debug("Getting the list of known variants and branches");
 
-   if (include_remote_info) {
+   /* We don't load the remote info file when using a development configuration.
+    * We could have additional custom variants/branches, and we don't want to replace
+    * them with the ones from the server side. */
+   if (!atomupd->is_using_dev_config) {
       known_variants = _au_get_known_variants_from_config(remote_info, NULL);
       if (known_variants != NULL)
          g_debug("Using the list of known variants from the remote info file");
+
+      known_branches = _au_get_known_branches_from_config(remote_info, NULL);
+      if (known_branches != NULL)
+         g_debug("Using the list of known branches from the remote info file");
+
+      known_dev_branches = _au_get_known_dev_branches_from_config(remote_info, NULL);
+      if (known_dev_branches != NULL)
+         g_debug("Using the list of known dev branches from the remote info file");
    }
 
    if (known_variants == NULL) {
@@ -2741,12 +2822,6 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
    au_atomupd1_set_known_variants((AuAtomupd1 *)atomupd,
                                   (const gchar *const *)known_variants);
 
-   if (include_remote_info) {
-      known_branches = _au_get_known_branches_from_config(remote_info, NULL);
-      if (known_branches != NULL)
-         g_debug("Using the list of known branches from the remote info file");
-   }
-
    if (known_branches == NULL) {
       known_branches = _au_get_known_branches_from_config(client_config, error);
       if (known_branches == NULL)
@@ -2764,8 +2839,13 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
       known_branches[length + 1] = NULL;
    }
 
+   if (known_dev_branches == NULL)
+      known_dev_branches = _au_get_known_dev_branches_from_config(client_config, NULL);
+
    au_atomupd1_set_known_branches((AuAtomupd1 *)atomupd,
                                   (const gchar *const *)known_branches);
+   au_atomupd1_set_known_dev_branches((AuAtomupd1 *)atomupd,
+                                      (const gchar *const *)known_dev_branches);
 
    /* If the config has an HTTP auth, we need to ensure that netrc and Desync
     * have it too */
@@ -2805,6 +2885,8 @@ _au_parse_config(AuAtomupd1Impl *atomupd, gboolean include_remote_info, GError *
          return FALSE;
    }
 
+   _au_set_trusted_dev_keys((AuAtomupd1 *)atomupd);
+
    return TRUE;
 }
 
@@ -2823,11 +2905,9 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
    dev_config_path = g_build_filename(atomupd->config_directory, AU_DEV_CONFIG, NULL);
    if (g_file_test(dev_config_path, G_FILE_TEST_EXISTS)) {
       atomupd->config_path = g_steal_pointer(&dev_config_path);
+      atomupd->is_using_dev_config = TRUE;
 
-      /* We don't load the remote info file when using a development configuration.
-       * We could have additional custom variants/branches, and we don't want to replace
-       * them with the ones from the server side. */
-      if (_au_parse_config(atomupd, FALSE, &local_error)) {
+      if (_au_parse_config(atomupd, &local_error)) {
          g_debug("Loaded the configuration file '%s'", atomupd->config_path);
          return TRUE;
       }
@@ -2838,8 +2918,10 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
       g_clear_pointer(&atomupd->config_path, g_free);
    }
 
+   atomupd->is_using_dev_config = FALSE;
+
    atomupd->config_path = g_build_filename(atomupd->config_directory, AU_CONFIG, NULL);
-   if (_au_parse_config(atomupd, TRUE, &local_error)) {
+   if (_au_parse_config(atomupd, &local_error)) {
       g_debug("Loaded the configuration file '%s'", atomupd->config_path);
       return TRUE;
    }
@@ -2857,7 +2939,7 @@ _au_select_and_load_configuration(AuAtomupd1Impl *atomupd, GError **error)
    atomupd->config_path =
       g_build_filename(_au_get_fallback_config_path(), AU_CONFIG, NULL);
 
-   return _au_parse_config(atomupd, TRUE, error);
+   return _au_parse_config(atomupd, error);
 }
 
 static void
@@ -2965,6 +3047,163 @@ au_atomupd1_impl_handle_disable_http_proxy(AuAtomupd1 *object,
    return G_DBUS_METHOD_INVOCATION_HANDLED;
 }
 
+static gboolean
+_au_enable_dev_keys(GError **error)
+{
+   const gchar *trusted_keys_dir = NULL;
+   const gchar *dev_keys_dir = NULL;
+   const gchar *filename;
+   g_autoptr(GDir) dir = NULL;
+   g_autoptr(GError) local_error = NULL;
+
+   /* These environment variables are used for debugging and automated tests */
+   trusted_keys_dir = g_getenv("AU_DEFAULT_TRUSTED_KEYS");
+   if (trusted_keys_dir == NULL)
+      trusted_keys_dir = AU_DEFAULT_TRUSTED_KEYS;
+
+   dev_keys_dir = g_getenv("AU_DEFAULT_DEV_KEYS");
+   if (dev_keys_dir == NULL)
+      dev_keys_dir = AU_DEFAULT_DEV_KEYS;
+
+   dir = g_dir_open(dev_keys_dir, 0, &local_error);
+   if (dir == NULL)
+      return au_throw_error(
+         error, "An error occurred while accessing the trusted dev keys directory: %s",
+         local_error->message);
+
+   while ((filename = g_dir_read_name(dir)) != NULL) {
+      g_autofree gchar *pem_path = NULL;
+      g_autofree gchar *symlink_path = NULL;
+      g_autofree gchar *existing_target = NULL;
+
+      if (g_str_has_suffix(filename, ".pem"))
+         g_warning("%s doesn't follow the X509_LOOKUP_hash_dir(3) naming convention, "
+                   "RAUC may not be able to use it",
+                   filename);
+
+      pem_path = g_build_filename(dev_keys_dir, filename, NULL);
+      symlink_path = g_build_filename(trusted_keys_dir, filename, NULL);
+      existing_target = g_file_read_link(symlink_path, NULL);
+      if (g_strcmp0(existing_target, pem_path) == 0) {
+         g_debug("There is already a symlink that points to '%s'...", pem_path);
+         continue;
+      }
+
+      g_unlink(symlink_path);
+      if (symlink(pem_path, symlink_path) != 0) {
+         int saved_errno = errno;
+         return au_throw_error(
+            error, "An error occurred while enabling the trusted dev keys: %s",
+            g_strerror(saved_errno));
+      }
+   }
+   return TRUE;
+}
+
+static void
+au_enable_dev_keys_authorized_cb(AuAtomupd1 *object,
+                                 GDBusMethodInvocation *invocation,
+                                 gpointer data_pointer)
+{
+   g_autoptr(GError) error = NULL;
+
+   if (!_au_enable_dev_keys(&error)) {
+      g_dbus_method_invocation_return_error_literal(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED, error->message);
+      return;
+   }
+
+   au_atomupd1_complete_enable_dev_keys(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_enable_dev_keys(AuAtomupd1 *object,
+                                        GDBusMethodInvocation *invocation,
+                                        GVariant *arg_options)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.manage-trusted-keys",
+                  au_enable_dev_keys_authorized_cb, invocation,
+                  arg_options ? g_variant_ref(arg_options) : NULL,
+                  (GDestroyNotify)g_variant_unref);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static gboolean
+_au_disable_dev_keys(GError **error)
+{
+   const gchar *trusted_keys_dir = NULL;
+   const gchar *dev_keys_dir = NULL;
+   const gchar *filename;
+   g_autoptr(GDir) dir = NULL;
+   g_autoptr(GError) local_error = NULL;
+
+   /* These environment variables are used for debugging and automated tests */
+   trusted_keys_dir = g_getenv("AU_DEFAULT_TRUSTED_KEYS");
+   if (trusted_keys_dir == NULL)
+      trusted_keys_dir = AU_DEFAULT_TRUSTED_KEYS;
+
+   dev_keys_dir = g_getenv("AU_DEFAULT_DEV_KEYS");
+   if (dev_keys_dir == NULL)
+      dev_keys_dir = AU_DEFAULT_DEV_KEYS;
+
+   dir = g_dir_open(trusted_keys_dir, 0, &local_error);
+   if (dir == NULL)
+      return au_throw_error(
+         error, "An error occurred while accessing the trusted dev keys directory: %s",
+         local_error->message);
+
+   while ((filename = g_dir_read_name(dir)) != NULL) {
+      g_autofree gchar *symlink_path = NULL;
+      g_autofree gchar *target = NULL;
+
+      symlink_path = g_build_filename(trusted_keys_dir, filename, NULL);
+      target = g_file_read_link(symlink_path, NULL);
+      if (target == NULL)
+         continue;
+
+      /* Remove the symlink only if it points to the development keys directory */
+      if (g_str_has_prefix(target, dev_keys_dir)) {
+         if (g_unlink(symlink_path) != 0) {
+            int saved_errno = errno;
+            return au_throw_error(
+               error, "An error occurred while disabling the trusted dev keys: %s",
+               g_strerror(saved_errno));
+         }
+      }
+   }
+   return TRUE;
+}
+
+static void
+au_disable_dev_keys_authorized_cb(AuAtomupd1 *object,
+                                  GDBusMethodInvocation *invocation,
+                                  gpointer data_pointer)
+{
+   g_autoptr(GError) error = NULL;
+
+   if (!_au_disable_dev_keys(&error)) {
+      g_dbus_method_invocation_return_error_literal(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED, error->message);
+      return;
+   }
+
+   au_atomupd1_complete_disable_dev_keys(object, g_steal_pointer(&invocation));
+}
+
+static gboolean
+au_atomupd1_impl_handle_disable_dev_keys(AuAtomupd1 *object,
+                                         GDBusMethodInvocation *invocation,
+                                         GVariant *arg_options)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.manage-trusted-keys",
+                  au_disable_dev_keys_authorized_cb, invocation,
+                  arg_options ? g_variant_ref(arg_options) : NULL,
+                  (GDestroyNotify)g_variant_unref);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
 static void
 init_atomupd1_iface(AuAtomupd1Iface *iface)
 {
@@ -2979,6 +3218,8 @@ init_atomupd1_iface(AuAtomupd1Iface *iface)
    iface->handle_switch_to_branch = au_atomupd1_impl_handle_switch_to_branch;
    iface->handle_enable_http_proxy = au_atomupd1_impl_handle_enable_http_proxy;
    iface->handle_disable_http_proxy = au_atomupd1_impl_handle_disable_http_proxy;
+   iface->handle_enable_dev_keys = au_atomupd1_impl_handle_enable_dev_keys;
+   iface->handle_disable_dev_keys = au_atomupd1_impl_handle_disable_dev_keys;
 }
 
 G_DEFINE_TYPE_WITH_CODE(AuAtomupd1Impl,
