@@ -136,9 +136,11 @@ _send_message(GDBusConnection *bus,
 
    /* The D-Bus response is usually immediate. However, on very slow Internet connections
     * it could take up to a few seconds to download the meta JSON file for the available
-    * updates. To err on the safe side, we set a timeout of 20s */
+    * updates. If, for whatever reason, the server is not providing the pre-estimated
+    * update size, we may also need to download an additional extra file.
+    * To err on the safe side, we set a timeout of 30s */
    reply = g_dbus_connection_send_message_with_reply_sync(
-      bus, message, G_DBUS_SEND_MESSAGE_FLAGS_NONE, 20000, NULL, NULL, error);
+      bus, message, G_DBUS_SEND_MESSAGE_FLAGS_NONE, 30000, NULL, NULL, error);
    if (reply != NULL && !g_dbus_message_to_gerror(reply, error)) {
       reply_body = g_dbus_message_get_body(reply);
       if (reply_body != NULL)
