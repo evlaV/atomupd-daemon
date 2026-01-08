@@ -83,6 +83,9 @@ struct _AuAtomupd1Impl {
    gchar *config_path;
    gchar *config_directory;
    gchar *manifest_path;
+   gchar *release;
+   gchar *product;
+   gchar *architecture;
    GFile *updates_json_file;
    GFile *updates_json_copy;
    GDataInputStream *start_update_stdout_stream;
@@ -1617,17 +1620,11 @@ _au_download_remote_info(AuAtomupd1Impl *atomupd, GError **error)
    g_autofree gchar *meta_url = NULL;
    g_autofree gchar *remote_info_url = NULL;
    g_autofree gchar *http_proxy = NULL;
-   const gchar *release = NULL;
-   const gchar *product = NULL;
-   const gchar *architecture = NULL;
    const gchar *variant = NULL;
-   JsonObject *json_object = NULL; /* borrowed */
-   g_autoptr(JsonParser) parser = NULL;
    g_autoptr(GTask) task = NULL;
    g_autoptr(DownloadData) data = g_new0(DownloadData, 1);
 
    g_return_val_if_fail(atomupd != NULL, FALSE);
-   g_return_val_if_fail(atomupd->manifest_path != NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
    if (atomupd->info_dl_in_progress) {
@@ -1635,18 +1632,10 @@ _au_download_remote_info(AuAtomupd1Impl *atomupd, GError **error)
       return TRUE;
    }
 
-   json_object = _au_load_manifest_object(atomupd->manifest_path, &parser, error);
-   if (json_object == NULL)
-      return FALSE;
-
-   release = json_object_get_string_member_with_default(json_object, "release", NULL);
-   product = json_object_get_string_member_with_default(json_object, "product", NULL);
-   architecture = json_object_get_string_member_with_default(json_object, "arch", NULL);
-
-   if (release == NULL || product == NULL || architecture == NULL)
-      return au_throw_error(error,
-                            "the manifest JSON \"%s\" does not have the expected keys",
-                            atomupd->manifest_path);
+   if (atomupd->release == NULL || atomupd->product == NULL ||
+       atomupd->architecture == NULL)
+      return au_throw_error(error, "We don't have the required data to generate "
+                                   "the remote info URL");
 
    variant = au_atomupd1_get_variant((AuAtomupd1 *)atomupd);
    meta_url = _au_get_meta_url_from_default_config(atomupd, error);
@@ -1654,8 +1643,9 @@ _au_download_remote_info(AuAtomupd1Impl *atomupd, GError **error)
    if (meta_url == NULL)
       return FALSE;
 
-   remote_info_url = g_build_filename(meta_url, release, product, architecture, variant,
-                                      AU_REMOTE_INFO, NULL);
+   remote_info_url =
+      g_build_filename(meta_url, atomupd->release, atomupd->product,
+                       atomupd->architecture, variant, AU_REMOTE_INFO, NULL);
 
    http_proxy = _au_get_http_proxy_address_and_port((AuAtomupd1 *)atomupd);
 
@@ -2725,6 +2715,21 @@ _au_parse_manifest(AuAtomupd1Impl *atomupd, GError **error)
                             "The manifest JSON \"%s\" doesn't have the expected keys",
                             atomupd->manifest_path);
 
+   atomupd->release =
+      g_strdup(json_object_get_string_member_with_default(json_object, "release", NULL));
+   atomupd->product =
+      g_strdup(json_object_get_string_member_with_default(json_object, "product", NULL));
+   atomupd->architecture =
+      g_strdup(json_object_get_string_member_with_default(json_object, "arch", NULL));
+
+   /* This is really unexpected, and may break the ability to check for updates. We are
+    * not failing hard to see if we can still recover */
+   if (atomupd->release == NULL || atomupd->product == NULL ||
+       atomupd->architecture == NULL)
+      g_warning("The manifest JSON \"%s\" is missing some expected keys, "
+                "trying to continue anyway...",
+                atomupd->manifest_path);
+
    if (!_is_buildid_valid(build_id, &atomupd->buildid_date, &atomupd->buildid_increment,
                           error))
       return FALSE;
@@ -3232,6 +3237,9 @@ au_atomupd1_impl_finalize(GObject *object)
    g_free(self->config_path);
    g_free(self->config_directory);
    g_free(self->manifest_path);
+   g_free(self->release);
+   g_free(self->product);
+   g_free(self->architecture);
    g_clear_object(&self->authority);
 
    // Keep the update file, to be able to reuse it later on
