@@ -1,4 +1,4 @@
-# Copyright © 2024 Collabora Ltd
+# Copyright © 2024-2026 Collabora Ltd
 # SPDX-License-Identifier: MIT
 
 _atomupd_manager() {
@@ -6,7 +6,7 @@ _atomupd_manager() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="check update switch-variant switch-branch list-variants list-branches tracked-variant tracked-branch get-update-status create-dev-conf"
+    local commands="check update switch-variant switch-branch list-variants list-branches tracked-variant tracked-branch get-update-status create-dev-conf list-builds"
 
     local common_opts="--session --verbose --version --help"
     local create_dev_conf_opts="--additional-variant --username --password --skip-reload"

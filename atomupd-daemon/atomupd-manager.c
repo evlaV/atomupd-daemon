@@ -1,5 +1,5 @@
 /*
- * Copyright © 2023-2024 Collabora Ltd.
+ * Copyright © 2023-2026 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -37,6 +37,8 @@
 #include "enums.h"
 #include "utils.h"
 
+#include <json-glib/json-glib.h>
+
 #define _send_atomupd_message(_bus, _method, _body, _reply_out, _error)                  \
    _send_message(_bus, AU_ATOMUPD1_PATH, AU_ATOMUPD1_INTERFACE, _method, _body,          \
                  _reply_out, _error)
@@ -62,6 +64,9 @@ static gchar **opt_additional_variants = NULL;
 static gchar *opt_username = NULL;
 static gchar *opt_password = NULL;
 
+static gchar *opt_branch = NULL;
+static gchar *opt_variant = NULL;
+
 static GOptionEntry options[] = {
    { "session", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &opt_session,
      "Use the session bus instead of the system bus", NULL },
@@ -83,6 +88,16 @@ static GOptionEntry create_dev_conf_options[] = {
      "Password for the eventual HTTP authentication", NULL },
    { "skip-reload", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_skip_reload,
      "Do not execute the ReloadConfiguration method of the API", NULL },
+   { NULL }
+};
+
+static GOptionEntry create_list_builds_options[] = {
+   { "branch", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_branch,
+     "List only builds in this branch", NULL },
+   { "variant", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_variant,
+     "List builds for this specific variant. If omitted, builds for the currently "
+     "tracked variant will be listed",
+     NULL },
    { NULL }
 };
 
@@ -582,6 +597,47 @@ update_command(GOptionContext *context, GDBusConnection *bus, const gchar *updat
    return launch_update(bus, update_id, NULL);
 }
 
+static GVariant *
+get_atomupd_property(GDBusConnection *bus, const gchar *property, GError **error);
+
+static gchar *
+get_builds_list_path(GDBusConnection *bus,
+                     const gchar *requested_variant,
+                     gchar **variant_out,
+                     GError **error)
+{
+   const gchar *variant;
+   g_autoptr(GVariant) reply = NULL;
+   g_autoptr(GVariant) variant_reply = NULL;
+   g_autofree gchar *builds_list_path = NULL;
+   g_auto(GVariantBuilder) builder;
+
+   g_return_val_if_fail(variant_out == NULL || *variant_out == NULL, FALSE);
+
+   g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+
+   if (requested_variant) {
+      variant = requested_variant;
+   } else {
+      variant_reply = get_atomupd_property(bus, "Variant", error);
+      if (variant_reply == NULL)
+         return NULL;
+      variant = g_variant_get_string(variant_reply, NULL);
+   }
+
+   g_variant_builder_add(&builder, "{sv}", "variant", g_variant_new_string(variant));
+
+   if (!_send_atomupd_message(bus, "GetBuilds", g_variant_new("(a{sv})", &builder),
+                              &reply, error))
+      return NULL;
+
+   if (variant_out != NULL)
+      *variant_out = g_strdup(variant);
+
+   g_variant_get(reply, "(s)", &builds_list_path);
+   return g_steal_pointer(&builds_list_path);
+}
+
 static int
 custom_update_command(GOptionContext *context,
                       GDBusConnection *bus,
@@ -738,6 +794,57 @@ tracked_branch(G_GNUC_UNUSED GOptionContext *context,
    }
 
    g_print("%s\n", g_variant_get_string(variant_reply, NULL));
+
+   return EXIT_SUCCESS;
+}
+
+static int
+list_builds(G_GNUC_UNUSED GOptionContext *context,
+            GDBusConnection *bus,
+            G_GNUC_UNUSED const gchar *argument)
+{
+   const gchar *variant = NULL;
+   g_autofree gchar *builds_list_path = NULL;
+   g_autoptr(JsonParser) parser = NULL;
+   g_autoptr(GError) error = NULL;
+   JsonNode *json_node = NULL;   /* borrowed */
+   JsonArray *json_array = NULL; /* borrowed */
+   guint json_length;
+
+   builds_list_path = get_builds_list_path(bus, opt_variant, &variant, &error);
+   if (builds_list_path == NULL) {
+      g_print("An error occurred while getting the list of builds: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   parser = json_parser_new();
+   if (!json_parser_load_from_file(parser, builds_list_path, &error)) {
+      g_print("Error parsing the JSON list: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   json_node = json_parser_get_root(parser);
+   json_array = json_node_get_array(json_node);
+   json_length = json_array_get_length(json_array);
+
+   printf("Available %s builds:\n", variant);
+
+   for (gsize i = 0; i < json_length; i++) {
+      const gchar *branch;
+      const gchar *buildid;
+      const gchar *version;
+      JsonObject *obj = json_array_get_object_element(json_array, i);
+
+      branch = json_object_get_string_member(obj, "branch");
+      /* Apply the eventual branch filter */
+      if (opt_branch != NULL && !g_str_equal(opt_branch, branch))
+         continue;
+
+      buildid = json_object_get_string_member(obj, "buildid");
+      version = json_object_get_string_member(obj, "version");
+
+      printf("ID: %s - version: %s - branch: %s\n", buildid, version, branch);
+   }
 
    return EXIT_SUCCESS;
 }
@@ -915,6 +1022,12 @@ static const LaunchCommands launch_commands[] = {
    },
 
    {
+      .command = "list-builds",
+      .description = "List the available OS builds",
+      .command_function = list_builds,
+   },
+
+   {
       .command = "get-update-status",
       .description = "Get the update status, possible values are: idle, in-progress, "
                      "paused, successful, failed, cancelled",
@@ -991,6 +1104,7 @@ main(int argc, char *argv[])
    g_autoptr(GError) error = NULL;
    g_autoptr(GOptionContext) context = NULL;
    GOptionGroup *dev_config_group = NULL;
+   GOptionGroup *list_builds_group = NULL;
    g_autoptr(GDBusConnection) bus = NULL;
    g_autofree gchar *summary = NULL;
    GLogLevelFlags log_levels = G_LOG_LEVEL_MESSAGE | G_LOG_LEVEL_WARNING;
@@ -1008,6 +1122,11 @@ main(int argc, char *argv[])
                                          "Show create-dev-conf help options", NULL, NULL);
    g_option_group_add_entries(dev_config_group, create_dev_conf_options);
    g_option_context_add_group(context, dev_config_group);
+
+   list_builds_group = g_option_group_new(
+      "list-builds", "list-builds Options:", "Show list-builds help options", NULL, NULL);
+   g_option_group_add_entries(list_builds_group, create_list_builds_options);
+   g_option_context_add_group(context, list_builds_group);
 
    if (!g_option_context_parse(context, &argc, &argv, &error)) {
       g_print("%s\n", error->message);
@@ -1034,6 +1153,12 @@ main(int argc, char *argv[])
       /* These options are only relevant for the create-dev-conf command */
       if (opt_additional_variants != NULL || opt_username != NULL ||
           opt_password != NULL || opt_skip_reload)
+         return print_usage(context);
+   }
+
+   if (!g_str_equal(argv[1], "list-builds")) {
+      /* These options are only relevant for the list-builds command */
+      if (opt_branch != NULL || opt_variant != NULL)
          return print_usage(context);
    }
 

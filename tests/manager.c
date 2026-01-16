@@ -1,5 +1,5 @@
 /*
- * Copyright © 2023 Collabora Ltd.
+ * Copyright © 2023-2026 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -650,6 +650,128 @@ test_dev_config(Fixture *f, gconstpointer context)
       g_debug("Unable to remove temp directory: %s", tmp_config_dir);
 }
 
+typedef struct {
+   const gchar *variant;
+   const gchar *branch;
+   const gchar *output;
+   gboolean expect_error;
+} ListBuildsTest;
+
+static const ListBuildsTest list_builds_test[] = {
+   {
+      .output = "Available steamdeck builds:\n"
+                "ID: 20240115.2 - version: 3.7.3 - branch: stable\n"
+                "ID: 20240115.1 - version: 3.7.2 - branch: stable\n"
+                "ID: 20240107.1 - version: 3.6.5 - branch: rc\n"
+                "ID: 20240104.1 - version: 3.6.5 - branch: stable\n",
+   },
+
+   {
+      .branch = "stable",
+      .output = "Available steamdeck builds:\n"
+                "ID: 20240115.2 - version: 3.7.3 - branch: stable\n"
+                "ID: 20240115.1 - version: 3.7.2 - branch: stable\n"
+                "ID: 20240104.1 - version: 3.6.5 - branch: stable\n",
+   },
+
+   {
+      .branch = "missing",
+      .output = "Available steamdeck builds:\n",
+   },
+
+   {
+      .variant = "steamtest",
+      .output = "Available steamtest builds:\n"
+                "ID: 20260109.9999 - version: 3.9.0 - branch: stable\n",
+   },
+
+   {
+      .variant = "steamdeck",
+      .branch = "rc",
+      .output = "Available steamdeck builds:\n"
+                "ID: 20240107.1 - version: 3.6.5 - branch: rc\n",
+   },
+
+   {
+      .variant = "steamtest",
+      .branch = "beta",
+      .output = "Available steamtest builds:\n",
+   },
+
+   {
+      .variant = "missing",
+      .expect_error = TRUE,
+   },
+};
+
+static void
+test_list_builds(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GSubprocess) http_server_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *local_server_dir = NULL;
+   g_autoptr(GError) error = NULL;
+   gsize i;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                               f->test_envp, FALSE);
+
+   local_server_dir = g_build_filename(f->srcdir, "data", "client_meta", NULL);
+   http_server_proc = au_tests_start_local_http_server(local_server_dir);
+
+   for (i = 0; i < G_N_ELEMENTS(list_builds_test); i++) {
+      g_autofree gchar *output = NULL;
+      const ListBuildsTest test = list_builds_test[i];
+      g_autoptr(GPtrArray) argv = g_ptr_array_sized_new(7);
+      gint wait_status = 0;
+
+      g_debug("Running list-builds test case %zu", i);
+
+      g_ptr_array_add(argv, (gchar *)"atomupd-manager");
+      g_ptr_array_add(argv, (gchar *)"--session");
+      g_ptr_array_add(argv, (gchar *)"list-builds");
+
+      if (test.variant != NULL) {
+         g_ptr_array_add(argv, (gchar *)"--variant");
+         g_ptr_array_add(argv, (gchar *)test.variant);
+      }
+
+      if (test.branch != NULL) {
+         g_ptr_array_add(argv, (gchar *)"--branch");
+         g_ptr_array_add(argv, (gchar *)test.branch);
+      }
+
+      g_ptr_array_add(argv, NULL);
+
+      g_spawn_sync(NULL, /* working directory */
+                   (gchar **)argv->pdata, f->test_envp, G_SPAWN_SEARCH_PATH,
+                   NULL,          /* child setup */
+                   NULL,          /* user data */
+                   &output, NULL, /* stderr */
+                   &wait_status, &error);
+      g_assert_no_error(error);
+      g_spawn_check_wait_status(wait_status, &error);
+
+      if (test.expect_error) {
+         g_assert_error(error, G_SPAWN_EXIT_ERROR, 1);
+         g_clear_error(&error);
+         g_assert_true(g_str_has_prefix(
+            output, "An error occurred while getting the list of builds"));
+      } else {
+         g_assert_no_error(error);
+         g_assert_cmpstr(output, ==, test.output);
+      }
+   }
+
+   au_tests_stop_process(daemon_proc);
+   au_tests_stop_process(http_server_proc);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -665,6 +787,7 @@ main(int argc, char **argv)
    test_add("/manager/custom_update", test_custom_update);
    test_add("/manager/verbose", test_verbose);
    test_add("/manager/dev_config", test_dev_config);
+   test_add("/manager/list_builds", test_list_builds);
 
    ret = g_test_run();
    return ret;
