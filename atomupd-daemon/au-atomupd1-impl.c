@@ -45,6 +45,7 @@ guint ATOMUPD_VERSION = 7;
 const gchar *AU_CONFIG = "client.conf";
 const gchar *AU_DEV_CONFIG = "client-dev.conf";
 const gchar *AU_REMOTE_INFO = "remote-info.conf";
+const gchar *AU_BUILDS_LIST = "builds.json";
 const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
 const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json";
 const gchar *AU_DEFAULT_TRUSTED_KEYS = "/etc/rauc/trusted_keys";
@@ -56,6 +57,8 @@ const gchar *AU_DEFAULT_BRANCH_PATH = "/var/lib/steamos-branch";
 const gchar *AU_FALLBACK_CONFIG_PATH = "/usr/lib/steamos-atomupd";
 
 const gchar *AU_USER_PREFERENCES = "/etc/steamos-atomupd/preferences.conf";
+
+const gchar *AU_RUN_PATH = "/run/steamos-atomupd";
 
 /* This file is not expected to be preserved when applying a system update.
  * It is not a problem if this happens to be preserved across updates, e.g.
@@ -106,6 +109,11 @@ typedef struct {
    RequestData *req;
    gint standard_output;
 } QueryData;
+
+typedef struct {
+   RequestData *req;
+   gchar *builds_path;
+} BuildsData;
 
 typedef struct {
    const gchar *expanded;
@@ -164,14 +172,36 @@ _query_data_free(QueryData *self)
    g_slice_free(QueryData, self);
 }
 
+static void
+_builds_data_free(BuildsData *self)
+{
+   _request_data_free(self->req);
+
+   g_free(self->builds_path);
+
+   g_slice_free(BuildsData, self);
+}
+
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(RequestData, _request_data_free)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(QueryData, _query_data_free)
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(BuildsData, _builds_data_free)
 
 static QueryData *
 au_query_data_new(void)
 {
    QueryData *data = g_slice_new0(QueryData);
    data->standard_output = -1;
+
+   data->req = g_slice_new0(RequestData);
+
+   return data;
+}
+
+static BuildsData *
+au_builds_data_new(void)
+{
+   BuildsData *data = g_slice_new0(BuildsData);
+   data->builds_path = NULL;
 
    data->req = g_slice_new0(RequestData);
 
@@ -3214,6 +3244,124 @@ au_atomupd1_impl_handle_disable_dev_keys(AuAtomupd1 *object,
 }
 
 static void
+_au_get_builds_done(GObject *source_object, GAsyncResult *result, gpointer user_data)
+{
+   g_autoptr(BuildsData) data = user_data;
+   g_autoptr(GError) error = NULL;
+
+   if (g_task_propagate_boolean(G_TASK(result), &error)) {
+      g_debug("Builds list file successfully downloaded");
+      au_atomupd1_complete_get_builds(
+         data->req->object, g_steal_pointer(&data->req->invocation), data->builds_path);
+   } else {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "Failed to download the builds list: %s", error->message);
+   }
+}
+
+static void
+au_get_builds_authorized_cb(AuAtomupd1 *object,
+                            GDBusMethodInvocation *invocation,
+                            gpointer arg_options_pointer)
+{
+   GVariant *arg_options = arg_options_pointer;
+   g_autofree gchar *http_proxy = NULL;
+   g_autofree gchar *builds_filename = NULL;
+   g_autofree gchar *builds_path = NULL;
+   g_autofree gchar *builds_url = NULL;
+   g_autoptr(GTask) task = NULL;
+   g_autoptr(DownloadData) dl_data = g_new0(DownloadData, 1);
+   g_autoptr(BuildsData) builds_data = au_builds_data_new();
+   const gchar *key = NULL;
+   GVariant *value = NULL;
+   const gchar *variant = NULL;
+   const gchar *au_run_path = NULL;
+   GVariantIter iter;
+   AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
+
+   g_return_if_fail(self->config_path != NULL);
+   g_return_if_fail(self->manifest_path != NULL);
+   g_return_if_fail(self->meta_url != NULL);
+
+   g_variant_iter_init(&iter, arg_options);
+
+   while (g_variant_iter_loop(&iter, "{sv}", &key, &value)) {
+      if (g_str_equal(key, "variant")) {
+         if (g_variant_is_of_type(value, G_VARIANT_TYPE_STRING)) {
+            variant = g_variant_get_string(value, NULL);
+         } else {
+            g_dbus_method_invocation_return_error(
+               g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+               "The argument '%s' must have a string value", key);
+         }
+         continue;
+      }
+
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "The argument '%s' is not a valid option", key);
+      return;
+   }
+
+   /* Use by default the currently selected variant */
+   if (variant == NULL)
+      variant = au_atomupd1_get_variant(object);
+
+   if (strstr(variant, "..") != NULL || strstr(variant, "/") != NULL ||
+       strchr(variant, ' ') != NULL) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "Invalid variant name: must not contain spaces, slashes, or '..'");
+      return;
+   }
+
+   /* This environment variable is used for debugging and automated tests */
+   au_run_path = g_getenv("AU_RUN_PATH");
+   if (au_run_path == NULL)
+      au_run_path = AU_RUN_PATH;
+
+   builds_filename = g_strdup_printf("builds-%s.json", variant);
+   builds_path = g_build_filename(au_run_path, builds_filename, NULL);
+
+   if (g_file_test(builds_path, G_FILE_TEST_EXISTS)) {
+      g_debug("We already have the list of builds for %s", variant);
+      au_atomupd1_complete_get_builds(object, g_steal_pointer(&invocation), builds_path);
+      return;
+   }
+
+   builds_url = g_build_filename(self->meta_url, self->release, self->product,
+                                 self->architecture, variant, AU_BUILDS_LIST, NULL);
+
+   http_proxy = _au_get_http_proxy_address_and_port(object);
+
+   builds_data->req->invocation = g_steal_pointer(&invocation);
+   builds_data->req->object = g_object_ref(object);
+   builds_data->builds_path = g_strdup(builds_path);
+
+   dl_data->target = g_strdup(builds_path);
+   dl_data->url = g_steal_pointer(&builds_url);
+   dl_data->proxy = g_steal_pointer(&http_proxy);
+
+   task = g_task_new(NULL, NULL, _au_get_builds_done, g_steal_pointer(&builds_data));
+   g_task_set_task_data(task, g_steal_pointer(&dl_data),
+                        (GDestroyNotify)download_data_free);
+   g_task_run_in_thread(task, _au_download_thread_func);
+}
+
+static gboolean
+au_atomupd1_impl_handle_get_builds(AuAtomupd1 *object,
+                                   GDBusMethodInvocation *invocation,
+                                   GVariant *arg_options)
+{
+   _au_check_auth(object, "com.steampowered.atomupd1.get-builds",
+                  au_get_builds_authorized_cb, invocation, g_variant_ref(arg_options),
+                  (GDestroyNotify)g_variant_unref);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static void
 init_atomupd1_iface(AuAtomupd1Iface *iface)
 {
    iface->handle_cancel_update = au_atomupd1_impl_handle_cancel_update;
@@ -3229,6 +3377,7 @@ init_atomupd1_iface(AuAtomupd1Iface *iface)
    iface->handle_disable_http_proxy = au_atomupd1_impl_handle_disable_http_proxy;
    iface->handle_enable_dev_keys = au_atomupd1_impl_handle_enable_dev_keys;
    iface->handle_disable_dev_keys = au_atomupd1_impl_handle_disable_dev_keys;
+   iface->handle_get_builds = au_atomupd1_impl_handle_get_builds;
 }
 
 G_DEFINE_TYPE_WITH_CODE(AuAtomupd1Impl,

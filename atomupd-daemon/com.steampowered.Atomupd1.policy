@@ -97,4 +97,14 @@
     </defaults>
   </action>
 
+  <action id="com.steampowered.atomupd1.get-builds">
+    <description>Download the available builds list</description>
+    <icon_name>package-x-generic</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
 </policyconfig>

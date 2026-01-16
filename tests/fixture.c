@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2025 Collabora Ltd.
+ * Copyright © 2022-2026 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -125,6 +125,7 @@ au_tests_setup(Fixture *f, gconstpointer context)
 
    const gchar *polkit_allow_all[] = {
       "com.steampowered.atomupd1.check-for-updates",
+      "com.steampowered.atomupd1.get-builds",
       "com.steampowered.atomupd1.manage-pending-update",
       "com.steampowered.atomupd1.reload-configuration",
       "com.steampowered.atomupd1.start-custom-upgrade",
@@ -183,6 +184,9 @@ au_tests_setup(Fixture *f, gconstpointer context)
    f->dev_keys_dir = g_dir_make_tmp("atomupd-daemon-dev-keys-XXXXXX", &error);
    g_assert_no_error(error);
 
+   f->run_dir = g_dir_make_tmp("atomupd-daemon-run-XXXXXX", &error);
+   g_assert_no_error(error);
+
    f->test_envp = g_get_environ();
    f->test_envp =
       g_environ_setenv(f->test_envp, "AU_UPDATES_JSON_FILE", f->updates_json, TRUE);
@@ -196,6 +200,7 @@ au_tests_setup(Fixture *f, gconstpointer context)
       g_environ_setenv(f->test_envp, "AU_DESYNC_CONFIG_PATH", f->desync_conf_path, TRUE);
    f->test_envp = g_environ_setenv(f->test_envp, "AU_DEFAULT_TRUSTED_KEYS", f->trusted_keys_dir, TRUE);
    f->test_envp =g_environ_setenv(f->test_envp, "AU_DEFAULT_DEV_KEYS", f->dev_keys_dir, TRUE);
+   f->test_envp = g_environ_setenv(f->test_envp, "AU_RUN_PATH", f->run_dir, TRUE);
 
    system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
    g_assert_no_error(error);
@@ -232,6 +237,9 @@ au_tests_teardown(Fixture *f, gconstpointer context)
 
    rm_rf(f->dev_keys_dir);
    g_free(f->dev_keys_dir);
+
+   rm_rf(f->run_dir);
+   g_free(f->run_dir);
 
    _stop_mock_polkit(f->polkit_pid);
 }

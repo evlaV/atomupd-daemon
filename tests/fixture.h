@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2025 Collabora Ltd.
+ * Copyright © 2022-2026 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -40,6 +40,7 @@ typedef struct {
    gchar *rauc_pid_path;
    gchar *trusted_keys_dir;
    gchar *dev_keys_dir;
+   gchar *run_dir;
    GStrv test_envp;
    GPid polkit_pid;
 } Fixture;

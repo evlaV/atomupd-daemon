@@ -4,7 +4,7 @@
 
 
 <!--
-  Copyright © 2021-2025 Collabora Ltd.
+  Copyright © 2021-2026 Collabora Ltd.
   SPDX-License-Identifier: MIT
 
   Permission is hereby granted, free of charge, to any person obtaining
@@ -430,6 +430,21 @@
     -->
     <method name="DisableDevKeys">
       <arg type="a{sv}" name="options" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QVariantMap"/>
+    </method>
+
+    <!--
+        GetBuilds:
+        @options: Vardict with configuration options. Currently, the available options are:
+          - 'variant': request builds for a specific variant.
+        @path: Where the JSON builds list is stored
+
+        Returns the path to a file containing the OS builds list as JSON.
+        Downloads the list if not already cached locally.
+    -->
+    <method name="GetBuilds">
+      <arg type="a{sv}" name="options" direction="in"/>
+      <arg name="path" type="s" direction="out"/>
       <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QVariantMap"/>
     </method>
 

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2025 Collabora Ltd.
+ * Copyright © 2022-2026 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -2730,6 +2730,124 @@ test_branch_dev_keys(Fixture *f, gconstpointer context)
    }
 }
 
+static gchar *
+_call_get_builds(GDBusConnection *bus, const gchar *variant)
+{
+   g_autoptr(GVariant) reply = NULL;
+   g_autofree gchar *reply_str = NULL;
+   GVariantBuilder builder;
+   GVariant *params = NULL; /* floating */
+
+   g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+   if (variant != NULL)
+      g_variant_builder_add(&builder, "{sv}", "variant", g_variant_new_string(variant));
+   params = g_variant_builder_end(&builder);
+
+   reply = _send_atomupd_message(bus, "GetBuilds", "(@a{sv})", params);
+   g_variant_get(reply, "(s)", &reply_str);
+
+   return g_steal_pointer(&reply_str);
+}
+
+static void
+test_builds_list(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GSubprocess) http_server_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *local_server_dir = NULL;
+   g_autofree gchar *local_server_meta_path_prefix = NULL;
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                               f->test_envp, FALSE);
+
+   local_server_dir = g_build_filename(f->srcdir, "data", "client_meta", NULL);
+   http_server_proc = au_tests_start_local_http_server(local_server_dir);
+
+   local_server_meta_path_prefix =
+      g_build_filename(local_server_dir, "meta", "holo", "steamos", "amd64", NULL);
+
+   g_debug("Requesting the builds list for a specific variant");
+   {
+      g_autofree gchar *reply = NULL;
+      g_autofree gchar *local_content = NULL;
+      g_autofree gchar *server_content = NULL;
+      g_autofree gchar *server_file = NULL;
+
+      reply = _call_get_builds(bus, "steamtest");
+
+      g_debug("Called get builds");
+
+      g_assert_true(g_str_has_suffix(reply, "builds-steamtest.json"));
+
+      server_file = g_build_filename(local_server_meta_path_prefix, "steamtest",
+                                     "builds.json", NULL);
+      g_file_get_contents(server_file, &server_content, NULL, &error);
+      g_assert_no_error(error);
+      g_file_get_contents(reply, &local_content, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(local_content, ==, server_content);
+   }
+
+   g_debug("Request a variant that the server doesn't know about");
+   {
+      g_autofree gchar *reply = NULL;
+
+      reply = _call_get_builds(bus, "missing_variant");
+      g_assert_true(g_str_has_prefix(reply, "Failed to download the builds list"));
+   }
+
+   g_debug("Request the default variant");
+   {
+      g_autofree gchar *reply = NULL;
+      g_autofree gchar *local_content = NULL;
+      g_autofree gchar *server_content = NULL;
+      g_autofree gchar *server_file = NULL;
+
+      reply = _call_get_builds(bus, NULL);
+
+      g_assert_true(g_str_has_suffix(reply, "builds-steamdeck.json"));
+
+      server_file = g_build_filename(local_server_meta_path_prefix, "steamdeck",
+                                     "builds.json", NULL);
+      g_file_get_contents(server_file, &server_content, NULL, &error);
+      g_assert_no_error(error);
+      g_file_get_contents(reply, &local_content, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(local_content, ==, server_content);
+   }
+
+   g_debug("Check that the existing JSON list doesn't get re-downloaded each time");
+   {
+      g_autofree gchar *reply = NULL;
+      g_autofree gchar *new_local_content = NULL;
+      g_autofree gchar *existing_json = NULL;
+      const gchar *old_local_content =
+         "[{\"version\": \"4.0.0\", \"buildid\": \"20260115.2\"}]";
+
+      existing_json = g_build_filename(f->run_dir, "builds-steamdeck.json", NULL);
+
+      g_file_set_contents(existing_json, old_local_content, -1, &error);
+      g_assert_no_error(error);
+
+      reply = _call_get_builds(bus, "steamdeck");
+
+      g_assert_cmpstr(reply, ==, existing_json);
+
+      g_file_get_contents(existing_json, &new_local_content, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(old_local_content, ==, new_local_content);
+   }
+
+   au_tests_stop_process(daemon_proc);
+   au_tests_stop_process(http_server_proc);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2762,6 +2880,7 @@ main(int argc, char **argv)
             test_parsing_existing_updates_json);
    test_add("/daemon/manage_trusted_keys", test_manage_trusted_keys);
    test_add("/daemon/branch_dev_keys", test_branch_dev_keys);
+   test_add("/daemon/builds_list", test_builds_list);
 
    ret = g_test_run();
    return ret;
