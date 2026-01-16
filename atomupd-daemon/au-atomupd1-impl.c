@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2025 Collabora Ltd.
+ * Copyright © 2021-2026 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -86,6 +86,8 @@ struct _AuAtomupd1Impl {
    gchar *release;
    gchar *product;
    gchar *architecture;
+   gchar *meta_url;
+   gchar *images_url;
    GFile *updates_json_file;
    GFile *updates_json_copy;
    GDataInputStream *start_update_stdout_stream;
@@ -2752,6 +2754,7 @@ _au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
    g_auto(GStrv) known_variants = NULL;
    g_auto(GStrv) known_branches = NULL;
    g_auto(GStrv) known_dev_branches = NULL;
+   g_autoptr(GHashTable) url_table = NULL;
    g_autoptr(GKeyFile) client_config = g_key_file_new();
    g_autoptr(GKeyFile) remote_info = g_key_file_new();
    g_autoptr(GError) local_error = NULL;
@@ -2849,41 +2852,45 @@ _au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
    au_atomupd1_set_known_dev_branches((AuAtomupd1 *)atomupd,
                                       (const gchar *const *)known_dev_branches);
 
+   url_table = _au_get_urls_from_config(client_config, error);
+   if (url_table == NULL) {
+      /* The config file is malformed, bail out */
+      g_warning("Failed to get the list of URLs from %s", atomupd->config_path);
+      return FALSE;
+   }
+
+   g_clear_pointer(&atomupd->images_url, g_free);
+   g_clear_pointer(&atomupd->meta_url, g_free);
+   atomupd->images_url = g_strdup(g_hash_table_lookup(url_table, "ImagesUrl"));
+   atomupd->meta_url = g_strdup(g_hash_table_lookup(url_table, "MetaUrl"));
+
+   if (atomupd->images_url == NULL || atomupd->meta_url == NULL) {
+      /* We already ensured the presence of both entries at the beginning of
+       * _au_parse_config(), but if for whatever reason they are NULL, we error out */
+      au_throw_error(
+         error, "The config file \"%s\" doesn't have the expected server URL entries",
+         atomupd->config_path);
+      return FALSE;
+   }
+
    /* If the config has an HTTP auth, we need to ensure that netrc and Desync
     * have it too */
    if (_au_get_http_auth_from_config(client_config, &username, &password,
                                      &auth_encoded)) {
-      g_autoptr(GHashTable) url_table = NULL;
       g_autoptr(GList) urls = NULL;
-      const gchar *images_url;
       const gchar *desync_config_path;
 
-      url_table = _au_get_urls_from_config(client_config, error);
-      if (url_table == NULL) {
-         /* The config file is malformed, bail out */
-         g_warning("Failed to get the list of URLs from %s", atomupd->config_path);
-         return FALSE;
-      }
       urls = g_hash_table_get_values(url_table);
 
       if (!_au_ensure_urls_in_netrc(AU_NETRC_PATH, urls, username, password, error))
          return FALSE;
 
-      images_url = g_hash_table_lookup(url_table, "ImagesUrl");
-      if (images_url == NULL) {
-         /* The ImagesUrl entry is mandatory for a valid config file */
-         au_throw_error(
-            error, "The config file \"%s\" doesn't have the expected \"ImagesUrl\" entry",
-            atomupd->config_path);
-         return FALSE;
-      }
-
       desync_config_path = g_getenv("AU_DESYNC_CONFIG_PATH");
       if (desync_config_path == NULL)
          desync_config_path = AU_DESYNC_CONFIG_PATH;
 
-      if (!_au_ensure_url_in_desync_conf(desync_config_path, images_url, auth_encoded,
-                                         error))
+      if (!_au_ensure_url_in_desync_conf(desync_config_path, atomupd->images_url,
+                                         auth_encoded, error))
          return FALSE;
    }
 
@@ -3240,6 +3247,8 @@ au_atomupd1_impl_finalize(GObject *object)
    g_free(self->release);
    g_free(self->product);
    g_free(self->architecture);
+   g_free(self->meta_url);
+   g_free(self->images_url);
    g_clear_object(&self->authority);
 
    // Keep the update file, to be able to reuse it later on
