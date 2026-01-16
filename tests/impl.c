@@ -1343,6 +1343,26 @@ test_progress_default(Fixture *f, gconstpointer context)
       reply = _get_atomupd_property(bus, "ProgressPercentage");
       g_variant_get(reply, "d", &progress);
       g_assert_true(progress == 100);
+      g_clear_pointer(&reply, g_variant_unref);
+   }
+
+   g_debug("Starting a custom update from it's relative path, expected to complete in 1 second");
+   {
+      GVariantBuilder builder;
+      GVariant *params; /* floating */
+
+      g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+      g_variant_builder_add(&builder, "{sv}", "update_path",
+                            g_variant_new_string("steamdeck/update.raucb"));
+      params = g_variant_builder_end(&builder);
+
+      _send_atomupd_message_with_null_reply(bus, "StartCustomUpdate", "(@a{sv})", params);
+      /* Wait for 2x as much to ensure it really finished */
+      g_usleep(2 * G_USEC_PER_SEC);
+
+      reply = _get_atomupd_property(bus, "ProgressPercentage");
+      g_variant_get(reply, "d", &progress);
+      g_assert_true(progress == 100);
    }
 
    au_tests_stop_process(daemon_proc);

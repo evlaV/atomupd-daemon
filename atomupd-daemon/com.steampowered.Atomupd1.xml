@@ -353,6 +353,9 @@
         StartCustomUpdate:
         @options: Vardict with update options. Currently, the available options are:
           - 'url': which allows you to specify the direct URL to the update bundle
+          - 'update_path': specify the relative update path to a bundle. Atomupd will
+            automatically prepend $ImagesUrl to create the full URL. This relative path
+            can be found in the meta JSON files or the 'builds.json'
 
         Start to apply a custom update, following the provided @options.
     -->

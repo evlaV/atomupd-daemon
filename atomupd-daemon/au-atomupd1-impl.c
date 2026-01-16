@@ -40,7 +40,7 @@
 #include <json-glib/json-glib.h>
 
 /* The version of this interface, exposed in the "Version" property */
-guint ATOMUPD_VERSION = 7;
+guint ATOMUPD_VERSION = 8;
 
 const gchar *AU_CONFIG = "client.conf";
 const gchar *AU_DEV_CONFIG = "client-dev.conf";
@@ -2568,6 +2568,8 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
    g_autoptr(GError) error = NULL;
    AuUpdateStatus current_status;
    const gchar *url = NULL;
+   const gchar *update_path = NULL;
+   g_autofree gchar *update_url = NULL;
 
    current_status = au_atomupd1_get_update_status(object);
    if (current_status == AU_UPDATE_STATUS_IN_PROGRESS ||
@@ -2579,12 +2581,20 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
       return;
    }
 
-   if (!g_variant_lookup(arg_options, "url", "&s", &url) || url == NULL) {
+   g_variant_lookup(arg_options, "url", "&s", &url);
+   g_variant_lookup(arg_options, "update_path", "&s", &update_path);
+
+   if ((url == NULL && update_path == NULL) || (url != NULL && update_path != NULL)) {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS,
-         "The 'url' option is mandatory and must be a string");
+         "Exactly one of 'url' or 'update_path' must be provided");
       return;
    }
+
+   if (url == NULL)
+      update_url = g_build_filename(self->images_url, update_path, NULL);
+   else
+      update_url = g_strdup(url);
 
    /* For a custom update, buildid and version are unknown */
    au_atomupd1_set_update_build_id(object, NULL);
@@ -2595,7 +2605,7 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
    g_ptr_array_add(argv, g_strdup("--config"));
    g_ptr_array_add(argv, g_strdup(self->config_path));
    g_ptr_array_add(argv, g_strdup("--update-from-url"));
-   g_ptr_array_add(argv, g_strdup(url));
+   g_ptr_array_add(argv, g_steal_pointer(&update_url));
 
    if (g_debug_controller_get_debug_enabled(self->debug_controller))
       g_ptr_array_add(argv, g_strdup("--debug"));
