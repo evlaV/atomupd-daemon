@@ -331,6 +331,7 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
 typedef struct {
    const gchar *title;
    const gchar *request;
+   const gchar *branch;
    const gchar *output_prefix;
    gint expected_error_code;
 } CustomUpdateTest;
@@ -372,6 +373,22 @@ static const CustomUpdateTest custom_update_test[] = {
    },
 
    {
+      .title = "Requesting a specific version with branch filter",
+      .request = "3.6.5",
+      .branch = "stable",
+      .output_prefix = "ID: 20240104.1 - version: 3.6.5 - branch: stable\n",
+   },
+
+   {
+      .title = "Requesting a specific version with a branch filter that doesn't match",
+      .request = "3.6.5",
+      .branch = "main",
+      .output_prefix = "An error occurred when trying to get the requested OS build\n"
+                       "Ensure that the requested image is valid and retry\n",
+      .expected_error_code = 1,
+   },
+
+   {
       .title = "Requesting the latest 3.99 build that doesn't exist",
       .request = "3.99.x",
       .output_prefix = "An error occurred when trying to get the requested OS build\n"
@@ -409,10 +426,36 @@ test_custom_update(Fixture *f, gconstpointer context)
       g_autofree gchar *update_status = NULL;
       const CustomUpdateTest test = custom_update_test[i];
       g_autoptr(GError) error = NULL;
+      g_autoptr(GPtrArray) argv = g_ptr_array_sized_new(7);
+      gint wait_status = 0;
 
       g_debug("Running test: %s", test.title);
 
-      output = _au_execute_manager("custom-update", test.request, FALSE, f->test_envp, &error);
+      g_ptr_array_add(argv, (gchar *)"atomupd-manager");
+      g_ptr_array_add(argv, (gchar *)"--session");
+      g_ptr_array_add(argv, (gchar *)"custom-update");
+
+
+
+      if (test.request != NULL)
+         g_ptr_array_add(argv, (gchar *)test.request);
+
+      if (test.branch != NULL) {
+         g_ptr_array_add(argv, (gchar *)"--branch");
+         g_ptr_array_add(argv, (gchar *)test.branch);
+      }
+
+      g_ptr_array_add(argv, NULL);
+
+      g_spawn_sync(NULL, /* working directory */
+                   (gchar **)argv->pdata, f->test_envp, G_SPAWN_SEARCH_PATH,
+                   NULL,          /* child setup */
+                   NULL,          /* user data */
+                   &output, NULL, /* stderr */
+                   &wait_status, &error);
+      g_assert_no_error(error);
+      g_spawn_check_wait_status(wait_status, &error);
+
       if (test.expected_error_code != 0) {
          g_assert_error(error, G_SPAWN_EXIT_ERROR, test.expected_error_code);
       } else {

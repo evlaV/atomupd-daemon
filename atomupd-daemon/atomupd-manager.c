@@ -103,6 +103,12 @@ static GOptionEntry create_list_builds_options[] = {
    { NULL }
 };
 
+static GOptionEntry create_custom_update_options[] = {
+   { "branch", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_branch,
+     "Select only the updates that are in this branch", NULL },
+   { NULL }
+};
+
 static void
 log_handler(const gchar *log_domain,
             GLogLevelFlags log_level,
@@ -755,6 +761,10 @@ custom_update_command(GOptionContext *context,
                gint64 inc = 0;
                char *endptr;
 
+               /* Apply the eventual branch filter */
+               if (opt_branch != NULL && !g_str_equal(opt_branch, branch))
+                  continue;
+
                parts = g_strsplit(version, ".", 4);
                parts_number = g_strv_length(parts);
                if (parts_number < 3) {
@@ -787,6 +797,10 @@ custom_update_command(GOptionContext *context,
                }
             }
          } else if (g_strcmp0(version, requested_version) == 0) {
+            /* Apply the eventual branch filter */
+            if (opt_branch != NULL && !g_str_equal(opt_branch, branch))
+               continue;
+
             print_image_info(buildid, version, branch);
             if (update_path == NULL)
                update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
@@ -1255,6 +1269,7 @@ main(int argc, char *argv[])
    g_autoptr(GOptionContext) context = NULL;
    GOptionGroup *dev_config_group = NULL;
    GOptionGroup *list_builds_group = NULL;
+   GOptionGroup *custom_update_group = NULL;
    g_autoptr(GDBusConnection) bus = NULL;
    g_autofree gchar *summary = NULL;
    GLogLevelFlags log_levels = G_LOG_LEVEL_MESSAGE | G_LOG_LEVEL_WARNING;
@@ -1277,6 +1292,12 @@ main(int argc, char *argv[])
       "list-builds", "list-builds Options:", "Show list-builds help options", NULL, NULL);
    g_option_group_add_entries(list_builds_group, create_list_builds_options);
    g_option_context_add_group(context, list_builds_group);
+
+   custom_update_group = g_option_group_new(
+      "custom-update", "custom-update Options:", "Show custom-update help options", NULL,
+      NULL);
+   g_option_group_add_entries(custom_update_group, create_custom_update_options);
+   g_option_context_add_group(context, custom_update_group);
 
    if (!g_option_context_parse(context, &argc, &argv, &error)) {
       g_print("%s\n", error->message);
@@ -1307,8 +1328,12 @@ main(int argc, char *argv[])
    }
 
    if (!g_str_equal(argv[1], "list-builds")) {
-      /* These options are only relevant for the list-builds command */
-      if (opt_branch != NULL || opt_variant != NULL)
+      /* This option is only relevant for the list-builds command */
+      if (opt_variant != NULL)
+         return print_usage(context);
+
+      /* This option is also relevant for custom-update */
+      if (!g_str_equal(argv[1], "custom-update") && opt_branch != NULL)
          return print_usage(context);
    }
 
