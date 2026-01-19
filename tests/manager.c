@@ -355,6 +355,12 @@ static const CustomUpdateTest custom_update_test[] = {
    },
 
    {
+      .title = "Requesting the latest 3.7 build",
+      .request = "3.7.x",
+      .output_prefix = "ID: 20240115.2 - version: 3.7.3 - branch: stable\n",
+   },
+
+   {
       .title = "Requesting a specific version that is not unique",
       .request = "3.6.5",
       .output_prefix = "ID: 20240107.1 - version: 3.6.5 - branch: rc\n"
@@ -362,6 +368,14 @@ static const CustomUpdateTest custom_update_test[] = {
                        "\nAll the results listed above are matching the request.\n"
                        "Please run again atomupd-manager by specifying the exact build ID "
                        "you'd like to install\n",
+      .expected_error_code = 1,
+   },
+
+   {
+      .title = "Requesting the latest 3.99 build that doesn't exist",
+      .request = "3.99.x",
+      .output_prefix = "An error occurred when trying to get the requested OS build\n"
+                       "Ensure that the requested image is valid and retry\n",
       .expected_error_code = 1,
    },
 

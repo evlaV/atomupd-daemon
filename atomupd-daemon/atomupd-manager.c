@@ -679,6 +679,7 @@ custom_update_command(GOptionContext *context,
    g_autoptr(GUri) uri = NULL;
    g_autofree gchar *update_url = NULL;
    g_autofree gchar *update_path = NULL;
+   gint64 current_inc = -1;
    gboolean multiple_matches = FALSE;
    g_autoptr(GError) error = NULL;
 
@@ -698,12 +699,23 @@ custom_update_command(GOptionContext *context,
       JsonArray *json_array = NULL; /* borrowed */
       guint json_length;
       const gchar *requested_buildid = NULL;
+      const gchar *selected_buildid = NULL;
+      const gchar *selected_branch = NULL;
+      const gchar *selected_version = NULL;
       g_autofree gchar *requested_version = NULL;
+      gboolean version_wildcard = FALSE;
 
       if (_is_buildid_valid(argument, NULL, NULL, NULL)) {
          requested_buildid = argument;
       } else {
-         requested_version = g_strdup(argument);
+         if (g_str_has_suffix(argument, ".x")) {
+            version_wildcard = TRUE;
+            /* Remove the 'x' suffix */
+            requested_version = g_strndup(argument, strlen(argument) - 1);
+
+         } else {
+            requested_version = g_strdup(argument);
+         }
       }
 
       builds_list_path = get_builds_list_path(bus, NULL, NULL, &error);
@@ -736,10 +748,45 @@ custom_update_command(GOptionContext *context,
                update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
                break;
             }
-            continue;
-         }
+         } else if (version_wildcard) {
+            if (g_str_has_prefix(version, requested_version)) {
+               g_auto(GStrv) parts = NULL;
+               guint parts_number;
+               gint64 inc = 0;
+               char *endptr;
 
-         if (g_strcmp0(version, requested_version) == 0) {
+               parts = g_strsplit(version, ".", 4);
+               parts_number = g_strv_length(parts);
+               if (parts_number < 3) {
+                  g_debug("%s of %s doesn't have a micro version, skipping...", version,
+                          buildid);
+                  continue;
+               }
+               if (parts_number > 3) {
+                  g_debug("We don't support versions with more than 3 parts, skipping %s "
+                          "of %s",
+                          version, buildid);
+                  continue;
+               }
+
+               inc = g_ascii_strtoll(parts[2], &endptr, 10);
+               if (inc < 0 || inc > G_MAXINT || endptr == parts[2] || *endptr != '\0') {
+                  g_debug("Encountered an unexpected version %s for %s", version,
+                          buildid);
+                  continue;
+               }
+
+               if (inc > current_inc) {
+                  current_inc = inc;
+                  g_clear_pointer(&update_path, g_free);
+                  update_path =
+                     g_strdup(json_object_get_string_member(obj, "update_path"));
+                  selected_buildid = buildid;
+                  selected_branch = branch;
+                  selected_version = version;
+               }
+            }
+         } else if (g_strcmp0(version, requested_version) == 0) {
             print_image_info(buildid, version, branch);
             if (update_path == NULL)
                update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
@@ -747,6 +794,11 @@ custom_update_command(GOptionContext *context,
                multiple_matches = TRUE;
          }
       }
+
+      /* When using a version wildcard we only know the selected image at the end of the
+       * loop */
+      if (version_wildcard && selected_buildid != NULL)
+         print_image_info(selected_buildid, selected_version, selected_branch);
 
       if (multiple_matches) {
          g_print("\nAll the results listed above are matching the request.\n");
@@ -1076,8 +1128,8 @@ static const LaunchCommands launch_commands[] = {
    {
       .command = "custom-update",
       .argument = "IMAGE",
-      .description =
-         "Apply a custom update from a specific RAUC bundle URL, version or buildid",
+      .description = "Apply a custom update from a specific RAUC bundle URL, version "
+                     "(including wildcard for micro version e.g. 3.7.x) or buildid",
       .command_function = custom_update_command,
    },
 
