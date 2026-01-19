@@ -611,7 +611,21 @@ update_command(GOptionContext *context, GDBusConnection *bus, const gchar *updat
 }
 
 static GVariant *
-get_atomupd_property(GDBusConnection *bus, const gchar *property, GError **error);
+get_atomupd_property(GDBusConnection *bus, const gchar *property, GError **error)
+{
+   g_autoptr(GVariant) reply = NULL;
+   g_autoptr(GVariant) variant_reply = NULL;
+   GVariant *body = NULL; /* floating */
+
+   body = g_variant_new("(ss)", AU_ATOMUPD1_INTERFACE, property);
+
+   if (!_send_properties_message(bus, "Get", body, &reply, error))
+      return NULL;
+
+   g_variant_get(reply, "(v)", &variant_reply);
+
+   return g_steal_pointer(&variant_reply);
+}
 
 static gchar *
 get_builds_list_path(GDBusConnection *bus,
@@ -793,23 +807,6 @@ switch_branch(GOptionContext *context, GDBusConnection *bus, const gchar *branch
    }
 
    return EXIT_SUCCESS;
-}
-
-static GVariant *
-get_atomupd_property(GDBusConnection *bus, const gchar *property, GError **error)
-{
-   g_autoptr(GVariant) reply = NULL;
-   g_autoptr(GVariant) variant_reply = NULL;
-   GVariant *body = NULL; /* floating */
-
-   body = g_variant_new("(ss)", AU_ATOMUPD1_INTERFACE, property);
-
-   if (!_send_properties_message(bus, "Get", body, &reply, error))
-      return NULL;
-
-   g_variant_get(reply, "(v)", &variant_reply);
-
-   return g_steal_pointer(&variant_reply);
 }
 
 static int
