@@ -23,6 +23,8 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "au-atomupd1-impl.h"
+
 #include <errno.h>
 #include <string.h>
 #include <sysexits.h>
@@ -504,7 +506,10 @@ check_updates(GOptionContext *context,
  * Launch an update and wait until it either completes or fails
  */
 static int
-launch_update(GDBusConnection *bus, const gchar *update_id, const gchar *update_url)
+launch_update(GDBusConnection *bus,
+              const gchar *update_id,
+              const gchar *update_url,
+              const gchar *update_path)
 {
    g_autoptr(GDBusProxy) proxy = NULL;
    g_autoptr(GError) error = NULL;
@@ -559,6 +564,14 @@ launch_update(GDBusConnection *bus, const gchar *update_id, const gchar *update_
       g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
       g_variant_builder_add(&builder, "{sv}", "url", g_variant_new_string(update_url));
       body = g_variant_new("(@a{sv})", g_variant_builder_end(&builder));
+   } else if (update_path != NULL) {
+      GVariantBuilder builder;
+
+      method = "StartCustomUpdate";
+      g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+      g_variant_builder_add(&builder, "{sv}", "update_path",
+                            g_variant_new_string(update_path));
+      body = g_variant_new("(@a{sv})", g_variant_builder_end(&builder));
    } else {
       method = "StartUpdate";
       body = g_variant_new("(s)", update_id);
@@ -594,7 +607,7 @@ update_command(GOptionContext *context, GDBusConnection *bus, const gchar *updat
       return print_usage(context);
    }
 
-   return launch_update(bus, update_id, NULL);
+   return launch_update(bus, update_id, NULL, NULL);
 }
 
 static GVariant *
@@ -638,17 +651,104 @@ get_builds_list_path(GDBusConnection *bus,
    return g_steal_pointer(&builds_list_path);
 }
 
+static void
+print_image_info(const gchar *buildid, const gchar *version, const gchar *branch)
+{
+   printf("ID: %s - version: %s - branch: %s\n", buildid, version, branch);
+}
+
 static int
 custom_update_command(GOptionContext *context,
                       GDBusConnection *bus,
-                      const gchar *update_url)
+                      const gchar *argument)
 {
-   if (update_url == NULL) {
-      g_print("It is not possible to apply an update without its URL\n\n");
+   g_autoptr(GUri) uri = NULL;
+   g_autofree gchar *update_url = NULL;
+   g_autofree gchar *update_path = NULL;
+   gboolean multiple_matches = FALSE;
+   g_autoptr(GError) error = NULL;
+
+   if (argument == NULL) {
+      g_print("An update selector is required\n\n");
       return print_usage(context);
    }
 
-   return launch_update(bus, NULL, update_url);
+   uri = g_uri_parse(argument, G_URI_FLAGS_NONE, NULL);
+   if (uri != NULL) {
+      update_url = g_strdup(argument);
+      g_print("Applying custom update from: %s\n", update_url);
+   } else {
+      g_autofree gchar *builds_list_path = NULL;
+      g_autoptr(JsonParser) parser = NULL;
+      JsonNode *json_node = NULL;   /* borrowed */
+      JsonArray *json_array = NULL; /* borrowed */
+      guint json_length;
+      const gchar *requested_buildid = NULL;
+      g_autofree gchar *requested_version = NULL;
+
+      if (_is_buildid_valid(argument, NULL, NULL, NULL)) {
+         requested_buildid = argument;
+      } else {
+         requested_version = g_strdup(argument);
+      }
+
+      builds_list_path = get_builds_list_path(bus, NULL, NULL, &error);
+      if (builds_list_path == NULL) {
+         g_print("An error occurred while getting the list of builds: %s\n",
+                 error->message);
+         return EXIT_FAILURE;
+      }
+
+      parser = json_parser_new();
+      if (!json_parser_load_from_file(parser, builds_list_path, &error)) {
+         g_print("Error parsing the JSON list: %s\n", error->message);
+         return EXIT_FAILURE;
+      }
+
+      json_node = json_parser_get_root(parser);
+      json_array = json_node_get_array(json_node);
+      json_length = json_array_get_length(json_array);
+
+      for (gsize i = 0; i < json_length; i++) {
+         JsonObject *obj = json_array_get_object_element(json_array, i);
+         const gchar *buildid = json_object_get_string_member(obj, "buildid");
+         const gchar *branch = json_object_get_string_member(obj, "branch");
+         const gchar *version = json_object_get_string_member(obj, "version");
+
+         if (requested_buildid != NULL) {
+            /* Buildids are unique */
+            if (g_strcmp0(buildid, requested_buildid) == 0) {
+               print_image_info(buildid, version, branch);
+               update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
+               break;
+            }
+            continue;
+         }
+
+         if (g_strcmp0(version, requested_version) == 0) {
+            print_image_info(buildid, version, branch);
+            if (update_path == NULL)
+               update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
+            else
+               multiple_matches = TRUE;
+         }
+      }
+
+      if (multiple_matches) {
+         g_print("\nAll the results listed above are matching the request.\n");
+         g_print("Please run again atomupd-manager by specifying the exact build ID "
+                 "you'd like to install\n");
+         return EXIT_FAILURE;
+      }
+   }
+
+   if (update_url == NULL && update_path == NULL) {
+      g_print("An error occurred when trying to get the requested OS build\n");
+      g_print("Ensure that the requested image is valid and retry\n");
+      return EXIT_FAILURE;
+   }
+
+   return launch_update(bus, NULL, update_url, update_path);
 }
 
 static int
@@ -803,7 +903,7 @@ list_builds(G_GNUC_UNUSED GOptionContext *context,
             GDBusConnection *bus,
             G_GNUC_UNUSED const gchar *argument)
 {
-   const gchar *variant = NULL;
+   g_autofree gchar *variant = NULL;
    g_autofree gchar *builds_list_path = NULL;
    g_autoptr(JsonParser) parser = NULL;
    g_autoptr(GError) error = NULL;
@@ -978,8 +1078,9 @@ static const LaunchCommands launch_commands[] = {
 
    {
       .command = "custom-update",
-      .argument = "URL",
-      .description = "Apply a custom update from a specific RAUC bundle",
+      .argument = "IMAGE",
+      .description =
+         "Apply a custom update from a specific RAUC bundle URL, version or buildid",
       .command_function = custom_update_command,
    },
 

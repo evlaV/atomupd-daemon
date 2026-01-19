@@ -328,12 +328,57 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    au_tests_stop_process(daemon_proc);
 }
 
+typedef struct {
+   const gchar *title;
+   const gchar *request;
+   const gchar *output_prefix;
+   gint expected_error_code;
+} CustomUpdateTest;
+
+static const CustomUpdateTest custom_update_test[] = {
+   {
+      .title = "Custom update from URL that is expected to complete in 1.5 seconds",
+      .request = "https://example.com/os.raucb",
+      .output_prefix = "Applying custom update from: https://example.com/os.raucb\n",
+   },
+
+   {
+      .title = "Requesting a specific buildid",
+      .request = "20240115.1",
+      .output_prefix = "ID: 20240115.1 - version: 3.7.2 - branch: stable\n",
+   },
+
+   {
+      .title = "Requesting a specific version",
+      .request = "3.7.3",
+      .output_prefix = "ID: 20240115.2 - version: 3.7.3 - branch: stable\n",
+   },
+
+   {
+      .title = "Requesting a specific version that is not unique",
+      .request = "3.6.5",
+      .output_prefix = "ID: 20240107.1 - version: 3.6.5 - branch: rc\n"
+                       "ID: 20240104.1 - version: 3.6.5 - branch: stable\n"
+                       "\nAll the results listed above are matching the request.\n"
+                       "Please run again atomupd-manager by specifying the exact build ID "
+                       "you'd like to install\n",
+      .expected_error_code = 1,
+   },
+
+   {
+      .title = "Without an argument should result in the usage helper being printed",
+      .expected_error_code = 64,
+   },
+};
+
 static void
 test_custom_update(Fixture *f, gconstpointer context)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GSubprocess) http_server_proc = NULL;
    g_autoptr(GDBusConnection) bus = NULL;
-   g_autoptr(GError) error = NULL;
+   g_autofree gchar *local_server_dir = NULL;
+   gsize i;
 
    bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
 
@@ -342,29 +387,33 @@ test_custom_update(Fixture *f, gconstpointer context)
    daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
                                                f->test_envp, FALSE);
 
-   {
+   local_server_dir = g_build_filename(f->srcdir, "data", "client_meta", NULL);
+   http_server_proc = au_tests_start_local_http_server(local_server_dir);
+
+   for (i = 0; i < G_N_ELEMENTS(custom_update_test); i++) {
       g_autofree gchar *output = NULL;
       g_autofree gchar *update_status = NULL;
+      const CustomUpdateTest test = custom_update_test[i];
+      g_autoptr(GError) error = NULL;
 
-      g_debug(
-         "Starting a custom update from URL that is expected to complete in 1.5 seconds");
-      output = _au_execute_manager("custom-update", "https://example.com/os.raucb", FALSE,
-                                   f->test_envp, &error);
-      g_assert_no_error(error);
-      g_assert_nonnull(strstr(output, "Update completed"));
-      update_status =
+      g_debug("Running test: %s", test.title);
+
+      output = _au_execute_manager("custom-update", test.request, FALSE, f->test_envp, &error);
+      if (test.expected_error_code != 0) {
+         g_assert_error(error, G_SPAWN_EXIT_ERROR, test.expected_error_code);
+      } else {
+         g_assert_no_error(error);
+         g_assert_true(g_str_has_suffix(output, "Update completed\n"));
+         g_assert_true(g_str_has_prefix(output, test.output_prefix));
+
+         update_status =
          _au_execute_manager("get-update-status", NULL, FALSE, f->test_envp, NULL);
-      g_assert_cmpstr(update_status, ==, "successful\n");
-   }
-
-   {
-      /* Calling "atomupd-manager custom-update" without a URL should result in the usage
-       * helper being printed */
-      _au_execute_manager("custom-update", NULL, FALSE, f->test_envp, &error);
-      g_assert_error(error, G_SPAWN_EXIT_ERROR, 64);
+         g_assert_cmpstr(update_status, ==, "successful\n");
+      }
    }
 
    au_tests_stop_process(daemon_proc);
+   au_tests_stop_process(http_server_proc);
 }
 
 static gboolean
