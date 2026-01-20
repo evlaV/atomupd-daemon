@@ -215,6 +215,13 @@ on_properties_changed(GDBusProxy *proxy,
       g_main_loop_quit(main_loop);
       return;
    case AU_UPDATE_STATUS_CANCELLED:
+      g_print("\nThe update has been cancelled\n");
+      main_loop_result = EXIT_FAILURE;
+      g_main_loop_quit(main_loop);
+      return;
+   /* We don't act on "idle" because this may be at the very beginning and the update
+    * status could still need to be set to "in progress". After an update starts, there
+    * is no way for it to go back to "idle" anyway. */
    case AU_UPDATE_STATUS_IDLE:
    case AU_UPDATE_STATUS_IN_PROGRESS:
    case AU_UPDATE_STATUS_PAUSED:
