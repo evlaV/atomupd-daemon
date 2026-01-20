@@ -166,6 +166,8 @@ on_properties_changed(GDBusProxy *proxy,
    GVariant *value; /* borrowed */
    gboolean interesting_change = FALSE;
    guint status;
+   g_autoptr(GVariant) failure_code = NULL;
+   g_autoptr(GVariant) failure_message = NULL;
    g_autoptr(GVariant) progress_prop = NULL;
    g_autoptr(GVariant) time_prop = NULL;
    g_autoptr(GVariant) status_prop = NULL;
@@ -197,14 +199,12 @@ on_properties_changed(GDBusProxy *proxy,
 
    status_prop = g_dbus_proxy_get_cached_property(proxy, "UpdateStatus");
    status = g_variant_get_uint32(status_prop);
-   if (status == AU_UPDATE_STATUS_SUCCESSFUL) {
+   switch (status) {
+   case AU_UPDATE_STATUS_SUCCESSFUL:
       g_print("\nUpdate completed\n");
       g_main_loop_quit(main_loop);
       return;
-   } else if (status == AU_UPDATE_STATUS_FAILED) {
-      g_autoptr(GVariant) failure_code = NULL;
-      g_autoptr(GVariant) failure_message = NULL;
-
+   case AU_UPDATE_STATUS_FAILED:
       failure_code = g_dbus_proxy_get_cached_property(proxy, "FailureCode");
       failure_message = g_dbus_proxy_get_cached_property(proxy, "FailureMessage");
       g_print("\nThe update failed!\n");
@@ -214,6 +214,12 @@ on_properties_changed(GDBusProxy *proxy,
       main_loop_result = EXIT_FAILURE;
       g_main_loop_quit(main_loop);
       return;
+   case AU_UPDATE_STATUS_CANCELLED:
+   case AU_UPDATE_STATUS_IDLE:
+   case AU_UPDATE_STATUS_IN_PROGRESS:
+   case AU_UPDATE_STATUS_PAUSED:
+   default:
+      break;
    }
 
    progress_prop = g_dbus_proxy_get_cached_property(proxy, "ProgressPercentage");
