@@ -937,20 +937,6 @@ _au_get_default_branch(const gchar *manifest)
    return g_steal_pointer(&branch);
 }
 
-/*
- * _au_get_current_system_build_id:
- * @manifest: (not nullable): Path to the JSON manifest file
- * @error: Used to raise an error on failure
- *
- * Returns: (type filename) (transfer full): The system build ID, taken
- *  from the manifest file.
- */
-static gchar *
-_au_get_current_system_build_id(const gchar *manifest, GError **error)
-{
-   return _au_get_string_from_manifest(manifest, "buildid", error);
-}
-
 typedef void (*AuthorizedCallback)(AuAtomupd1 *object,
                                    GDBusMethodInvocation *invocation,
                                    gpointer data);
@@ -1056,20 +1042,6 @@ _au_check_auth(AuAtomupd1 *object,
    polkit_authority_check_authorization(self->authority, subject, action_id, NULL, flags,
                                         NULL, (GAsyncReadyCallback)_check_auth_cb,
                                         g_steal_pointer(&data));
-}
-
-/*
- * _au_get_current_system_version:
- * @manifest: (not nullable): Path to the JSON manifest file
- * @error: Used to raise an error on failure
- *
- * Returns: (type filename) (transfer full): The system version, taken
- *  from the manifest file.
- */
-static gchar *
-_au_get_current_system_version(const gchar *manifest, GError **error)
-{
-   return _au_get_string_from_manifest(manifest, "version", error);
 }
 
 /*
@@ -2732,26 +2704,33 @@ _au_parse_preferences(AuAtomupd1Impl *atomupd, GError **error)
 static gboolean
 _au_parse_manifest(AuAtomupd1Impl *atomupd, GError **error)
 {
-   g_autofree gchar *system_build_id = NULL;
-   g_autofree gchar *system_version = NULL;
+   const gchar *build_id = NULL;
+   const gchar *version = NULL;
+   JsonObject *json_object = NULL; /* borrowed */
+   g_autoptr(JsonParser) parser = NULL;
 
    g_return_val_if_fail(atomupd != NULL, FALSE);
    g_return_val_if_fail(atomupd->manifest_path != NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
-   system_build_id = _au_get_current_system_build_id(atomupd->manifest_path, error);
-   if (system_build_id == NULL)
-      return FALSE;
-   system_version = _au_get_current_system_version(atomupd->manifest_path, error);
-   if (system_version == NULL)
+   json_object = _au_load_manifest_object(atomupd->manifest_path, &parser, error);
+   if (json_object == NULL)
       return FALSE;
 
-   if (!_is_buildid_valid(system_build_id, &atomupd->buildid_date,
-                          &atomupd->buildid_increment, error))
+   build_id = json_object_get_string_member_with_default(json_object, "buildid", NULL);
+   version = json_object_get_string_member_with_default(json_object, "version", NULL);
+
+   if (build_id == NULL || version == NULL)
+      return au_throw_error(error,
+                            "The manifest JSON \"%s\" doesn't have the expected keys",
+                            atomupd->manifest_path);
+
+   if (!_is_buildid_valid(build_id, &atomupd->buildid_date, &atomupd->buildid_increment,
+                          error))
       return FALSE;
 
-   au_atomupd1_set_current_build_id((AuAtomupd1 *)atomupd, system_build_id);
-   au_atomupd1_set_current_version((AuAtomupd1 *)atomupd, system_version);
+   au_atomupd1_set_current_build_id((AuAtomupd1 *)atomupd, build_id);
+   au_atomupd1_set_current_version((AuAtomupd1 *)atomupd, version);
 
    return TRUE;
 }
