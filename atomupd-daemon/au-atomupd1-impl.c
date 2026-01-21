@@ -830,24 +830,23 @@ _au_get_meta_url_from_default_config(const AuAtomupd1Impl *atomupd, GError **err
 }
 
 /*
- * _au_get_string_from_manifest:
+ * _au_load_manifest_object:
  * @manifest: (not nullable): Path to the JSON manifest file
- * @key: (not nullable): Key whose value will be returned
+ * @parser_out: (out) (not optional): Location to store the created #JsonParser
  * @error: Used to raise an error on failure
  *
- * Returns: (type filename) (transfer full): The value of @key, taken from the
- *  manifest file.
+ * Returns: (transfer none): The root #JsonObject of the manifest, or %NULL
+ * on failure. The returned object is borrowed from the parser and must
+ * not be freed independently.
  */
-static gchar *
-_au_get_string_from_manifest(const gchar *manifest, const gchar *key, GError **error)
+static JsonObject *
+_au_load_manifest_object(const gchar *manifest, JsonParser **parser_out, GError **error)
 {
-   const gchar *value = NULL;
-   JsonNode *json_node = NULL;     /* borrowed */
-   JsonObject *json_object = NULL; /* borrowed */
+   JsonNode *json_node; /* borrowed */
    g_autoptr(JsonParser) parser = NULL;
 
    g_return_val_if_fail(manifest != NULL, NULL);
-   g_return_val_if_fail(key != NULL, NULL);
+   g_return_val_if_fail(parser_out != NULL, NULL);
    g_return_val_if_fail(error == NULL || *error == NULL, NULL);
 
    parser = json_parser_new();
@@ -861,7 +860,34 @@ _au_get_string_from_manifest(const gchar *manifest, const gchar *key, GError **e
       return NULL;
    }
 
-   json_object = json_node_get_object(json_node);
+   *parser_out = g_steal_pointer(&parser);
+   return json_node_get_object(json_node);
+}
+
+/*
+ * _au_get_string_from_manifest:
+ * @manifest: (not nullable): Path to the JSON manifest file
+ * @key: (not nullable): Key whose value will be returned
+ * @error: Used to raise an error on failure
+ *
+ * Returns: (type filename) (transfer full): The value of @key, taken from the
+ *  manifest file.
+ */
+static gchar *
+_au_get_string_from_manifest(const gchar *manifest, const gchar *key, GError **error)
+{
+   const gchar *value = NULL;
+   JsonObject *json_object = NULL; /* borrowed */
+   g_autoptr(JsonParser) parser = NULL;
+
+   g_return_val_if_fail(manifest != NULL, NULL);
+   g_return_val_if_fail(key != NULL, NULL);
+   g_return_val_if_fail(error == NULL || *error == NULL, NULL);
+
+   json_object = _au_load_manifest_object(manifest, &parser, error);
+   if (json_object == NULL)
+      return NULL;
+
    value = json_object_get_string_member_with_default(json_object, key, NULL);
 
    if (value == NULL)
@@ -1623,7 +1649,6 @@ _au_download_remote_info(AuAtomupd1Impl *atomupd, GError **error)
    const gchar *product = NULL;
    const gchar *architecture = NULL;
    const gchar *variant = NULL;
-   JsonNode *json_node = NULL;     /* borrowed */
    JsonObject *json_object = NULL; /* borrowed */
    g_autoptr(JsonParser) parser = NULL;
    g_autoptr(GTask) task = NULL;
@@ -1638,16 +1663,9 @@ _au_download_remote_info(AuAtomupd1Impl *atomupd, GError **error)
       return TRUE;
    }
 
-   parser = json_parser_new();
-   if (!json_parser_load_from_file(parser, atomupd->manifest_path, error))
+   json_object = _au_load_manifest_object(atomupd->manifest_path, &parser, error);
+   if (json_object == NULL)
       return FALSE;
-
-   json_node = json_parser_get_root(parser);
-   if (json_node == NULL)
-      return au_throw_error(error, "failed to parse the manifest JSON \"%s\"",
-                            atomupd->manifest_path);
-
-   json_object = json_node_get_object(json_node);
 
    release = json_object_get_string_member_with_default(json_object, "release", NULL);
    product = json_object_get_string_member_with_default(json_object, "product", NULL);
