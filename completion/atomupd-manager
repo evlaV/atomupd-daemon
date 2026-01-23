@@ -6,11 +6,13 @@ _atomupd_manager() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="check update switch-variant switch-branch list-variants list-branches tracked-variant tracked-branch get-update-status create-dev-conf list-builds"
+    local commands="check update switch-variant switch-branch list-variants list-branches tracked-variant tracked-branch get-update-status create-dev-conf list-builds custom-update"
 
     local common_opts="--session --verbose --version --help"
     local create_dev_conf_opts="--additional-variant --username --password --skip-reload"
     local check_opts="--penultimate-update"
+    local list_builds_opts="--branch --variant"
+    local custom_update_opts="--branch"
 
     # Complete the first command argument
     if [[ ${COMP_CWORD} -eq 1 ]]; then
@@ -25,6 +27,12 @@ _atomupd_manager() {
             ;;
         check)
             opts="${common_opts} ${check_opts}"
+            ;;
+        list-builds)
+            opts="${common_opts} ${list_builds_opts}"
+            ;;
+        custom-update)
+            opts="${common_opts} ${custom_update_opts}"
             ;;
         *)
             opts="${common_opts}"
