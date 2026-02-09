@@ -4,4 +4,18 @@ Description=Atomic Update Daemon
 [Service]
 Type=dbus
 BusName=com.steampowered.Atomupd1
+# To validate the TLS certificate of the HTTPS requests, and to verify the validity
+# of the raucb signature, we try to wait for the date to be synched with NTP.
+# We set a timeout of 20 seconds, which under normal circumstances, should be plenty.
+# Ideally the timeout should always be shorter than the general timeout that
+# `atomupd-manger check` uses (30 seconds), to avoid failing the first `check` request
+# on timeout.
+# The '-' prefix is used to let systemd continue even if `systemd-time-wait-sync` fails,
+# e.g. if the timeout is reached. In that scenario we still launch the Atomupd service
+# and try to proceed anyway.
+ExecStartPre=-/usr/bin/sh -c ' \
+    if [ "$(/usr/bin/timedatectl show --property=NTP --value)" = "yes" ]; then \
+        /usr/bin/timeout 20s /usr/lib/systemd/systemd-time-wait-sync; \
+    fi \
+'
 ExecStart=@libexecdir@/atomupd-daemon
