@@ -73,8 +73,6 @@ const gchar *AU_REBOOT_FOR_UPDATE = "/run/steamos-atomupd/reboot_for_update";
 /* Please keep this in sync with steamos-customizations rauc/system.conf */
 const gchar *AU_DESYNC_CONFIG_PATH = "/etc/desync/config.json";
 
-const gchar *AU_NETRC_PATH = "/root/.netrc";
-
 struct _AuAtomupd1Impl {
    AuAtomupd1Skeleton parent_instance;
 
@@ -629,63 +627,6 @@ _au_clear_available_updates(AuAtomupd1 *object)
    available_later = g_variant_new("a{sa{sv}}", NULL);
    au_atomupd1_set_updates_available(object, g_steal_pointer(&available));
    au_atomupd1_set_updates_available_later(object, g_steal_pointer(&available_later));
-}
-
-/*
- * _au_get_http_auth_from_config:
- * @client_config: (not nullable): Object that holds the configuration key file
- * @username_out: (out): Used to return the required username
- * @password_out: (out): Used to return the required password
- * @encoded_out: (out): Used to return the auth type, followed by the base64
- *  encoded `@username_out:@password_out`
- *
- * Returns: %TRUE if the configuration has the HTTP authentication info.
- */
-gboolean
-_au_get_http_auth_from_config(GKeyFile *client_config,
-                              gchar **username_out,
-                              gchar **password_out,
-                              gchar **encoded_out)
-{
-   g_autofree gchar *username = NULL;
-   g_autofree gchar *password = NULL;
-   g_autoptr(GError) local_error = NULL;
-
-   g_return_val_if_fail(client_config != NULL, FALSE);
-   g_return_val_if_fail(username_out == NULL || *username_out == NULL, FALSE);
-   g_return_val_if_fail(password_out == NULL || *password_out == NULL, FALSE);
-   g_return_val_if_fail(encoded_out == NULL || *encoded_out == NULL, FALSE);
-
-   username = g_key_file_get_string(client_config, "Server", "Username", &local_error);
-   if (username == NULL) {
-      g_debug("Assuming no authentication required for this config: %s",
-              local_error->message);
-      return FALSE;
-   }
-
-   password = g_key_file_get_string(client_config, "Server", "Password", &local_error);
-   if (password == NULL) {
-      g_debug("Assuming no authentication required for this config: %s",
-              local_error->message);
-      return FALSE;
-   }
-
-   if (encoded_out != NULL) {
-      g_autofree gchar *user_pass = NULL;
-      g_autofree gchar *user_pass_base64 = NULL;
-
-      user_pass = g_strdup_printf("%s:%s", username, password);
-      user_pass_base64 = g_base64_encode((guchar *)user_pass, strlen(user_pass));
-      *encoded_out = g_strdup_printf("Basic %s", user_pass_base64);
-   }
-
-   if (username_out != NULL)
-      *username_out = g_steal_pointer(&username);
-
-   if (password_out != NULL)
-      *password_out = g_steal_pointer(&password);
-
-   return TRUE;
 }
 
 /*
@@ -2786,9 +2727,6 @@ static gboolean
 _au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
 {
    const gchar *server_mandatory_key[] = { "ImagesUrl", "MetaUrl", NULL };
-   g_autofree gchar *username = NULL;
-   g_autofree gchar *password = NULL;
-   g_autofree gchar *auth_encoded = NULL;
    g_autofree gchar *default_variant = NULL;
    g_autofree gchar *default_branch = NULL;
    g_auto(GStrv) known_variants = NULL;
@@ -2913,26 +2851,7 @@ _au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
       return FALSE;
    }
 
-   /* If the config has an HTTP auth, we need to ensure that netrc and Desync
-    * have it too */
-   if (_au_get_http_auth_from_config(client_config, &username, &password,
-                                     &auth_encoded)) {
-      g_autoptr(GList) urls = NULL;
-      const gchar *desync_config_path;
-
-      urls = g_hash_table_get_values(url_table);
-
-      if (!_au_ensure_urls_in_netrc(AU_NETRC_PATH, urls, username, password, error))
-         return FALSE;
-
-      desync_config_path = g_getenv("AU_DESYNC_CONFIG_PATH");
-      if (desync_config_path == NULL)
-         desync_config_path = AU_DESYNC_CONFIG_PATH;
-
-      if (!_au_ensure_url_in_desync_conf(desync_config_path, atomupd->images_url,
-                                         auth_encoded, error))
-         return FALSE;
-   }
+   /* TODO handle eventual username and password values from config */
 
    _au_set_trusted_dev_keys((AuAtomupd1 *)atomupd);
 

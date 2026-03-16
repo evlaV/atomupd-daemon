@@ -56,86 +56,6 @@ teardown(Fixture *f, gconstpointer context)
 }
 
 typedef struct {
-   const gchar *description;
-   const gchar *config;
-   const gchar *username;
-   const gchar *password;
-   const gchar *auth_encoded;
-} ConfigAuthTest;
-
-static const ConfigAuthTest config_auth_tests[] = {
-   {
-      .description = "Test config with authentication",
-      .config = "[Server]\n"
-                "QueryUrl = https://example.com\n"
-                "Username = foo\n"
-                "Password = hunter2\n"
-                "Variants = steamdeck-test",
-      .username = "foo",
-      .password = "hunter2",
-      .auth_encoded = "Basic Zm9vOmh1bnRlcjI=",
-   },
-
-   {
-      .description = "Test config with additional sections",
-      .config = "[Server]\n"
-                "QueryUrl = https://example.com\n"
-                "Username = foo\n"
-                "Password = hunter2\n"
-                "Variants = steamdeck-test\n"
-                "[Host]\n"
-                "Username = unrelated_thing",
-      .username = "foo",
-      .password = "hunter2",
-      .auth_encoded = "Basic Zm9vOmh1bnRlcjI=",
-   },
-
-   {
-      .description = "Test config with missing password",
-      .config = "[Server]\n"
-                "QueryUrl = https://example.com\n"
-                "Username = foo\n",
-   },
-
-   {
-      .description = "Test config without authentication",
-      .config = "[Server]\n"
-                "QueryUrl = https://example.com\n",
-   },
-};
-
-static void
-test_config_auth(Fixture *f, gconstpointer context)
-{
-   for (gsize i = 0; i < G_N_ELEMENTS(config_auth_tests); i++) {
-      const ConfigAuthTest *test = &config_auth_tests[i];
-      g_autoptr(GKeyFile) key_file = NULL;
-      g_autofree gchar *username = NULL;
-      g_autofree gchar *password = NULL;
-      g_autofree gchar *auth_encoded = NULL;
-      g_autoptr(GError) error = NULL;
-      gboolean result;
-
-      key_file = g_key_file_new();
-
-      g_key_file_load_from_data(key_file, test->config, -1, G_KEY_FILE_NONE, &error);
-      g_assert_no_error(error);
-
-      result =
-         _au_get_http_auth_from_config(key_file, &username, &password, &auth_encoded);
-
-      if (test->username == NULL)
-         g_assert_false(result);
-      else
-         g_assert_true(result);
-
-      g_assert_cmpstr(username, ==, test->username);
-      g_assert_cmpstr(password, ==, test->password);
-      g_assert_cmpstr(auth_encoded, ==, test->auth_encoded);
-   }
-}
-
-typedef struct {
    const gchar *buildid;
    const gint64 date;
    const gint64 increment;
@@ -216,7 +136,6 @@ main(int argc, char **argv)
 
 #define test_add(_name, _test) g_test_add(_name, Fixture, argv[0], setup, _test, teardown)
 
-   test_add("/atomupd1/config_auth", test_config_auth);
    test_add("/atomupd1/buildid_check", test_buildid_check);
 
    return g_test_run();

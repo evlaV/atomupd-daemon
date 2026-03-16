@@ -44,10 +44,5 @@ AuAtomupd1 *au_atomupd1_impl_new(const gchar *config_directory,
                                  GDBusConnection *bus,
                                  GError **error);
 
-gboolean _au_get_http_auth_from_config(GKeyFile *client_config,
-                                       gchar **username_out,
-                                       gchar **password_out,
-                                       gchar **encoded_out);
-
 gboolean
 _is_buildid_valid(const gchar *buildid, gint64 *date_out, gint64 *inc_out, GError **error);

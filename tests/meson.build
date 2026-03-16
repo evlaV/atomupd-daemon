@@ -1,4 +1,4 @@
-# Copyright © 2022 Collabora Ltd.
+# Copyright © 2022-2026 Collabora Ltd.
 #
 # SPDX-License-Identifier: MIT
 #
@@ -69,7 +69,7 @@ executable(
   install_dir: tests_dir
 )
 
-foreach test_name : ['au-atomupd1-impl', 'impl', 'manager', 'utils']
+foreach test_name : ['au-atomupd1-impl', 'impl', 'manager']
   exe = executable(
     'test-' + test_name,
     sources : [test_name + '.c', 'fixture.c', 'mock-defines.h', 'services.c', 'tests-utils.c', atomupd1],

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2024 Collabora Ltd.
+ * Copyright © 2022-2026 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -73,19 +73,6 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(CURLU, curl_url_cleanup)
 void download_data_free(DownloadData *data);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(DownloadData, download_data_free)
-
-gchar *_au_get_host_from_url(const gchar *url);
-
-gboolean _au_ensure_urls_in_netrc(const gchar *netrc_path,
-                                  const GList *urls,
-                                  const gchar *username,
-                                  const gchar *password,
-                                  GError **error);
-
-gboolean _au_ensure_url_in_desync_conf(const gchar *desync_conf_path,
-                                       const gchar *url,
-                                       const gchar *auth_encoded,
-                                       GError **error);
 
 void _au_download_thread_func(GTask *task,
                               gpointer source_object,
