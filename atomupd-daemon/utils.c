@@ -65,6 +65,35 @@ download_data_free(DownloadData *data)
 }
 
 /*
+ * _au_redact_url:
+ * @url: (not nullable): URL that may contain a secret hash component
+ * @error: Used to raise an error on failure
+ *
+ * Replaces the secret hash path component with `REDACTED`, so that the
+ * URL can be safely used in log messages.
+ *
+ * Returns: (transfer full): the redacted URL, or %NULL on error
+ */
+gchar *
+_au_redact_url(const gchar *url, GError **error)
+{
+   g_autofree gchar *pattern = NULL;
+   g_autoptr(GRegex) regex = NULL;
+
+   g_return_val_if_fail(url != NULL, NULL);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
+
+   pattern = g_strdup_printf("[^/]+_%s", AU_HASH_NOTICE);
+   regex = g_regex_new(pattern, G_REGEX_DEFAULT, G_REGEX_MATCH_DEFAULT, error);
+
+   if (regex == NULL)
+      return NULL;
+
+   return g_regex_replace_literal(regex, url, -1, 0, "REDACTED", G_REGEX_MATCH_DEFAULT,
+                                  error);
+}
+
+/*
  * _au_download_thread_func:
  * @task_data: (not nullable): DownloadData pointer
  *
@@ -121,9 +150,17 @@ _au_download_thread_func(GTask *task,
    fclose(fp);
 
    if (r != CURLE_OK) {
+      g_autofree gchar *sanitized_url = NULL;
+
       g_unlink(tmp_file);
+
+      sanitized_url = _au_redact_url(data->url, &error);
+
+      if (sanitized_url == NULL)
+         return g_task_return_error(task, g_steal_pointer(&error));
+
       g_set_error(&error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
-                  "The download from '%s' failed", data->url);
+                  "The download from '%s' failed", sanitized_url);
       return g_task_return_error(task, g_steal_pointer(&error));
    }
 

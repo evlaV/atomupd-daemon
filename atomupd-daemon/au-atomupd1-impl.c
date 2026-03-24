@@ -73,6 +73,9 @@ const gchar *AU_REBOOT_FOR_UPDATE = "/run/steamos-atomupd/reboot_for_update";
 /* Please keep this in sync with steamos-customizations rauc/system.conf */
 const gchar *AU_DESYNC_CONFIG_PATH = "/etc/desync/config.json";
 
+/* Please keep this in sync with the server nginx configuration */
+const gchar *AU_HASH_NOTICE = "DO_NOT_SHARE_URL";
+
 struct _AuAtomupd1Impl {
    AuAtomupd1Skeleton parent_instance;
 
@@ -89,6 +92,7 @@ struct _AuAtomupd1Impl {
    gchar *architecture;
    gchar *meta_url;
    gchar *images_url;
+   gchar *secret_hash;
    GFile *updates_json_file;
    GFile *updates_json_copy;
    GDataInputStream *start_update_stdout_stream;
@@ -627,6 +631,43 @@ _au_clear_available_updates(AuAtomupd1 *object)
    available_later = g_variant_new("a{sa{sv}}", NULL);
    au_atomupd1_set_updates_available(object, g_steal_pointer(&available));
    au_atomupd1_set_updates_available_later(object, g_steal_pointer(&available_later));
+}
+
+/*
+ * _au_get_secret_hash_from_config:
+ * @client_config: (not nullable): Object that holds the configuration key file
+ *
+ * Parses the eventual username and password from @client_config, and generates
+ * the secret hash used on the server.
+ *
+ * Returns: (transfer full): The hash for the username and password, or %NULL if
+ *  @client_config doesn't have authentication info.
+ */
+gchar *
+_au_get_secret_hash_from_config(GKeyFile *client_config)
+{
+   g_autofree gchar *username = NULL;
+   g_autofree gchar *password = NULL;
+   g_autofree gchar *secret = NULL;
+   g_autoptr(GError) local_error = NULL;
+
+   g_return_val_if_fail(client_config != NULL, NULL);
+
+   username = g_key_file_get_string(client_config, "Server", "Username", &local_error);
+   if (username == NULL) {
+      g_debug("No secret hash required for this config: %s", local_error->message);
+      return NULL;
+   }
+
+   password = g_key_file_get_string(client_config, "Server", "Password", &local_error);
+   if (password == NULL) {
+      g_debug("No secret hash required for this config: %s", local_error->message);
+      return NULL;
+   }
+
+   /* This must follow the same format used on the server side */
+   secret = g_strdup_printf("%s:%s", username, password);
+   return g_compute_checksum_for_string(G_CHECKSUM_SHA256, secret, -1);
 }
 
 /*
@@ -1187,6 +1228,57 @@ success:
    return TRUE;
 }
 
+/*
+ * If we have a secret hash, generate a path with the form
+ * @variant_$HASH_DO_NOT_SHARE_URL. Otherwise, this will return a copy of @variant.
+ */
+static gchar *
+_au_get_variant_url_part(const gchar *secret_hash, const gchar *variant)
+{
+   if (secret_hash == NULL)
+      return g_strdup(variant);
+
+   return g_strdup_printf("%s_%s_%s", variant, secret_hash, AU_HASH_NOTICE);
+}
+
+/*
+ * _au_include_secret_hash_data:
+ * @secret_hash: (nullable): Eventual secret hash
+ * @variant: (not nullable): Currently tracked variant
+ * @data: (not nullable): A meta JSON content or a single URL
+ *
+ * Append to the variant part the secret hash. If we don't have a secret hash,
+ * or if the URLs in @data aren't under the "dev" directory, this function will
+ * return a copy of @data.
+ */
+gchar *
+_au_include_secret_hash_data(const gchar *secret_hash, const gchar *variant, const gchar *data)
+{
+   g_autofree gchar *variant_url_part = NULL;
+   g_autofree gchar *variant_url_with_delimiters = NULL;
+   g_autofree gchar *variant_with_delimiters = NULL;
+   g_autoptr(GString) buf = NULL;
+
+   g_return_val_if_fail(variant != NULL, NULL);
+   g_return_val_if_fail(data != NULL, NULL);
+
+   if (secret_hash == NULL)
+      return g_strdup(data);
+
+   if (!strstr(data, "\"dev/") && !strstr(data, "/dev/"))
+      return g_strdup(data);
+
+   variant_url_part = _au_get_variant_url_part(secret_hash, variant);
+
+   variant_with_delimiters = g_strdup_printf("/%s/", variant);
+   variant_url_with_delimiters = g_strdup_printf("/%s/", variant_url_part);
+
+   buf = g_string_new(data);
+   g_string_replace(buf, variant_with_delimiters, variant_url_with_delimiters, 0);
+
+   return g_string_free(g_steal_pointer(&buf), FALSE);
+}
+
 static gboolean
 _au_switch_to_variant(AuAtomupd1 *object,
                       gchar *variant,
@@ -1207,6 +1299,7 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
    g_autoptr(JsonNode) json_node = NULL;
    g_autoptr(GError) error = NULL;
    g_autofree gchar *output = NULL;
+   g_autofree gchar *output_with_hash = NULL;
    const gchar *updated_build_id = NULL;
    gsize out_length;
    AuUpdateStatus current_status;
@@ -1325,6 +1418,10 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
       }
    }
 
+   /* If we have a secret hash from our config, and the server is proposing an image under
+    * the "dev" directory, we append the secret hash to the variant part as well. */
+   output_with_hash = _au_include_secret_hash_data(self->secret_hash, au_atomupd1_get_variant((AuAtomupd1 *)self), output);
+
    current_status = au_atomupd1_get_update_status(data->req->object);
    if (current_status == AU_UPDATE_STATUS_SUCCESSFUL)
       updated_build_id = au_atomupd1_get_update_build_id(data->req->object);
@@ -1337,8 +1434,8 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
       return;
    }
 
-   if (!g_file_replace_contents(self->updates_json_file, output, out_length, NULL, FALSE,
-                                G_FILE_CREATE_NONE, NULL, NULL, &error)) {
+   if (!g_file_replace_contents(self->updates_json_file, output_with_hash, strlen(output_with_hash),
+                                NULL, FALSE, G_FILE_CREATE_NONE, NULL, NULL, &error)) {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "An error occurred while storing the helper output JSON: %s", error->message);
@@ -1593,6 +1690,7 @@ _au_download_remote_info(AuAtomupd1Impl *atomupd, GError **error)
    g_autofree gchar *meta_url = NULL;
    g_autofree gchar *remote_info_url = NULL;
    g_autofree gchar *http_proxy = NULL;
+   g_autofree gchar *variant_url_part = NULL;
    const gchar *variant = NULL;
    g_autoptr(GTask) task = NULL;
    g_autoptr(DownloadData) data = g_new0(DownloadData, 1);
@@ -1611,6 +1709,7 @@ _au_download_remote_info(AuAtomupd1Impl *atomupd, GError **error)
                                    "the remote info URL");
 
    variant = au_atomupd1_get_variant((AuAtomupd1 *)atomupd);
+   variant_url_part = _au_get_variant_url_part(atomupd->secret_hash, variant);
    meta_url = _au_get_meta_url_from_default_config(atomupd, error);
 
    if (meta_url == NULL)
@@ -1618,7 +1717,7 @@ _au_download_remote_info(AuAtomupd1Impl *atomupd, GError **error)
 
    remote_info_url =
       g_build_filename(meta_url, atomupd->release, atomupd->product,
-                       atomupd->architecture, variant, AU_REMOTE_INFO, NULL);
+                       atomupd->architecture, variant_url_part, AU_REMOTE_INFO, NULL);
 
    http_proxy = _au_get_http_proxy_address_and_port((AuAtomupd1 *)atomupd);
 
@@ -1643,6 +1742,7 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    GVariant *arg_options = arg_options_pointer;
    const gchar *variant = NULL;
    const gchar *branch = NULL;
+   g_autofree gchar *variant_url_part = NULL;
    g_autofree gchar *http_proxy = NULL;
    const gchar *key = NULL;
    GVariant *value = NULL;
@@ -1690,6 +1790,9 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    }
 
    variant = au_atomupd1_get_variant(object);
+   /* Use the variant name that includes the hash on it, if available.
+    * In this way steamos-atomupd-client will be able to construct the correct URL. */
+   variant_url_part = _au_get_variant_url_part(self->secret_hash, variant);
    branch = au_atomupd1_get_branch(object);
 
    argv = g_ptr_array_new_with_free_func(g_free);
@@ -1699,7 +1802,7 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
    g_ptr_array_add(argv, g_strdup("--manifest-file"));
    g_ptr_array_add(argv, g_strdup(self->manifest_path));
    g_ptr_array_add(argv, g_strdup("--variant"));
-   g_ptr_array_add(argv, g_strdup(variant));
+   g_ptr_array_add(argv, g_strdup(variant_url_part));
    g_ptr_array_add(argv, g_strdup("--branch"));
    g_ptr_array_add(argv, g_strdup(branch));
    g_ptr_array_add(argv, g_strdup("--query-only"));
@@ -2511,6 +2614,7 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
    const gchar *url = NULL;
    const gchar *update_path = NULL;
    g_autofree gchar *update_url = NULL;
+   g_autofree gchar *update_url_with_hash = NULL;
 
    current_status = au_atomupd1_get_update_status(object);
    if (current_status == AU_UPDATE_STATUS_IN_PROGRESS ||
@@ -2537,6 +2641,10 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
    else
       update_url = g_strdup(url);
 
+   /* If we have a secret hash from our config, and we are trying to install an image
+    * under the "dev" directory, we append to the variant part the secret hash as well. */
+   update_url_with_hash = _au_include_secret_hash_data(self->secret_hash, au_atomupd1_get_variant(object), update_url);
+
    /* For a custom update, buildid and version are unknown */
    au_atomupd1_set_update_build_id(object, NULL);
    au_atomupd1_set_update_version(object, NULL);
@@ -2546,7 +2654,7 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
    g_ptr_array_add(argv, g_strdup("--config"));
    g_ptr_array_add(argv, g_strdup(self->config_path));
    g_ptr_array_add(argv, g_strdup("--update-from-url"));
-   g_ptr_array_add(argv, g_steal_pointer(&update_url));
+   g_ptr_array_add(argv, g_steal_pointer(&update_url_with_hash));
 
    if (g_debug_controller_get_debug_enabled(self->debug_controller))
       g_ptr_array_add(argv, g_strdup("--debug"));
@@ -2851,7 +2959,8 @@ _au_parse_config(AuAtomupd1Impl *atomupd, GError **error)
       return FALSE;
    }
 
-   /* TODO handle eventual username and password values from config */
+   g_clear_pointer(&atomupd->secret_hash, g_free);
+   atomupd->secret_hash = _au_get_secret_hash_from_config(client_config);
 
    _au_set_trusted_dev_keys((AuAtomupd1 *)atomupd);
 
@@ -3199,6 +3308,7 @@ au_get_builds_authorized_cb(AuAtomupd1 *object,
    g_autofree gchar *builds_filename = NULL;
    g_autofree gchar *builds_path = NULL;
    g_autofree gchar *builds_url = NULL;
+   g_autofree gchar *variant_url_part = NULL;
    g_autoptr(GTask) task = NULL;
    g_autoptr(DownloadData) dl_data = g_new0(DownloadData, 1);
    g_autoptr(BuildsData) builds_data = au_builds_data_new();
@@ -3245,6 +3355,8 @@ au_get_builds_authorized_cb(AuAtomupd1 *object,
       return;
    }
 
+   variant_url_part = _au_get_variant_url_part(self->secret_hash, variant);
+
    /* This environment variable is used for debugging and automated tests */
    au_run_path = g_getenv("AU_RUN_PATH");
    if (au_run_path == NULL)
@@ -3259,8 +3371,9 @@ au_get_builds_authorized_cb(AuAtomupd1 *object,
       return;
    }
 
-   builds_url = g_build_filename(self->meta_url, self->release, self->product,
-                                 self->architecture, variant, AU_BUILDS_LIST, NULL);
+   builds_url =
+      g_build_filename(self->meta_url, self->release, self->product, self->architecture,
+                       variant_url_part, AU_BUILDS_LIST, NULL);
 
    http_proxy = _au_get_http_proxy_address_and_port(object);
 
@@ -3327,6 +3440,7 @@ au_atomupd1_impl_finalize(GObject *object)
    g_free(self->architecture);
    g_free(self->meta_url);
    g_free(self->images_url);
+   g_free(self->secret_hash);
    g_clear_object(&self->authority);
 
    // Keep the update file, to be able to reuse it later on

@@ -67,12 +67,16 @@ extern const gchar *AU_DEFAULT_BRANCH_PATH;
 
 extern const gchar *AU_REBOOT_FOR_UPDATE;
 
+extern const gchar *AU_HASH_NOTICE;
+
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(CURL, curl_easy_cleanup)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(CURLU, curl_url_cleanup)
 
 void download_data_free(DownloadData *data);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(DownloadData, download_data_free)
+
+gchar * _au_redact_url(const gchar *url, GError **error);
 
 void _au_download_thread_func(GTask *task,
                               gpointer source_object,

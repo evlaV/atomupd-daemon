@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2023 Collabora Ltd.
+ * Copyright © 2021-2026 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -43,6 +43,12 @@ AuAtomupd1 *au_atomupd1_impl_new(const gchar *config_directory,
                                  const gchar *manifest_preference,
                                  GDBusConnection *bus,
                                  GError **error);
+
+gchar * _au_get_secret_hash_from_config(GKeyFile *client_config);
+
+gchar * _au_include_secret_hash_data(const gchar *secret_hash,
+                                     const gchar *variant,
+                                     const gchar *data);
 
 gboolean
 _is_buildid_valid(const gchar *buildid, gint64 *date_out, gint64 *inc_out, GError **error);
