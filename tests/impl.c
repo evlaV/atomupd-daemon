@@ -741,6 +741,21 @@ test_default_properties(Fixture *f, gconstpointer context)
 }
 
 static void
+_copy_config_file(Fixture *f, const gchar *config_name_source, const gchar *dest_path)
+{
+   g_autofree gchar *source_config_path = NULL;
+   g_autoptr(GFile) source_file = NULL;
+   g_autoptr(GFile) dest_file = NULL;
+   g_autoptr(GError) error = NULL;
+
+   source_config_path = g_build_filename(f->srcdir, "data", config_name_source, NULL);
+   source_file = g_file_new_for_path(source_config_path);
+   dest_file = g_file_new_for_path(dest_path);
+   g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, &error);
+   g_assert_no_error(error);
+}
+
+static void
 test_dev_config(Fixture *f, gconstpointer context)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
@@ -771,18 +786,7 @@ test_dev_config(Fixture *f, gconstpointer context)
    config_dev_path = g_build_filename(tmp_config_dir, "client-dev.conf", NULL);
 
    /* Fill the client.conf file */
-   {
-      g_autofree gchar *source_config_path = NULL;
-      g_autoptr(GFile) source_file = NULL;
-      g_autoptr(GFile) dest_file = NULL;
-
-      source_config_path = g_build_filename(f->srcdir, "data", "client.conf", NULL);
-      source_file = g_file_new_for_path(source_config_path);
-      dest_file = g_file_new_for_path(config_path);
-      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
-                  &error);
-      g_assert_no_error(error);
-   }
+   _copy_config_file(f, "client.conf", config_path);
 
    /* By default we setup the fixture with a missing Desync config file */
    g_assert_false(g_file_test(f->desync_conf_path, G_FILE_TEST_EXISTS));
@@ -807,19 +811,7 @@ test_dev_config(Fixture *f, gconstpointer context)
    }
 
    /* Fill the client-dev.conf file */
-   {
-      g_autofree gchar *source_config_path = NULL;
-      g_autoptr(GFile) source_file = NULL;
-      g_autoptr(GFile) dest_file = NULL;
-
-      source_config_path =
-         g_build_filename(f->srcdir, "data", "client_semicolon.conf", NULL);
-      source_file = g_file_new_for_path(source_config_path);
-      dest_file = g_file_new_for_path(config_dev_path);
-      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
-                  &error);
-      g_assert_no_error(error);
-   }
+   _copy_config_file(f, "client_semicolon.conf", config_dev_path);
 
    g_file_set_contents(f->remote_info_path,
                        "[Server]\nVariants = steamtest\nBranches = stable;nightly", -1,
@@ -877,19 +869,7 @@ test_dev_config(Fixture *f, gconstpointer context)
    g_clear_object(&daemon_proc);
 
    /* Create an invalid client-dev.conf file */
-   {
-      g_autofree gchar *source_config_path = NULL;
-      g_autoptr(GFile) source_file = NULL;
-      g_autoptr(GFile) dest_file = NULL;
-
-      source_config_path =
-         g_build_filename(f->srcdir, "data", "client_no_branches.conf", NULL);
-      source_file = g_file_new_for_path(source_config_path);
-      dest_file = g_file_new_for_path(config_dev_path);
-      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
-                  &error);
-      g_assert_no_error(error);
-   }
+   _copy_config_file(f, "client_no_branches.conf", config_dev_path);
 
    daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
                                                f->test_envp, FALSE);
@@ -959,19 +939,7 @@ test_fallback_config(Fixture *f, gconstpointer context)
    g_assert_cmpstrv(atomupd_properties->known_branches, client_fallback_branches);
 
    /* Fill the client.conf file */
-   {
-      g_autofree gchar *source_config_path = NULL;
-      g_autoptr(GFile) source_file = NULL;
-      g_autoptr(GFile) dest_file = NULL;
-
-      source_config_path =
-         g_build_filename(f->srcdir, "data", "client_semicolon.conf", NULL);
-      source_file = g_file_new_for_path(source_config_path);
-      dest_file = g_file_new_for_path(config_path);
-      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
-                  &error);
-      g_assert_no_error(error);
-   }
+   _copy_config_file(f, "client_semicolon.conf", config_path);
 
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
    _send_atomupd_message_with_null_reply(bus, "ReloadConfiguration", "(a{sv})", NULL);
@@ -982,19 +950,7 @@ test_fallback_config(Fixture *f, gconstpointer context)
    g_assert_cmpstrv(atomupd_properties->known_branches, client_canonical_branches);
 
    /* Fill the client.conf file with a malformed config that is missing MetaUrl */
-   {
-      g_autofree gchar *source_config_path = NULL;
-      g_autoptr(GFile) source_file = NULL;
-      g_autoptr(GFile) dest_file = NULL;
-
-      source_config_path =
-         g_build_filename(f->srcdir, "data", "client_no_meta.conf", NULL);
-      source_file = g_file_new_for_path(source_config_path);
-      dest_file = g_file_new_for_path(config_path);
-      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
-                  &error);
-      g_assert_no_error(error);
-   }
+   _copy_config_file(f, "client_no_meta.conf", config_path);
 
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
    _send_atomupd_message_with_null_reply(bus, "ReloadConfiguration", "(a{sv})", NULL);
@@ -1005,19 +961,7 @@ test_fallback_config(Fixture *f, gconstpointer context)
    g_assert_cmpstrv(atomupd_properties->known_branches, client_fallback_branches);
 
    /* Fill the client.conf file with another malformed config that is missing ImagesUrl */
-   {
-      g_autofree gchar *source_config_path = NULL;
-      g_autoptr(GFile) source_file = NULL;
-      g_autoptr(GFile) dest_file = NULL;
-
-      source_config_path =
-         g_build_filename(f->srcdir, "data", "client_no_images.conf", NULL);
-      source_file = g_file_new_for_path(source_config_path);
-      dest_file = g_file_new_for_path(config_path);
-      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
-                  &error);
-      g_assert_no_error(error);
-   }
+   _copy_config_file(f, "client_no_images.conf", config_path);
 
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
    _send_atomupd_message_with_null_reply(bus, "ReloadConfiguration", "(a{sv})", NULL);
@@ -1059,18 +1003,7 @@ test_remote_config(Fixture *f, gconstpointer context)
    config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
 
    /* Fill the client.conf file */
-   {
-      g_autofree gchar *source_config_path = NULL;
-      g_autoptr(GFile) source_file = NULL;
-      g_autoptr(GFile) dest_file = NULL;
-
-      source_config_path = g_build_filename(f->srcdir, "data", "client.conf", NULL);
-      source_file = g_file_new_for_path(source_config_path);
-      dest_file = g_file_new_for_path(config_path);
-      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
-                  &error);
-      g_assert_no_error(error);
-   }
+   _copy_config_file(f, "client.conf", config_path);
 
    daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
                                                f->test_envp, FALSE);
@@ -2652,33 +2585,10 @@ test_branch_dev_keys(Fixture *f, gconstpointer context)
       config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
       config_dev_path = g_build_filename(tmp_config_dir, "client-dev.conf", NULL);
 
-      {
-         g_autofree gchar *source_config_path = NULL;
-         g_autoptr(GFile) source_file = NULL;
-         g_autoptr(GFile) dest_file = NULL;
+      _copy_config_file(f, test->config_name, config_path);
 
-         source_config_path =
-            g_build_filename(f->srcdir, "data", test->config_name, NULL);
-         source_file = g_file_new_for_path(source_config_path);
-         dest_file = g_file_new_for_path(config_path);
-         g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
-                     &error);
-         g_assert_no_error(error);
-      }
-
-      if (test->config_dev_name != NULL) {
-         g_autofree gchar *source_config_path = NULL;
-         g_autoptr(GFile) source_file = NULL;
-         g_autoptr(GFile) dest_file = NULL;
-
-         source_config_path =
-            g_build_filename(f->srcdir, "data", "client_semicolon.conf", NULL);
-         source_file = g_file_new_for_path(source_config_path);
-         dest_file = g_file_new_for_path(config_dev_path);
-         g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
-                     &error);
-         g_assert_no_error(error);
-      }
+      if (test->config_dev_name != NULL)
+         _copy_config_file(f, "client_semicolon.conf", config_dev_path);
 
       fd = g_file_open_tmp("preferences-XXXXXX", &preferences_path, &error);
       g_assert_no_error(error);
