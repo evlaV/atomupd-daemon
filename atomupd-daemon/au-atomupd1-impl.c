@@ -1024,7 +1024,7 @@ _check_auth_cb(PolkitAuthority *authority, GAsyncResult *res, gpointer data)
 {
    g_autoptr(CheckAuthData) check_auth_data = data;
    g_autoptr(GError) error = NULL;
-   PolkitAuthorizationResult *authorization;
+   g_autoptr(PolkitAuthorizationResult) authorization = NULL;
 
    authorization = polkit_authority_check_authorization_finish(authority, res, &error);
 
