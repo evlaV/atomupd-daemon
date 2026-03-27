@@ -1,5 +1,5 @@
 /*
- * Copyright © 2022-2025 Collabora Ltd.
+ * Copyright © 2022-2026 Collabora Ltd.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -94,6 +94,12 @@ main(int argc, char **argv)
    if (opt_query_only) {
       g_autofree gchar *update_json = NULL;
       const gchar *update_json_path;
+      const gchar *record_variant_file;
+
+      /* If requested, record the received --variant so tests can inspect it */
+      record_variant_file = g_getenv("G_TEST_RECORD_VARIANT_FILE");
+      if (record_variant_file != NULL)
+         g_file_set_contents(record_variant_file, opt_variant ? opt_variant : "", -1, NULL);
 
       if (g_getenv("G_TEST_CLIENT_QUERY_4xx"))
          return 2;

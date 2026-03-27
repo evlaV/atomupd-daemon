@@ -2778,6 +2778,192 @@ test_builds_list(Fixture *f, gconstpointer context)
    au_tests_stop_process(http_server_proc);
 }
 
+static void
+test_builds_list_with_auth(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GSubprocess) http_server_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *tmp_config_dir = NULL;
+   g_autofree gchar *config_path = NULL;
+   g_autofree gchar *local_server_dir = NULL;
+   g_autofree gchar *local_server_meta_path_prefix = NULL;
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   tmp_config_dir = g_dir_make_tmp("atomupd-daemon-auth-XXXXXX", &error);
+   g_assert_no_error(error);
+   config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+
+   local_server_dir = g_build_filename(f->srcdir, "data", "client_meta", NULL);
+   local_server_meta_path_prefix =
+      g_build_filename(local_server_dir, "meta", "holo", "steamos", "amd64", NULL);
+   http_server_proc = au_tests_start_local_http_server(local_server_dir);
+
+   _copy_config_file(f, "client_auth.conf", config_path);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+
+   {
+      g_autofree gchar *reply = NULL;
+      g_autofree gchar *local_content = NULL;
+      g_autofree gchar *server_content = NULL;
+      g_autofree gchar *server_file = NULL;
+
+      reply = _call_get_builds(bus, "steamdeck");
+
+      server_file = g_build_filename(
+         local_server_meta_path_prefix,
+         "steamdeck_66cd33a8f743a96c03cd87cd823b561963f6fca93703dc19d3d5595086557a53_DO_"
+         "NOT_SHARE_URL",
+         "builds.json", NULL);
+      g_file_get_contents(server_file, &server_content, NULL, &error);
+      g_assert_no_error(error);
+      g_file_get_contents(reply, &local_content, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(local_content, ==, server_content);
+   }
+
+   au_tests_stop_process(daemon_proc);
+   au_tests_stop_process(http_server_proc);
+
+   if (!rm_rf(tmp_config_dir))
+      g_debug("Unable to remove temp directory: %s", tmp_config_dir);
+}
+
+static void
+test_query_updates_variant_hash(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *tmp_config_dir = NULL;
+   g_autofree gchar *config_path = NULL;
+   g_autofree gchar *variant_record_path = NULL;
+   g_autofree gchar *recorded_variant = NULL;
+   g_autoptr(GError) error = NULL;
+   int fd;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   tmp_config_dir = g_dir_make_tmp("atomupd-daemon-auth-XXXXXX", &error);
+   g_assert_no_error(error);
+   config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+
+   fd = g_file_open_tmp("atomupd-variant-XXXXXX", &variant_record_path, &error);
+   g_assert_no_error(error);
+   g_assert_cmpint(fd, !=, -1);
+   close(fd);
+   g_unlink(variant_record_path);
+
+   f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_RECORD_VARIANT_FILE",
+                                   variant_record_path, TRUE);
+
+   g_debug("Using config file with auth");
+   _copy_config_file(f, "client_auth.conf", config_path);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+   _call_check_for_updates(bus, NULL, NULL);
+
+   g_assert_true(g_file_test(variant_record_path, G_FILE_TEST_EXISTS));
+   g_file_get_contents(variant_record_path, &recorded_variant, NULL, &error);
+   g_assert_no_error(error);
+   g_assert_cmpstr(
+      recorded_variant, ==,
+      "steamdeck_66cd33a8f743a96c03cd87cd823b561963f6fca93703dc19d3d5595086557a53_DO_NOT_"
+      "SHARE_URL");
+
+   g_unlink(variant_record_path);
+
+   g_debug("Reloading with a config that doesn't have auth");
+   _copy_config_file(f, "client.conf", config_path);
+   _send_atomupd_message_with_null_reply(bus, "ReloadConfiguration", "(a{sv})", NULL);
+
+   _call_check_for_updates(bus, NULL, NULL);
+
+   g_assert_true(g_file_test(variant_record_path, G_FILE_TEST_EXISTS));
+   g_clear_pointer(&recorded_variant, g_free);
+   g_file_get_contents(variant_record_path, &recorded_variant, NULL, &error);
+   g_assert_no_error(error);
+   g_assert_cmpstr(recorded_variant, ==, "steamdeck");
+
+   au_tests_stop_process(daemon_proc);
+
+   g_unlink(variant_record_path);
+
+   if (!rm_rf(tmp_config_dir))
+      g_debug("Unable to remove temp directory: %s", tmp_config_dir);
+}
+
+static void
+test_remote_info_hash(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GSubprocess) http_server_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *tmp_config_dir = NULL;
+   g_autofree gchar *config_path = NULL;
+   g_autofree gchar *local_server_dir = NULL;
+   const gchar *hashed_variants[] = { "steamdeck", "another-dev-variant", NULL };
+   const gchar *plain_variants[] = { "steamdeck", "vanilla", NULL };
+   g_autoptr(AtomupdProperties) atomupd_properties = NULL;
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   tmp_config_dir = g_dir_make_tmp("atomupd-daemon-auth-XXXXXX", &error);
+   g_assert_no_error(error);
+   config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+
+   local_server_dir = g_build_filename(f->srcdir, "data", "client_meta", NULL);
+   http_server_proc = au_tests_start_local_http_server(local_server_dir);
+
+   g_debug("Testing config with authentication credentials");
+   _copy_config_file(f, "client_auth.conf", config_path);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+
+   /* Wait for the remote-info file to be downloaded off band */
+   g_usleep(2 * G_USEC_PER_SEC);
+   g_assert_true(g_file_test(f->remote_info_path, G_FILE_TEST_EXISTS));
+
+   atomupd_properties = _get_atomupd_properties(bus);
+   g_assert_cmpstrv(atomupd_properties->known_variants, hashed_variants);
+
+   au_tests_stop_process(daemon_proc);
+   g_clear_object(&daemon_proc);
+   g_unlink(f->remote_info_path);
+
+   g_debug("Testing config without authentication credentials");
+   _copy_config_file(f, "client.conf", config_path);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+
+   /* Wait for the remote-info file to be downloaded off band */
+   g_usleep(2 * G_USEC_PER_SEC);
+   g_assert_true(g_file_test(f->remote_info_path, G_FILE_TEST_EXISTS));
+
+   g_clear_pointer(&atomupd_properties, atomupd_properties_free);
+   atomupd_properties = _get_atomupd_properties(bus);
+   g_assert_cmpstrv(atomupd_properties->known_variants, plain_variants);
+
+   au_tests_stop_process(daemon_proc);
+   au_tests_stop_process(http_server_proc);
+
+   if (!rm_rf(tmp_config_dir))
+      g_debug("Unable to remove temp directory: %s", tmp_config_dir);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2811,6 +2997,9 @@ main(int argc, char **argv)
    test_add("/daemon/manage_trusted_keys", test_manage_trusted_keys);
    test_add("/daemon/branch_dev_keys", test_branch_dev_keys);
    test_add("/daemon/builds_list", test_builds_list);
+   test_add("/daemon/builds_list_with_auth", test_builds_list_with_auth);
+   test_add("/daemon/query_updates_variant_hash", test_query_updates_variant_hash);
+   test_add("/daemon/remote_info_hash", test_remote_info_hash);
 
    ret = g_test_run();
    return ret;
