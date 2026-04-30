@@ -10,6 +10,7 @@
           "arch": "amd64",
           "version": "snapshot",
           "buildid": "20211225.1",
+          "branch": "stable",
           "checkpoint": true,
           "estimated_size": 40310422
         },
@@ -23,6 +24,7 @@
           "arch": "amd64",
           "version": "snapshot",
           "buildid": "20220101.1",
+          "branch": "stable",
           "checkpoint": true,
           "estimated_size": 0
         },
@@ -36,6 +38,7 @@
           "arch": "amd64",
           "version": "3.4.6",
           "buildid": "20220227.3",
+          "branch": "stable",
           "checkpoint": false,
           "estimated_size": 30410461
         },

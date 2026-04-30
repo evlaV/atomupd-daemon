@@ -101,6 +101,7 @@ typedef struct {
    const gchar *buildid;
    const gchar *version;
    const gchar *variant;
+   const gchar *branch;
    guint64 estimated_size;
    const gchar *requires_buildid;
 } UpdatesTest;
@@ -119,6 +120,7 @@ static const UpdatesTest mock_infinite_update[] = {
       .buildid = MOCK_INFINITE,
       .version = "3.6.0",
       .variant = "steamdeck",
+      .branch = "stable",
       .estimated_size = 60112233,
    },
 
@@ -136,6 +138,7 @@ static const CheckUpdatesTest updates_test[] =
         .buildid = "20220227.3",
         .version = "snapshot",
         .variant = "steamdeck",
+        .branch = "stable",
         .estimated_size = 70910463,
       },
     },
@@ -155,6 +158,7 @@ static const CheckUpdatesTest updates_test[] =
         .buildid = "20211225.1",
         .version = "snapshot",
         .variant = "steamdeck",
+        .branch = "stable",
         .estimated_size = 40310422,
       },
     },
@@ -164,12 +168,14 @@ static const CheckUpdatesTest updates_test[] =
         .buildid = "20220101.1",
         .version = "snapshot",
         .variant = "steamdeck",
+        .branch = "stable",
         .requires_buildid = "20211225.1",
       },
       {
         .buildid = "20220227.3",
         .version = "3.4.6",
         .variant = "steamdeck",
+        .branch = "stable",
         .estimated_size = 30410461,
         .requires_buildid = "20220101.1",
       },
@@ -190,6 +196,7 @@ static const CheckUpdatesTest updates_test[] =
         .buildid = "20240508.1",
         .version = "3.7.1",
         .variant = "steamdeck-replacement",
+        .branch = "stable",
         .estimated_size = 70910463,
       },
     },
@@ -209,6 +216,7 @@ static const CheckUpdatesTest pending_reboot_test[] =
         .buildid = "20220227.3",
         .version = "snapshot",
         .variant = "steamdeck",
+        .branch = "stable",
         .estimated_size = 70910463,
       },
     },
@@ -242,6 +250,7 @@ static const CheckUpdatesTest pending_reboot_test[] =
         .buildid = "20211225.1",
         .version = "snapshot",
         .variant = "steamdeck",
+        .branch = "stable",
         .estimated_size = 40310422,
       },
     },
@@ -251,12 +260,14 @@ static const CheckUpdatesTest pending_reboot_test[] =
         .buildid = "20220101.1",
         .version = "snapshot",
         .variant = "steamdeck",
+        .branch = "stable",
         .requires_buildid = "20211225.1",
       },
       {
         .buildid = "20220227.3",
         .version = "3.4.6",
         .variant = "steamdeck",
+        .branch = "stable",
         .estimated_size = 30410461,
         .requires_buildid = "20220101.1",
       },
@@ -278,6 +289,7 @@ _check_available_updates(GVariantIter *available_iter,
    for (i = 0; g_variant_iter_loop(available_iter, "{s@a{sv}}", &buildid, &values); i++) {
       g_autoptr(GVariant) version = NULL;
       g_autoptr(GVariant) variant = NULL;
+      g_autoptr(GVariant) branch = NULL;
       g_autoptr(GVariant) estimated_size = NULL;
       g_autoptr(GVariant) requires = NULL;
       const gchar *requires_str = NULL;
@@ -290,6 +302,9 @@ _check_available_updates(GVariantIter *available_iter,
 
       variant = g_variant_lookup_value(values, "variant", type_string);
       g_assert_cmpstr(expected_update->variant, ==, g_variant_get_string(variant, NULL));
+
+      branch = g_variant_lookup_value(values, "branch", type_string);
+      g_assert_cmpstr(expected_update->branch, ==, g_variant_get_string(branch, NULL));
 
       estimated_size = g_variant_lookup_value(values, "estimated_size", type_uint64);
       g_assert_cmpuint(expected_update->estimated_size, ==,
@@ -2016,6 +2031,7 @@ static const ExistingUpdatesJson existing_updates_json_test[] = {
           \"arch\": \"amd64\", \
           \"version\": \"3.6.0\", \
           \"buildid\": \"20300101.100\", \
+          \"branch\": \"stable\", \
           \"checkpoint\": false, \
           \"estimated_size\": 60112233 \
         }, \
@@ -2030,6 +2046,7 @@ static const ExistingUpdatesJson existing_updates_json_test[] = {
             .buildid = "20300101.100",
             .version = "3.6.0",
             .variant = "steamdeck",
+            .branch = "stable",
             .estimated_size = 60112233,
          },
       },
@@ -2048,6 +2065,7 @@ static const ExistingUpdatesJson existing_updates_json_test[] = {
           \"arch\": \"amd64\", \
           \"version\": \"snapshot\", \
           \"buildid\": \"20230810.1\", \
+          \"branch\": \"stable\", \
           \"checkpoint\": true, \
           \"estimated_size\": 4815162342 \
         }, \
@@ -2060,7 +2078,8 @@ static const ExistingUpdatesJson existing_updates_json_test[] = {
           \"variant\": \"steamdeck\", \
           \"arch\": \"amd64\", \
           \"version\": \"3.7.1\", \
-          \"buildid\": \"20231120.1\" \
+          \"buildid\": \"20231120.1\", \
+          \"branch\": \"stable\" \
         }, \
         \"update_path\": \"20231120.1/steamdeck-20231120.1-3.7.1.raucb\" \
       } \
@@ -2073,6 +2092,7 @@ static const ExistingUpdatesJson existing_updates_json_test[] = {
             .buildid = "20230810.1",
             .version = "snapshot",
             .variant = "steamdeck",
+            .branch = "stable",
             .estimated_size = 4815162342,
          },
       },
@@ -2082,6 +2102,7 @@ static const ExistingUpdatesJson existing_updates_json_test[] = {
             .buildid = "20231120.1",
             .version = "3.7.1",
             .variant = "steamdeck",
+            .branch = "stable",
             .requires_buildid = "20230810.1"
          },
       },

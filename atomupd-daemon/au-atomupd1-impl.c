@@ -1066,6 +1066,7 @@ _au_check_auth(AuAtomupd1 *object,
  * @id: (out) (not optional):
  * @version: (out) (not optional):
  * @variant: (out) (not optional):
+ * @branch: (out) (not optional):
  * @size: (out) (not optional):
  * @error: Used to raise an error on failure
  */
@@ -1074,6 +1075,7 @@ _au_parse_image(JsonObject *candidate_obj,
                 gchar **id,
                 gchar **version,
                 gchar **variant,
+                gchar **branch,
                 gint64 *size,
                 GError **error)
 {
@@ -1082,12 +1084,14 @@ _au_parse_image(JsonObject *candidate_obj,
    const gchar *local_id = NULL;
    const gchar *local_version = NULL;
    const gchar *local_variant = NULL;
+   const gchar *local_branch = NULL;
    gint64 local_size;
 
    g_return_val_if_fail(candidate_obj != NULL, FALSE);
    g_return_val_if_fail(id != NULL, FALSE);
    g_return_val_if_fail(version != NULL, FALSE);
    g_return_val_if_fail(variant != NULL, FALSE);
+   g_return_val_if_fail(branch != NULL, FALSE);
    g_return_val_if_fail(size != NULL, FALSE);
    g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
@@ -1098,7 +1102,9 @@ _au_parse_image(JsonObject *candidate_obj,
    local_id = json_object_get_string_member_with_default(img_obj, "buildid", NULL);
    local_version = json_object_get_string_member_with_default(img_obj, "version", NULL);
    local_variant = json_object_get_string_member_with_default(img_obj, "variant", NULL);
-   if (local_id == NULL || local_version == NULL || local_variant == NULL) {
+   local_branch = json_object_get_string_member_with_default(img_obj, "branch", NULL);
+   if (local_id == NULL || local_version == NULL || local_variant == NULL ||
+       local_branch == NULL) {
       g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                   "The \"image\" JSON object doesn't have the expected members");
       return FALSE;
@@ -1107,6 +1113,7 @@ _au_parse_image(JsonObject *candidate_obj,
    *id = g_strdup(local_id);
    *version = g_strdup(local_version);
    *variant = g_strdup(local_variant);
+   *branch = g_strdup(local_branch);
    *size = local_size;
 
    return TRUE;
@@ -1181,11 +1188,12 @@ _au_parse_candidates(JsonNode *json_node,
       g_autofree gchar *id = NULL;
       g_autofree gchar *variant = NULL;
       g_autofree gchar *version = NULL;
+      g_autofree gchar *branch = NULL;
       gint64 size;
       GVariantBuilder builder;
 
       if (!_au_parse_image(json_array_get_object_element(array, i), &id, &version,
-                           &variant, &size, error))
+                           &variant, &branch, &size, error))
          return FALSE;
 
       if (i == 0 && g_strcmp0(id, updated_build_id) == 0) {
@@ -1203,6 +1211,7 @@ _au_parse_candidates(JsonNode *json_node,
 
       g_variant_builder_add(&builder, "{sv}", "version", g_variant_new_string(version));
       g_variant_builder_add(&builder, "{sv}", "variant", g_variant_new_string(variant));
+      g_variant_builder_add(&builder, "{sv}", "branch", g_variant_new_string(branch));
       g_variant_builder_add(&builder, "{sv}", "estimated_size",
                             g_variant_new_uint64(size));
       if (requires != NULL)

@@ -11,6 +11,7 @@
           "arch": "amd64",
           "version": "3.7.1",
           "buildid": "20240508.1",
+          "branch": "stable",
           "checkpoint": false,
           "estimated_size": 70910463
         },
