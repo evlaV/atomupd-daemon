@@ -340,8 +340,8 @@ typedef struct {
 static const CustomUpdateTest custom_update_test[] = {
    {
       .title = "Custom update from URL that is expected to complete in 1.5 seconds",
-      .request = "https://example.com/os.raucb",
-      .output_prefix = "Applying custom update from: https://example.com/os.raucb\n",
+      .request = "https://example.com/20260501.9000/os.raucb",
+      .output_prefix = "Applying custom update from: https://example.com/20260501.9000/os.raucb\n",
    },
 
    {
