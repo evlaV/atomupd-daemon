@@ -323,6 +323,16 @@
     </property>
 
     <!--
+        SimulateFailureMessage:
+
+        A human-readable error message or the empty string if the status of
+        SimulateUpdateStatus is not failed.
+    -->
+    <property name="SimulateFailureMessage" type="s" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+
+    <!--
         ReloadConfiguration:
           @options: Reserved for future use
     -->
