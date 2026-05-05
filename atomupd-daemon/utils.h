@@ -49,6 +49,7 @@ typedef enum {
    AU_UPDATE_STATUS_CANCELLED = 5,
 } AuUpdateStatus;
 
+
 typedef struct {
    /* Path where to store the downloaded file */
    gchar *target;
