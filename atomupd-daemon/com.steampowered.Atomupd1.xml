@@ -451,6 +451,21 @@
       <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QVariantMap"/>
     </method>
 
+    <!--
+        SimulateUpdate:
+        @options: Vardict with the following keys:
+          - 'id' (s): Build ID of the update to simulate, same format as
+            StartUpdate. Must be present in the UpdatesAvailable list.
+
+        Start a simulated update identified by build ID. This method returns
+        immediately. The results are published asynchronously via the
+        `SimulateUpdateResult` property once the simulation is complete.
+    -->
+    <method name="SimulateUpdate">
+      <arg type="a{sv}" name="options" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QVariantMap"/>
+    </method>
+
   </interface>
 
 </node>
