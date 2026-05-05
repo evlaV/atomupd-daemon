@@ -60,6 +60,8 @@ const gchar *AU_USER_PREFERENCES = "/etc/steamos-atomupd/preferences.conf";
 
 const gchar *AU_RUN_PATH = "/run/steamos-atomupd";
 
+const gchar *AU_DEFAULT_HOLO_SYNC_VAR = "/usr/lib/holo/holo-sync-var";
+
 /* This file is not expected to be preserved when applying a system update.
  * It is not a problem if this happens to be preserved across updates, e.g.
  * if a user adds `/etc/steamos-atomupd/\*` to `/etc/atomic-update.conf.d/`,
@@ -116,6 +118,12 @@ typedef struct {
    RequestData *req;
    gchar *builds_path;
 } BuildsData;
+
+typedef struct {
+   AuAtomupd1 *object;
+   GVariant *update_info;
+   gint standard_error;
+} SimulateData;
 
 typedef struct {
    const gchar *expanded;
@@ -184,9 +192,22 @@ _builds_data_free(BuildsData *self)
    g_slice_free(BuildsData, self);
 }
 
+static void
+_simulate_data_free(SimulateData *self)
+{
+   g_clear_object(&self->object);
+   g_clear_pointer(&self->update_info, g_variant_unref);
+
+   if (self->standard_error > -1)
+      g_close(self->standard_error, NULL);
+
+   g_slice_free(SimulateData, self);
+}
+
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(RequestData, _request_data_free)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(QueryData, _query_data_free)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(BuildsData, _builds_data_free)
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(SimulateData, _simulate_data_free)
 
 static QueryData *
 au_query_data_new(void)
@@ -207,6 +228,14 @@ au_builds_data_new(void)
 
    data->req = g_slice_new0(RequestData);
 
+   return data;
+}
+
+static SimulateData *
+au_simulate_data_new(void)
+{
+   SimulateData *data = g_slice_new0(SimulateData);
+   data->standard_error = -1;
    return data;
 }
 
@@ -3413,6 +3442,198 @@ au_atomupd1_impl_handle_get_builds(AuAtomupd1 *object,
 }
 
 static void
+_au_atomupd1_set_simulate_update_status_and_message(AuAtomupd1 *object,
+                                                     guint status,
+                                                     GVariant *result,
+                                                     const gchar *message)
+{
+   g_return_if_fail(object != NULL);
+
+   if (result == NULL)
+      result = g_variant_new("a{sv}", NULL);
+   au_atomupd1_set_simulate_update_result(object, result);
+   au_atomupd1_set_simulate_failure_message(object, message != NULL ? message : "");
+   au_atomupd1_set_simulate_update_status(object, status);
+   g_dbus_interface_skeleton_flush(G_DBUS_INTERFACE_SKELETON(object));
+}
+
+static void
+on_simulate_completed(GPid pid, gint wait_status, gpointer user_data)
+{
+   g_autoptr(SimulateData) data = user_data;
+   g_autoptr(GIOChannel) stderr_channel = NULL;
+   g_autoptr(GError) error = NULL;
+   g_autofree gchar *output = NULL;
+   g_auto(GStrv) lines = NULL;
+   g_autoptr(GVariant) result = NULL;
+   gsize out_length;
+   GVariantBuilder results_builder;
+   GVariantBuilder etc_builder;
+
+   stderr_channel = g_io_channel_unix_new(data->standard_error);
+   data->standard_error = -1;
+   if (g_io_channel_read_to_end(stderr_channel, &output, &out_length, &error) !=
+       G_IO_STATUS_NORMAL) {
+      g_debug("Failed to read holo-sync-var output: %s", error->message);
+      _au_atomupd1_set_simulate_update_status_and_message(
+         data->object, AU_UPDATE_STATUS_FAILED, NULL, error->message);
+      return;
+   }
+
+   if (!g_spawn_check_wait_status(wait_status, &error)) {
+      const gchar *msg = (out_length > 0) ? output : error->message;
+      g_debug("holo-sync-var returned an error: %s", msg);
+      _au_atomupd1_set_simulate_update_status_and_message(
+         data->object, AU_UPDATE_STATUS_FAILED, NULL, msg);
+      return;
+   }
+
+   g_variant_builder_init(&etc_builder, G_VARIANT_TYPE("as"));
+
+   if (out_length > 0) {
+      lines = g_strsplit(output, "\n", -1);
+      for (gint i = 0; lines[i] != NULL; i++) {
+         if (g_str_has_prefix(lines[i], "/"))
+            g_variant_builder_add(&etc_builder, "s", lines[i]);
+      }
+   }
+
+   g_variant_builder_init(&results_builder, G_VARIANT_TYPE("a{sv}"));
+   g_variant_builder_add(&results_builder, "{sv}", "update_info",
+                         g_steal_pointer(&data->update_info));
+   g_variant_builder_add(&results_builder, "{sv}", "unpreserved_etc_files",
+                         g_variant_builder_end(&etc_builder));
+
+   g_debug("The simulation has been successfully completed");
+   result = g_variant_ref_sink(g_variant_builder_end(&results_builder));
+   _au_atomupd1_set_simulate_update_status_and_message(
+      data->object, AU_UPDATE_STATUS_SUCCESSFUL, result, NULL);
+}
+
+static void
+au_simulate_update_authorized_cb(AuAtomupd1 *object,
+                                 GDBusMethodInvocation *invocation,
+                                 gpointer arg_id_pointer)
+{
+   const gchar *id = arg_id_pointer;
+   g_autoptr(SimulateData) data = au_simulate_data_new();
+   g_autoptr(GError) error = NULL;
+   g_autoptr(GPtrArray) argv = NULL;
+   g_autoptr(GVariant) update_entry = NULL;
+   GVariant *updates_available = NULL; /* borrowed */
+   const gchar *version = NULL;
+   const gchar *variant = NULL;
+   const gchar *branch = NULL;
+   const gchar *holo_sync_var = NULL;
+   GVariantBuilder update_info_builder;
+   GPid child_pid;
+
+   if (au_atomupd1_get_simulate_update_status(object) == AU_UPDATE_STATUS_IN_PROGRESS) {
+      g_dbus_method_invocation_return_error(g_steal_pointer(&invocation), G_DBUS_ERROR,
+                                            G_DBUS_ERROR_FAILED,
+                                            "Failed to start a new simulation because one "
+                                            "is already in progress");
+      return;
+   }
+
+   updates_available = au_atomupd1_get_updates_available(object);
+   if (updates_available == NULL || g_variant_n_children(updates_available) == 0) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "There are no installable updates available");
+      return;
+   }
+
+   update_entry = g_variant_lookup_value(updates_available, id, G_VARIANT_TYPE("a{sv}"));
+   if (update_entry == NULL) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "Update '%s' is not in the list of installable updates", id);
+      return;
+   }
+
+   g_variant_lookup(update_entry, "version", "&s", &version);
+   g_variant_lookup(update_entry, "variant", "&s", &variant);
+   g_variant_lookup(update_entry, "branch", "&s", &branch);
+
+   g_variant_builder_init(&update_info_builder, G_VARIANT_TYPE("a{sv}"));
+   g_variant_builder_add(&update_info_builder, "{sv}", "buildid",
+                         g_variant_new_string(id));
+   if (version != NULL)
+      g_variant_builder_add(&update_info_builder, "{sv}", "version",
+                            g_variant_new_string(version));
+   if (variant != NULL)
+      g_variant_builder_add(&update_info_builder, "{sv}", "variant",
+                            g_variant_new_string(variant));
+   if (branch != NULL)
+      g_variant_builder_add(&update_info_builder, "{sv}", "branch",
+                            g_variant_new_string(branch));
+
+   data->update_info = g_variant_ref_sink(g_variant_builder_end(&update_info_builder));
+
+   /* This environment variable is used for debugging and automated tests */
+   holo_sync_var = g_getenv("AU_HOLO_SYNC_VAR");
+   if (holo_sync_var == NULL)
+      holo_sync_var = AU_DEFAULT_HOLO_SYNC_VAR;
+
+   argv = g_ptr_array_new_with_free_func(g_free);
+   g_ptr_array_add(argv, g_strdup(holo_sync_var));
+   g_ptr_array_add(argv, g_strdup("--dry-run"));
+   g_ptr_array_add(argv, NULL);
+
+   if (!g_spawn_async_with_pipes(NULL, /* working directory */
+                                 (gchar **)argv->pdata, NULL,
+                                 G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
+                                 NULL,              /* child setup */
+                                 NULL,              /* user data */
+                                 &child_pid, NULL,  /* standard input */
+                                 NULL,              /* standard output */
+                                 &data->standard_error, /* holo-sync-var writes to stderr */
+                                 &error)) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "Failed to spawn holo-sync-var: %s", error->message);
+      return;
+   }
+
+   _au_atomupd1_set_simulate_update_status_and_message(
+      object, AU_UPDATE_STATUS_IN_PROGRESS, NULL, NULL);
+
+   data->object = g_object_ref(object);
+   au_atomupd1_complete_simulate_update(object, g_steal_pointer(&invocation));
+   g_child_watch_add(child_pid, on_simulate_completed, g_steal_pointer(&data));
+}
+
+static gboolean
+au_atomupd1_impl_handle_simulate_update(AuAtomupd1 *object,
+                                        GDBusMethodInvocation *invocation,
+                                        GVariant *arg_options)
+{
+   const gchar *id = NULL;
+   g_autoptr(GError) error = NULL;
+
+   if (!g_variant_lookup(arg_options, "id", "&s", &id) || id[0] == '\0') {
+      g_dbus_method_invocation_return_error_literal(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS,
+         "Missing required 'id' key in options");
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+   }
+
+   if (!_is_buildid_valid(id, NULL, NULL, &error)) {
+      g_dbus_method_invocation_return_error_literal(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS,
+         error->message);
+      return G_DBUS_METHOD_INVOCATION_HANDLED;
+   }
+
+   _au_check_auth(object, "com.steampowered.atomupd1.simulate-update",
+                  au_simulate_update_authorized_cb, invocation,
+                  g_strdup(id), g_free);
+
+   return G_DBUS_METHOD_INVOCATION_HANDLED;
+}
+
+static void
 init_atomupd1_iface(AuAtomupd1Iface *iface)
 {
    iface->handle_cancel_update = au_atomupd1_impl_handle_cancel_update;
@@ -3429,6 +3650,7 @@ init_atomupd1_iface(AuAtomupd1Iface *iface)
    iface->handle_enable_dev_keys = au_atomupd1_impl_handle_enable_dev_keys;
    iface->handle_disable_dev_keys = au_atomupd1_impl_handle_disable_dev_keys;
    iface->handle_get_builds = au_atomupd1_impl_handle_get_builds;
+   iface->handle_simulate_update = au_atomupd1_impl_handle_simulate_update;
 }
 
 G_DEFINE_TYPE_WITH_CODE(AuAtomupd1Impl,
@@ -3594,6 +3816,11 @@ au_atomupd1_impl_new(const gchar *config_directory,
    }
 
    au_atomupd1_set_version((AuAtomupd1 *)atomupd, ATOMUPD_VERSION);
+   au_atomupd1_set_simulate_update_status((AuAtomupd1 *)atomupd,
+                                          AU_UPDATE_STATUS_IDLE);
+   au_atomupd1_set_simulate_update_result(
+      (AuAtomupd1 *)atomupd, g_variant_new("a{sv}", NULL));
+   au_atomupd1_set_simulate_failure_message((AuAtomupd1 *)atomupd, "");
 
    client_pid = _au_get_process_pid("steamos-atomupd-client", &local_error);
    if (client_pid > -1) {

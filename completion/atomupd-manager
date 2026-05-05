@@ -6,7 +6,7 @@ _atomupd_manager() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="check update switch-variant switch-branch list-variants list-branches tracked-variant tracked-branch get-update-status create-dev-conf list-builds custom-update"
+    local commands="check update switch-variant switch-branch list-variants list-branches tracked-variant tracked-branch get-update-status create-dev-conf list-builds custom-update simulate-update"
 
     local common_opts="--session --verbose --version --help"
     local create_dev_conf_opts="--additional-variant --username --password --skip-reload"

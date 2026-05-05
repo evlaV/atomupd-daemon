@@ -293,6 +293,15 @@ on_signal(gpointer user_data)
    return G_SOURCE_REMOVE;
 }
 
+static gboolean
+on_simulate_signal(G_GNUC_UNUSED gpointer user_data)
+{
+   g_debug("Caught signal. Stopping simulate-update.");
+
+   g_main_loop_quit(main_loop);
+   return G_SOURCE_REMOVE;
+}
+
 static int
 print_usage(GOptionContext *context)
 {
@@ -1043,6 +1052,150 @@ update_status(G_GNUC_UNUSED GOptionContext *context,
    return EXIT_SUCCESS;
 }
 
+static void
+on_simulate_properties_changed(GDBusProxy *proxy,
+                               GVariant *changed_properties,
+                               G_GNUC_UNUSED const gchar *const *invalidated_properties,
+                               G_GNUC_UNUSED gpointer user_data)
+{
+   g_autoptr(GVariantIter) iter = NULL;
+   const gchar *key;
+   GVariant *value; /* borrowed */
+   gboolean interesting_change = FALSE;
+   guint status;
+   g_autoptr(GVariant) status_prop = NULL;
+   g_autoptr(GVariant) result_prop = NULL;
+   g_autoptr(GVariant) failure_message = NULL;
+   g_autoptr(GVariant) update_info = NULL;
+   g_autoptr(GVariantIter) etc_iter = NULL;
+   const gchar *buildid = NULL;
+   const gchar *version = NULL;
+   const gchar *branch = NULL;
+   const gchar *variant = NULL;
+   const gchar *path = NULL;
+   gboolean has_files = FALSE;
+
+   if (g_variant_n_children(changed_properties) == 0)
+      return;
+
+   g_variant_get(changed_properties, "a{sv}", &iter);
+   while (g_variant_iter_loop(iter, "{&sv}", &key, &value)) {
+      if (g_strcmp0(key, "SimulateUpdateStatus") == 0) {
+         interesting_change = TRUE;
+         g_variant_unref(value);
+         break;
+      }
+   }
+
+   if (!interesting_change)
+      return;
+
+   status_prop = g_dbus_proxy_get_cached_property(proxy, "SimulateUpdateStatus");
+   status = g_variant_get_uint32(status_prop);
+
+   switch (status) {
+   case AU_UPDATE_STATUS_SUCCESSFUL:
+      result_prop = g_dbus_proxy_get_cached_property(proxy, "SimulateUpdateResult");
+
+      g_variant_lookup(result_prop, "update_info", "@a{sv}", &update_info);
+      if (update_info != NULL) {
+         g_variant_lookup(update_info, "buildid", "&s", &buildid);
+         g_variant_lookup(update_info, "version", "&s", &version);
+         g_variant_lookup(update_info, "branch", "&s", &branch);
+         g_variant_lookup(update_info, "variant", "&s", &variant);
+      }
+
+      g_print("Selected update: buildid: %s, version: %s, branch: %s, variant: %s\n",
+              buildid != NULL ? buildid : "unknown",
+              version != NULL ? version : "unknown",
+              branch != NULL ? branch : "unknown",
+              variant != NULL ? variant : "unknown");
+
+      if (g_variant_lookup(result_prop, "unpreserved_etc_files", "as", &etc_iter)) {
+         while (g_variant_iter_loop(etc_iter, "&s", &path)) {
+            if (!has_files) {
+               g_print("Unpreserved /etc files:\n");
+               has_files = TRUE;
+            }
+            g_print("%s\n", path);
+         }
+      }
+
+      if (!has_files)
+         g_print("All /etc files would be preserved\n");
+
+      g_main_loop_quit(main_loop);
+      return;
+
+   case AU_UPDATE_STATUS_FAILED:
+      failure_message = g_dbus_proxy_get_cached_property(proxy, "SimulateFailureMessage");
+      g_print("Simulation failed: %s\n", g_variant_get_string(failure_message, NULL));
+      main_loop_result = EXIT_FAILURE;
+      g_main_loop_quit(main_loop);
+      return;
+
+   case AU_UPDATE_STATUS_IDLE:
+   case AU_UPDATE_STATUS_IN_PROGRESS:
+   default:
+      break;
+   }
+}
+
+static int
+simulate_update(GOptionContext *context,
+                GDBusConnection *bus,
+                const gchar *argument)
+{
+   g_autoptr(GDBusProxy) proxy = NULL;
+   g_autoptr(GError) error = NULL;
+   GVariant *body = NULL; /* floating */
+   g_autoptr(GVariant) reply = NULL;
+
+   if (argument == NULL) {
+      g_print("A build id is required\n\n");
+      return print_usage(context);
+   }
+
+   main_loop = g_main_loop_new(NULL, FALSE);
+
+   proxy = g_dbus_proxy_new_for_bus_sync(
+      opt_session ? G_BUS_TYPE_SESSION : G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE,
+      NULL, /* GDBusInterfaceInfo */
+      AU_ATOMUPD1_BUS_NAME, AU_ATOMUPD1_PATH, AU_ATOMUPD1_INTERFACE,
+      NULL, /* GCancellable */
+      &error);
+
+   if (proxy == NULL) {
+      g_print("An error occurred while simulating the update: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   g_signal_connect(proxy, "g-properties-changed",
+                    G_CALLBACK(on_simulate_properties_changed), NULL);
+
+   g_unix_signal_add(SIGINT, on_simulate_signal, NULL);
+   g_unix_signal_add(SIGTERM, on_simulate_signal, NULL);
+
+   {
+      GVariantBuilder builder;
+
+      g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+      g_variant_builder_add(&builder, "{sv}", "id", g_variant_new_string(argument));
+      body = g_variant_new("(a{sv})", &builder);
+   }
+
+   if (!_send_atomupd_message(bus, "SimulateUpdate", body, &reply, &error)) {
+      g_print("An error occurred while simulating the update: %s\n", error->message);
+      main_loop_result = EXIT_FAILURE;
+      goto cleanup;
+   }
+
+   g_main_loop_run(main_loop);
+
+cleanup:
+   return main_loop_result;
+}
+
 static int
 create_dev_conf(G_GNUC_UNUSED GOptionContext *context,
                 GDBusConnection *bus,
@@ -1202,6 +1355,14 @@ static const LaunchCommands launch_commands[] = {
       .command = "create-dev-conf",
       .description = "Create a custom client-dev.conf file for the atomic updates",
       .command_function = create_dev_conf,
+   },
+
+   {
+      .command = "simulate-update",
+      .argument = "ID",
+      .description = "Simulate the update identified by build ID and show which /etc files "
+                     "would not be preserved after an update",
+      .command_function = simulate_update,
    },
 };
 
