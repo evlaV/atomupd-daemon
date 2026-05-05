@@ -277,6 +277,38 @@
     <property name="KnownDevBranches" type="as" access="read"/>
 
     <!--
+        SimulateUpdateResult:
+
+        Result of the last SimulateUpdate call, published asynchronously
+        once the simulation completes successfully. It is an empty map before
+        SimulateUpdate is called, while the simulation is in progress, or
+        if the simulation failed. Check SimulateUpdateStatus to distinguish
+        these cases. On failure see SimulateFailureMessage for the error.
+
+        The vardict includes the following keys:
+        <variablelist>
+          <varlistentry>
+            <term>update_info a{sv}</term>
+            <listitem><para>
+              Describes the selected update with keys 'buildid' (s),
+              'version' (s), 'branch' (s) and 'variant' (s).
+            </para></listitem>
+          </varlistentry>
+          <varlistentry>
+            <term>unpreserved_etc_files as</term>
+            <listitem><para>
+              Absolute paths under /etc that would not be preserved
+              across the update.
+            </para></listitem>
+          </varlistentry>
+        </variablelist>
+    -->
+    <property name="SimulateUpdateResult" type="a{sv}" access="read">
+      <annotation name="org.qtproject.QtDBus.QtTypeName" value="QVariantMap"/>
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+
+    <!--
         ReloadConfiguration:
           @options: Reserved for future use
     -->
