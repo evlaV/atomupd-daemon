@@ -309,6 +309,20 @@
     </property>
 
     <!--
+        SimulateUpdateStatus:
+
+        A AuUpdateStatus enum, representing the status of the simulated
+        update. The possible values are:
+        0 = IDLE, SimulateUpdate has not been called yet
+        1 = IN_PROGRESS, the simulation is currently running
+        2 = SUCCESSFUL, the simulation successfully completed
+        3 = FAILED, an error occurred during the simulation
+    -->
+    <property name="SimulateUpdateStatus" type="u" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+
+    <!--
         ReloadConfiguration:
           @options: Reserved for future use
     -->
