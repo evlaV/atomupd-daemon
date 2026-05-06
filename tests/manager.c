@@ -878,6 +878,77 @@ test_list_builds(Fixture *f, gconstpointer context)
    au_tests_stop_process(http_server_proc);
 }
 
+static void
+test_simulate_update(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+   g_autofree gchar *update_file_path = NULL;
+   g_autofree gchar *mode_file_path = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   update_file_path =
+      g_build_filename(f->srcdir, "data", "update_one_minor.json", NULL);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
+
+   mode_file_path = g_build_filename(f->run_dir, "holo-sync-var-mode", NULL);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_HOLO_SYNC_VAR_MODE_FILE", mode_file_path, TRUE);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                               f->test_envp, FALSE);
+
+   /* Populate UpdatesAvailable */
+   {
+      g_autofree gchar *check_output = NULL;
+
+      check_output = _au_execute_manager("check", NULL, FALSE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(check_output, "20220227.3"));
+   }
+
+   /* Simulate update with unpreserved /etc files */
+   {
+      g_autofree gchar *output = NULL;
+
+      g_file_set_contents(mode_file_path, "pass", -1, NULL);
+      output =
+         _au_execute_manager("simulate-update", "20220227.3", FALSE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(
+         output,
+         "Selected update: buildid: 20220227.3, version: snapshot, branch: stable, variant: steamdeck"));
+      g_assert_nonnull(strstr(output, "Unpreserved /etc files:"));
+   }
+
+   /* Simulate update with all /etc files preserved */
+   {
+      g_autofree gchar *output = NULL;
+
+      g_file_set_contents(mode_file_path, "no-etc", -1, NULL);
+      output =
+         _au_execute_manager("simulate-update", "20220227.3", FALSE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(
+         output,
+         "Selected update: buildid: 20220227.3, version: snapshot, branch: stable, variant: steamdeck"));
+      g_assert_nonnull(strstr(output, "All /etc files would be preserved"));
+   }
+
+   /* Simulate update failure */
+   g_file_set_contents(mode_file_path, "fail", -1, NULL);
+   _au_execute_manager("simulate-update", "20220227.3", FALSE, f->test_envp, &error);
+   g_assert_error(error, G_SPAWN_EXIT_ERROR, 1);
+   g_clear_error(&error);
+
+   au_tests_stop_process(daemon_proc);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -894,6 +965,7 @@ main(int argc, char **argv)
    test_add("/manager/verbose", test_verbose);
    test_add("/manager/dev_config", test_dev_config);
    test_add("/manager/list_builds", test_list_builds);
+   test_add("/manager/simulate_update", test_simulate_update);
 
    ret = g_test_run();
    return ret;

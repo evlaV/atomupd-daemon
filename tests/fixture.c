@@ -134,6 +134,7 @@ au_tests_setup(Fixture *f, gconstpointer context)
       "com.steampowered.atomupd1.switch-variant-or-branch",
       "com.steampowered.atomupd1.manage-http-proxy",
       "com.steampowered.atomupd1.manage-trusted-keys",
+      "com.steampowered.atomupd1.simulate-update",
    };
 
    f->srcdir = g_strdup(g_getenv("G_TEST_SRCDIR"));
@@ -201,6 +202,13 @@ au_tests_setup(Fixture *f, gconstpointer context)
    f->test_envp = g_environ_setenv(f->test_envp, "AU_DEFAULT_TRUSTED_KEYS", f->trusted_keys_dir, TRUE);
    f->test_envp =g_environ_setenv(f->test_envp, "AU_DEFAULT_DEV_KEYS", f->dev_keys_dir, TRUE);
    f->test_envp = g_environ_setenv(f->test_envp, "AU_RUN_PATH", f->run_dir, TRUE);
+
+   {
+      g_autofree gchar *mock_holo_sync_var =
+         g_build_filename(f->builddir, "holo-sync-var", NULL);
+      f->test_envp =
+         g_environ_setenv(f->test_envp, "AU_HOLO_SYNC_VAR", mock_holo_sync_var, TRUE);
+   }
 
    system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
    g_assert_no_error(error);
