@@ -643,7 +643,8 @@ static int
 launch_update(GDBusConnection *bus,
               const gchar *update_id,
               const gchar *update_url,
-              const gchar *update_path)
+              const gchar *update_path,
+              const gchar *chunks_store_path)
 {
    g_autoptr(GDBusProxy) proxy = NULL;
    g_autoptr(GError) error = NULL;
@@ -705,6 +706,10 @@ launch_update(GDBusConnection *bus,
       g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
       g_variant_builder_add(&builder, "{sv}", "update_path",
                             g_variant_new_string(update_path));
+      if (chunks_store_path != NULL)
+         g_variant_builder_add(&builder, "{sv}", "chunks_store_path",
+                               g_variant_new_string(chunks_store_path));
+
       body = g_variant_new("(@a{sv})", g_variant_builder_end(&builder));
    } else {
       method = "StartUpdate";
@@ -760,7 +765,7 @@ update_command(G_GNUC_UNUSED GOptionContext *context, GDBusConnection *bus, cons
    const gchar *buildid = NULL;
 
    if (update_id != NULL)
-      return launch_update(bus, update_id, NULL, NULL);
+      return launch_update(bus, update_id, NULL, NULL, NULL);
 
    /* Reuse results from a previous check if already available */
    updates_available = get_atomupd_property(bus, "UpdatesAvailable", &error);
@@ -802,7 +807,7 @@ update_command(G_GNUC_UNUSED GOptionContext *context, GDBusConnection *bus, cons
 
    g_print("Updating to %s\n", buildid);
 
-   return launch_update(bus, buildid, NULL, NULL);
+   return launch_update(bus, buildid, NULL, NULL, NULL);
 }
 
 static gchar *
@@ -951,6 +956,7 @@ custom_update_command(GOptionContext *context,
    g_autoptr(GUri) uri = NULL;
    g_autofree gchar *update_url = NULL;
    g_autofree gchar *update_path = NULL;
+   g_autofree gchar *chunks_store_path = NULL;
    gboolean multiple_matches = FALSE;
    g_autoptr(GError) error = NULL;
 
@@ -1034,6 +1040,8 @@ custom_update_command(GOptionContext *context,
             if (g_strcmp0(buildid, parsed_request) == 0) {
                print_image_info(buildid, version, branch, variant);
                update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
+               chunks_store_path = g_strdup(json_object_get_string_member_with_default(
+                  obj, "chunks_store_path", NULL));
                break;
             }
          } else if (selector_mode == CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX) {
@@ -1052,6 +1060,8 @@ custom_update_command(GOptionContext *context,
                 * newest build of the highest matching version. */
                print_image_info(buildid, version, branch, variant);
                update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
+               chunks_store_path = g_strdup(json_object_get_string_member_with_default(
+                  obj, "chunks_store_path", NULL));
                break;
             }
          } else if (selector_mode == CUSTOM_UPDATE_SELECTOR_EXACT_VERSION) {
@@ -1061,10 +1071,13 @@ custom_update_command(GOptionContext *context,
                   continue;
 
                print_image_info(buildid, version, branch, variant);
-               if (update_path == NULL)
+               if (update_path == NULL) {
                   update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
-               else
+                  chunks_store_path = g_strdup(json_object_get_string_member_with_default(
+                     obj, "chunks_store_path", NULL));
+               } else {
                   multiple_matches = TRUE;
+               }
             }
          }
       }
@@ -1088,7 +1101,7 @@ custom_update_command(GOptionContext *context,
       return EXIT_FAILURE;
    }
 
-   return launch_update(bus, NULL, update_url, update_path);
+   return launch_update(bus, NULL, update_url, update_path, chunks_store_path);
 }
 
 static int

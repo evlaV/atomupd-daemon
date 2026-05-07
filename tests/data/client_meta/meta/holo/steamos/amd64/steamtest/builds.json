@@ -1,3 +1,3 @@
 [
-    {"version": "3.9.0", "buildid": "20260109.9999", "branch": "stable", "update_path": "steamos/holo/3.9.0/amd64/steamos-holo-20260109.9999-3.9.0-amd64-steamtest.raucb"}
+    {"version": "3.9.0", "buildid": "20260109.9999", "branch": "stable", "update_path": "steamdeck/20260109.9999/steamos-holo-20260109.9999-3.9.0.raucb", "chunks_store_path": "steamdeck/chunks.castr"}
 ]
