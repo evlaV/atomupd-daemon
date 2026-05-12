@@ -2603,6 +2603,7 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
    AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
    g_autoptr(GPtrArray) argv = NULL;
    g_autoptr(GError) error = NULL;
+   g_autoptr(GUri) url_parsed = NULL;
    AuUpdateStatus current_status;
    const gchar *url = NULL;
    const gchar *update_path = NULL;
@@ -2633,6 +2634,14 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
       update_url = g_build_filename(self->images_url, update_path, NULL);
    else
       update_url = g_strdup(url);
+
+   url_parsed = g_uri_parse(update_url, G_URI_FLAGS_NONE, NULL);
+   if (url_parsed == NULL) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS,
+         "The update URL doesn't seem to be of a valid format");
+      return;
+   }
 
    /* If we have a secret hash from our config, and we are trying to install an image
     * under the "dev" directory, we append to the variant part the secret hash as well. */
