@@ -878,6 +878,190 @@ test_list_builds(Fixture *f, gconstpointer context)
    au_tests_stop_process(http_server_proc);
 }
 
+static void
+test_ntp_retry(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+   g_autofree gchar *ntp_flag_file = NULL;
+   g_autofree gchar *update_file_path = NULL;
+   int fd;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   /* Start with the flag file missing */
+   fd = g_file_open_tmp("ntp-flag-XXXXXX", &ntp_flag_file, &error);
+   g_assert_no_error(error);
+   close(fd);
+   g_assert_cmpint(g_unlink(ntp_flag_file), ==, 0);
+
+   update_file_path = g_build_filename(f->srcdir, "data", "update_empty.json", NULL);
+   f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON",
+                                   update_file_path, TRUE);
+
+   f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_TIME_WAIT_SYNC_FLAG_FILE",
+                                   ntp_flag_file, TRUE);
+
+   {
+      /* The first query succeed, it should immediately return the result and not wait
+       * for the NTP sync */
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      g_autofree gchar *output = NULL;
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                                  f->test_envp, FALSE);
+
+      output = _au_execute_manager("check", NULL, FALSE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "No update available"));
+
+      /* Assert we never called systemd-time-wait-sync */
+      g_assert_false(g_file_test(ntp_flag_file, G_FILE_TEST_EXISTS));
+
+      au_tests_stop_process(daemon_proc);
+   }
+
+   {
+      /* Make the mock client fail with HTTP 4xx, we should not wait for the NTP sync
+       * and retry. It should immediately return the error */
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_CLIENT_QUERY_4xx", "1", TRUE);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                                  f->test_envp, FALSE);
+
+      _au_execute_manager("check", NULL, FALSE, f->test_envp, &error);
+      g_assert_error(error, G_SPAWN_EXIT_ERROR, 1);
+      g_clear_error(&error);
+
+      /* Assert we never called systemd-time-wait-sync */
+      g_assert_false(g_file_test(ntp_flag_file, G_FILE_TEST_EXISTS));
+
+      f->test_envp = g_environ_unsetenv(f->test_envp, "G_TEST_CLIENT_QUERY_4xx");
+      au_tests_stop_process(daemon_proc);
+   }
+
+   {
+      /* Make the mock client fail with a generic error, we should then wait for the
+       * NTP sync and retry. This time succeeding. */
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      g_autofree gchar *fail_file = NULL;
+      g_autofree gchar *output = NULL;
+
+      fd = g_file_open_tmp("query-fail-XXXXXX", &fail_file, &error);
+      g_assert_no_error(error);
+      close(fd);
+
+      /* Make the mock client fail once, then succeed on the retry */
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_CLIENT_QUERY_FAIL_ONCE",
+                                      fail_file, TRUE);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                            f->test_envp, FALSE);
+
+      output = _au_execute_manager("check", NULL, TRUE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "No update available"));
+
+      /* The NTP sync should have happened once */
+      g_assert_true(g_file_test(ntp_flag_file, G_FILE_TEST_EXISTS));
+
+      f->test_envp = g_environ_unsetenv(f->test_envp, "G_TEST_CLIENT_QUERY_FAIL_ONCE");
+      au_tests_stop_process(daemon_proc);
+      g_unlink(ntp_flag_file);
+   }
+
+   {
+      /* Fail the first query, and simulate NTP sync to reach timeout */
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      g_autofree gchar *fail_file = NULL;
+
+      fd = g_file_open_tmp("query-fail-XXXXXX", &fail_file, &error);
+      g_assert_no_error(error);
+      close(fd);
+
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_CLIENT_QUERY_FAIL_ONCE",
+                                      fail_file, TRUE);
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_TIME_WAIT_SYNC_RESULT",
+                                      "timeout", TRUE);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                      f->test_envp, FALSE);
+
+      _au_execute_manager("check", NULL, FALSE, f->test_envp, &error);
+      g_assert_error(error, G_SPAWN_EXIT_ERROR, 1);
+      g_clear_error(&error);
+
+      g_assert_true(g_file_test(ntp_flag_file, G_FILE_TEST_EXISTS));
+
+      f->test_envp = g_environ_unsetenv(f->test_envp, "G_TEST_CLIENT_QUERY_FAIL_ONCE");
+      f->test_envp = g_environ_unsetenv(f->test_envp, "G_TEST_TIME_WAIT_SYNC_RESULT");
+      au_tests_stop_process(daemon_proc);
+      g_unlink(ntp_flag_file);
+   }
+
+   {
+      /* Fail the first query and make systemd-time-wait-sync return an error as well */
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      g_autofree gchar *fail_file = NULL;
+
+      fd = g_file_open_tmp("query-fail-XXXXXX", &fail_file, &error);
+      g_assert_no_error(error);
+      close(fd);
+
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_CLIENT_QUERY_FAIL_ONCE",
+                                      fail_file, TRUE);
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_TIME_WAIT_SYNC_RESULT",
+                                      "failure", TRUE);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                      f->test_envp, FALSE);
+
+      _au_execute_manager("check", NULL, FALSE, f->test_envp, &error);
+      g_assert_error(error, G_SPAWN_EXIT_ERROR, 1);
+      g_clear_error(&error);
+
+      g_assert_true(g_file_test(ntp_flag_file, G_FILE_TEST_EXISTS));
+
+      f->test_envp = g_environ_unsetenv(f->test_envp, "G_TEST_CLIENT_QUERY_FAIL_ONCE");
+      f->test_envp = g_environ_unsetenv(f->test_envp, "G_TEST_TIME_WAIT_SYNC_RESULT");
+      au_tests_stop_process(daemon_proc);
+      g_unlink(ntp_flag_file);
+   }
+
+   {
+      /* Fail the first query, make NTP succeed and then fail again the retry */
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      g_autofree gchar *fail_file = NULL;
+
+      fd = g_file_open_tmp("query-fail-XXXXXX", &fail_file, &error);
+      g_assert_no_error(error);
+      close(fd);
+
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_CLIENT_QUERY_FAIL_ONCE",
+                                fail_file, TRUE);
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON",
+                                "/missing", TRUE);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                f->test_envp, FALSE);
+
+      _au_execute_manager("check", NULL, FALSE, f->test_envp, &error);
+      g_assert_error(error, G_SPAWN_EXIT_ERROR, 1);
+      g_clear_error(&error);
+
+      g_assert_true(g_file_test(ntp_flag_file, G_FILE_TEST_EXISTS));
+
+      f->test_envp = g_environ_unsetenv(f->test_envp, "G_TEST_CLIENT_QUERY_FAIL_ONCE");
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON",
+                                update_file_path, TRUE);
+      au_tests_stop_process(daemon_proc);
+      g_unlink(ntp_flag_file);
+   }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -894,6 +1078,7 @@ main(int argc, char **argv)
    test_add("/manager/verbose", test_verbose);
    test_add("/manager/dev_config", test_dev_config);
    test_add("/manager/list_builds", test_list_builds);
+   test_add("/manager/ntp_retry", test_ntp_retry);
 
    ret = g_test_run();
    return ret;

@@ -69,6 +69,13 @@ executable(
   install_dir: tests_dir
 )
 
+mock_time_wait_sync = executable(
+  'mock-time-wait-sync',
+  'mock-time-wait-sync.c',
+  install: true,
+  install_dir: tests_dir
+)
+
 foreach test_name : ['au-atomupd1-impl', 'impl', 'manager']
   exe = executable(
     'test-' + test_name,

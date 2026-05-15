@@ -1315,6 +1315,8 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
    AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(data->req->object);
 
    if (!g_spawn_check_wait_status(wait_status, &error)) {
+      g_autofree gchar *error_message = NULL;
+
       if (error->domain == G_SPAWN_EXIT_ERROR && error->code == 2) {
          /* The query server returned an HTTP error in the 4xx range */
 
@@ -1377,10 +1379,16 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
          return;
       }
 
-      g_dbus_method_invocation_return_error(
-         g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-         "An error occurred calling the 'steamos-atomupd-client' helper: %s",
-         error->message);
+      /* Return AU_ATOMUPD1_ERROR_MAYBE_RETRY when the steamos-atomupd-client
+       * fails without an HTTP 4xx code. This is likely due to some other connection
+       * issues, like failing to validate the TLS certificate. In these cases retrying
+       * could fix the problem */
+      error_message = g_strdup_printf("An error occurred calling the "
+                                      "'steamos-atomupd-client' helper: %s",
+                                      error->message);
+      g_dbus_method_invocation_return_dbus_error(
+         g_steal_pointer(&data->req->invocation),
+         AU_ATOMUPD1_ERROR_MAYBE_RETRY, error_message);
       return;
    }
 

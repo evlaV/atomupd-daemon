@@ -51,8 +51,15 @@
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(sd_journal, sd_journal_close)
 
+/* Maximum time to wait for NTP synchronization. 40 seconds is long enough for NTP
+ * to attempt at least one sync. If it still doesn't happen after that period, we
+ * give up and return an error. */
+#define NTP_SYNC_TIMEOUT_SECONDS 40
+
 static const gchar *AU_CONFIG = "client.conf";
 static const gchar *AU_DEV_CONFIG = "client-dev.conf";
+
+static const gchar *AU_SYSTEMD_TIME_WAIT_SYNC = "/usr/lib/systemd/systemd-time-wait-sync";
 
 static GMainLoop *main_loop = NULL;
 static int main_loop_result = EXIT_SUCCESS;
@@ -419,6 +426,11 @@ open_atomupd_daemon_journal(GError **error)
       return au_throw_error_null(error, "Failed to add a match for the journal: %s",
                                  g_strerror(-ret));
 
+   ret = sd_journal_get_fd(journal);
+   if (ret < 0)
+      return au_throw_error_null(error, "Failed to get the journal descriptor: %s",
+                                 g_strerror(-ret));
+
    ret = sd_journal_seek_tail(journal);
    if (ret < 0)
       return au_throw_error_null(error, "Failed to move to the end of the journal: %s",
@@ -430,6 +442,58 @@ open_atomupd_daemon_journal(GError **error)
                                  g_strerror(-ret));
 
    return g_steal_pointer(&journal);
+}
+
+/*
+ * _au_wait_for_ntp:
+ *
+ * Wait for NTP synchronization, if has not been done yet. At maximum, we wait for
+ * NTP_SYNC_TIMEOUT_SECONDS.
+ *
+ * Returns: %TRUE if we ensured that NTP has now been synced
+ */
+static gboolean
+_au_wait_for_ntp(void)
+{
+   g_autofree gchar *output = NULL;
+   const gchar *systemd_time_wait_sync = NULL;
+   const gchar *timeout_str = NULL;
+   g_autoptr(GError) error = NULL;
+   gint wait_status = 0;
+
+   /* These environment variables are used for debugging and automated tests */
+   systemd_time_wait_sync = g_getenv("AU_SYSTEMD_TIME_WAIT_SYNC");
+   if (systemd_time_wait_sync == NULL)
+      systemd_time_wait_sync = AU_SYSTEMD_TIME_WAIT_SYNC;
+
+   timeout_str = g_getenv("AU_NTP_SYNC_TIMEOUT");
+   if (timeout_str == NULL)
+      timeout_str = G_STRINGIFY(NTP_SYNC_TIMEOUT_SECONDS);
+
+   /* systemd-time-wait-sync is usually faster than manually running `timedatectl` to
+    * check if NTP has been synchronized. For this reason we call systemd-time-wait-sync
+    * regardless */
+   const gchar *argv[] = {
+      "/usr/bin/timeout", timeout_str, systemd_time_wait_sync, NULL,
+   };
+
+   /* We must write the stderr to avoid breaking the stdout parsing of the legacy
+    * steamos-update script used by the Steam client */
+   g_printerr("Waiting up to %s seconds for NTP to synchronize the time...\n",
+              timeout_str);
+
+   if (!g_spawn_sync(NULL, (gchar **)argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL,
+                     &output, NULL, &wait_status, &error)) {
+      g_warning("Failed to run systemd-time-wait-sync: %s", error->message);
+      return FALSE;
+   }
+
+   if (!g_spawn_check_wait_status(wait_status, &error)) {
+      g_warning("systemd-time-wait-sync did not succeed: %s", error->message);
+      return FALSE;
+   }
+
+   return TRUE;
 }
 
 static int
@@ -467,18 +531,44 @@ check_updates(GOptionContext *context,
    ret = _send_atomupd_message(bus, "CheckForUpdates", g_variant_new("(a{sv})", &builder),
                                &reply, &error);
 
-   if (opt_verbose) {
+   if (opt_verbose)
       print_journal_messages(journal);
 
-      if (edited_debug_value) {
-         /* Reset the debug flag to its original value */
-         g_autoptr(GError) local_error = NULL;
-         if (!_send_message(bus, "/org/gtk/Debugging", "org.gtk.Debugging",
-                            "SetDebugEnabled", g_variant_new("(b)", FALSE), NULL,
-                            &local_error)) {
-            g_warning("Failed to restore the debug value of atomupd-daemon: %s",
-                      local_error->message);
+   if (!ret) {
+      g_autofree gchar *remote_error = g_dbus_error_get_remote_error(error);
+      gboolean retry = g_strcmp0(remote_error, AU_ATOMUPD1_ERROR_MAYBE_RETRY) == 0;
+
+      if (retry && _au_wait_for_ntp()) {
+         g_info("Retrying one more time after NTP synchronization...");
+         g_clear_error(&error);
+         g_clear_pointer(&reply, g_variant_unref);
+
+         g_variant_builder_clear(&builder);
+         g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+
+         if (opt_penultimate)
+            g_variant_builder_add(&builder, "{sv}", "penultimate",
+                                  g_variant_new_boolean(TRUE));
+
+         ret = _send_atomupd_message(bus, "CheckForUpdates",
+                                     g_variant_new("(a{sv})", &builder), &reply, &error);
+
+         if (opt_verbose) {
+            /* Pick up eventual rotated journal file */
+            sd_journal_process(journal);
+            print_journal_messages(journal);
          }
+      }
+   }
+
+   if (edited_debug_value) {
+      /* Reset the debug flag to its original value */
+      g_autoptr(GError) local_error = NULL;
+      if (!_send_message(bus, "/org/gtk/Debugging", "org.gtk.Debugging",
+                         "SetDebugEnabled", g_variant_new("(b)", FALSE), NULL,
+                         &local_error)) {
+         g_warning("Failed to restore the debug value of atomupd-daemon: %s",
+                   local_error->message);
       }
    }
 

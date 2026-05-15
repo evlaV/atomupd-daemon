@@ -199,8 +199,18 @@ au_tests_setup(Fixture *f, gconstpointer context)
    f->test_envp =
       g_environ_setenv(f->test_envp, "AU_DESYNC_CONFIG_PATH", f->desync_conf_path, TRUE);
    f->test_envp = g_environ_setenv(f->test_envp, "AU_DEFAULT_TRUSTED_KEYS", f->trusted_keys_dir, TRUE);
-   f->test_envp =g_environ_setenv(f->test_envp, "AU_DEFAULT_DEV_KEYS", f->dev_keys_dir, TRUE);
+   f->test_envp = g_environ_setenv(f->test_envp, "AU_DEFAULT_DEV_KEYS", f->dev_keys_dir, TRUE);
    f->test_envp = g_environ_setenv(f->test_envp, "AU_RUN_PATH", f->run_dir, TRUE);
+
+   {
+      g_autofree gchar *mock_time_wait_sync = g_build_filename(f->builddir, "mock-time-wait-sync", NULL);
+      f->test_envp = g_environ_setenv(f->test_envp, "AU_SYSTEMD_TIME_WAIT_SYNC",
+                                      mock_time_wait_sync, TRUE);
+   }
+
+   /* Set a short timeout while calling our mock systemd-time-wait-sync, there is no need
+    * to wait the full 40 seconds */
+   f->test_envp = g_environ_setenv(f->test_envp, "AU_NTP_SYNC_TIMEOUT", "2", TRUE);
 
    system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
    g_assert_no_error(error);

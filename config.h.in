@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 Collabora Ltd.
+ * Copyright 2021-2026 Collabora Ltd.
  * SPDX-License-Identifier: MIT
  */
 #mesondefine VERSION
@@ -10,3 +10,5 @@
 #define AU_ATOMUPD1_BUS_NAME "@atomupd1_bus_name@"
 #define AU_ATOMUPD1_PATH "@atomupd1_path@"
 #define AU_ATOMUPD1_INTERFACE "@atomupd1_interface@"
+
+#define AU_ATOMUPD1_ERROR_MAYBE_RETRY AU_ATOMUPD1_INTERFACE ".Error.MaybeRetryError"

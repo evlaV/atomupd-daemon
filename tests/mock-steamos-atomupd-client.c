@@ -33,6 +33,8 @@
 
 #include "mock-defines.h"
 
+#include <glib/gstdio.h>
+
 static volatile sig_atomic_t stopped = FALSE;
 
 static gchar *opt_config = NULL;
@@ -95,6 +97,7 @@ main(int argc, char **argv)
       g_autofree gchar *update_json = NULL;
       const gchar *update_json_path;
       const gchar *record_variant_file;
+      const gchar *fail_file;
 
       /* If requested, record the received --variant so tests can inspect it */
       record_variant_file = g_getenv("G_TEST_RECORD_VARIANT_FILE");
@@ -103,6 +106,13 @@ main(int argc, char **argv)
 
       if (g_getenv("G_TEST_CLIENT_QUERY_4xx"))
          return 2;
+
+      /* Before exiting we remove the file. A second attempt will then succeed */
+      fail_file = g_getenv("G_TEST_CLIENT_QUERY_FAIL_ONCE");
+      if (fail_file != NULL && g_file_test(fail_file, G_FILE_TEST_EXISTS)) {
+         g_unlink(fail_file);
+         return EXIT_FAILURE;
+      }
 
       if (opt_penultimate)
          update_json_path = g_getenv("G_TEST_UPDATE_JSON_PENULTIMATE");
