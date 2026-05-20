@@ -76,6 +76,16 @@ mock_time_wait_sync = executable(
   install_dir: tests_dir
 )
 
+custom_target(
+  'holo-sync-var',
+  input: 'mock-holo-sync-var.sh',
+  output: 'holo-sync-var',
+  command: ['install', '-m', '755', '@INPUT@', '@OUTPUT@'],
+  build_by_default: true,
+  install: true,
+  install_dir: tests_dir,
+)
+
 foreach test_name : ['au-atomupd1-impl', 'impl', 'manager']
   exe = executable(
     'test-' + test_name,
@@ -92,7 +102,7 @@ foreach test_name : ['au-atomupd1-impl', 'impl', 'manager']
     # account for the very slow mock polkit start time
     test_timeout = 2250
   else
-    test_timeout = 150
+    test_timeout = 200
   endif
 
   test(test_name, exe, env : test_env, timeout : test_timeout, is_parallel: false)

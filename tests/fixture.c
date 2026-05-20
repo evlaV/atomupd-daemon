@@ -134,6 +134,7 @@ au_tests_setup(Fixture *f, gconstpointer context)
       "com.steampowered.atomupd1.switch-variant-or-branch",
       "com.steampowered.atomupd1.manage-http-proxy",
       "com.steampowered.atomupd1.manage-trusted-keys",
+      "com.steampowered.atomupd1.simulate-update",
    };
 
    f->srcdir = g_strdup(g_getenv("G_TEST_SRCDIR"));
@@ -211,6 +212,13 @@ au_tests_setup(Fixture *f, gconstpointer context)
    /* Set a short timeout while calling our mock systemd-time-wait-sync, there is no need
     * to wait the full 40 seconds */
    f->test_envp = g_environ_setenv(f->test_envp, "AU_NTP_SYNC_TIMEOUT", "2", TRUE);
+
+   {
+      g_autofree gchar *mock_holo_sync_var =
+         g_build_filename(f->builddir, "holo-sync-var", NULL);
+      f->test_envp =
+         g_environ_setenv(f->test_envp, "AU_HOLO_SYNC_VAR", mock_holo_sync_var, TRUE);
+   }
 
    system_bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
    g_assert_no_error(error);

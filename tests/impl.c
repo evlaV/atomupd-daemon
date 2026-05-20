@@ -59,13 +59,28 @@
 
 static gulong default_wait = 0.5 * G_USEC_PER_SEC;
 
+static GVariant *
+_send_simulate_update(GDBusConnection *bus, const gchar *id)
+{
+   GVariantBuilder builder;
+   GVariant *params; /* floating */
+
+   g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+   g_variant_builder_add(&builder, "{sv}", "id", g_variant_new_string(id));
+   params = g_variant_builder_end(&builder);
+
+   return _send_atomupd_message(bus, "SimulateUpdate", "(@a{sv})", params);
+}
+
 typedef struct {
    guint32 version;
    gdouble progress_percentage;
    guint64 estimated_completion_time;
    gsize updates_available_n;
    gsize updates_available_later_n;
+   gsize simulate_update_result_n;
    AuUpdateStatus status;
+   AuUpdateStatus simulate_update_status;
    gchar *update_build_id;
    gchar *update_version;
    gchar *variant;
@@ -73,6 +88,7 @@ typedef struct {
    gchar *failure_message;
    gchar *current_version;
    gchar *current_build_id;
+   gchar *simulate_failure_message;
    GStrv known_variants;
    GStrv known_branches;
    GStrv known_dev_branches;
@@ -88,6 +104,7 @@ atomupd_properties_free(AtomupdProperties *atomupd_properties)
    g_clear_pointer(&atomupd_properties->failure_message, g_free);
    g_clear_pointer(&atomupd_properties->current_version, g_free);
    g_clear_pointer(&atomupd_properties->current_build_id, g_free);
+   g_clear_pointer(&atomupd_properties->simulate_failure_message, g_free);
    g_clear_pointer(&atomupd_properties->known_variants, g_strfreev);
    g_clear_pointer(&atomupd_properties->known_branches, g_strfreev);
    g_clear_pointer(&atomupd_properties->known_dev_branches, g_strfreev);
@@ -473,6 +490,7 @@ _get_atomupd_properties(GDBusConnection *bus)
 {
    g_autoptr(GVariantIter) available_iter = NULL;
    g_autoptr(GVariantIter) available_later_iter = NULL;
+   g_autoptr(GVariantIter) simulate_result_iter = NULL;
    g_auto(GVariantDict) dict = { { { 0 } } };
    g_autoptr(GVariant) reply = NULL;
    g_autoptr(GVariant) properties = NULL;
@@ -508,6 +526,11 @@ _get_atomupd_properties(GDBusConnection *bus)
    assert_variant_dict("UpdatesAvailable", available_iter, updates_available_n);
    assert_variant_dict("UpdatesAvailableLater", available_later_iter,
                        updates_available_later_n);
+
+   assert_variant("SimulateUpdateStatus", "u", simulate_update_status);
+   assert_variant("SimulateFailureMessage", "s", simulate_failure_message);
+   assert_variant_dict("SimulateUpdateResult", simulate_result_iter,
+                       simulate_update_result_n);
 
    return g_steal_pointer(&atomupd_properties);
 }
@@ -731,6 +754,10 @@ _check_default_properties(Fixture *f, GDBusConnection *bus, const PropertiesTest
    g_assert_cmpstrv(atomupd_properties->known_variants, test->variants);
    g_assert_cmpstrv(atomupd_properties->known_branches, test->branches);
    g_assert_cmpstrv(atomupd_properties->known_dev_branches, test->branches_dev);
+   g_assert_cmpuint(atomupd_properties->simulate_update_status, ==,
+                    AU_UPDATE_STATUS_IDLE);
+   g_assert_cmpstr(atomupd_properties->simulate_failure_message, ==, "");
+   g_assert_cmpuint(atomupd_properties->simulate_update_result_n, ==, 0);
 
    au_tests_stop_process(daemon_proc);
 
@@ -1972,6 +1999,16 @@ test_unauthorized(Fixture *f, gconstpointer context)
       g_autoptr(GVariant) reply = NULL;
       g_autofree gchar *reply_str = NULL;
 
+      reply = _send_simulate_update(bus, MOCK_SUCCESS);
+      g_variant_get(reply, "(s)", &reply_str);
+
+      g_assert_cmpstr(reply_str, ==, expected_reply);
+   }
+
+   {
+      g_autoptr(GVariant) reply = NULL;
+      g_autofree gchar *reply_str = NULL;
+
       reply = _send_atomupd_message(bus, "EnableHttpProxy", "(sia{sv})", "192.168.10.1",
                                     1234, NULL);
       g_variant_get(reply, "(s)", &reply_str);
@@ -2923,6 +2960,162 @@ test_query_updates_variant_hash(Fixture *f, gconstpointer context)
 }
 
 static void
+test_simulate_update(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *update_file_path = NULL;
+   g_autofree gchar *mode_file_path = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   update_file_path =
+      g_build_filename(f->srcdir, "data", "update_one_minor.json", NULL);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
+
+   mode_file_path = g_build_filename(f->run_dir, "holo-sync-var-mode", NULL);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_HOLO_SYNC_VAR_MODE_FILE", mode_file_path, TRUE);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                               f->test_envp, FALSE);
+
+   /* SimulateUpdate before CheckForUpdates should fail */
+   {
+      g_autoptr(GVariant) reply = _send_simulate_update(bus, "20220227.3");
+      g_autofree gchar *reply_str = NULL;
+
+      g_variant_get(reply, "(s)", &reply_str);
+      g_assert_cmpstr(reply_str, ==, "There are no installable updates available");
+   }
+
+   _call_check_for_updates(bus, NULL, NULL);
+
+   /* SimulateUpdate with no unpreserved /etc files should succeed with an empty list */
+   {
+      g_autoptr(AtomupdProperties) props = NULL;
+      g_autoptr(GVariant) result_prop = NULL;
+      g_autoptr(GVariant) status_prop = NULL;
+      g_auto(GStrv) etc_files = NULL;
+      const gchar *expected[] = { NULL };
+
+      g_file_set_contents(mode_file_path, "no-etc", -1, NULL);
+      g_assert_null(_send_simulate_update(bus, "20220227.3"));
+      g_usleep(2 * default_wait);
+
+      props = _get_atomupd_properties(bus);
+      g_assert_cmpuint(props->simulate_update_status, ==,
+                       AU_UPDATE_STATUS_SUCCESSFUL);
+
+      status_prop = _get_atomupd_property(bus, "SimulateUpdateStatus");
+      g_assert_cmpuint(g_variant_get_uint32(status_prop), ==,
+                       AU_UPDATE_STATUS_SUCCESSFUL);
+
+      result_prop = _get_atomupd_property(bus, "SimulateUpdateResult");
+      g_assert_true(
+         g_variant_lookup(result_prop, "unpreserved_etc_files", "^as", &etc_files));
+      g_assert_cmpstrv(etc_files, expected);
+   }
+
+   /* SimulateUpdate with unpreserved /etc files should list them in the result */
+   {
+      g_autoptr(AtomupdProperties) props = NULL;
+      g_autoptr(GVariant) result_prop = NULL;
+      g_autoptr(GVariant) status_prop = NULL;
+      g_autoptr(GVariant) update_info = NULL;
+
+      g_file_set_contents(mode_file_path, "pass", -1, NULL);
+      g_assert_null(_send_simulate_update(bus, "20220227.3"));
+      g_usleep(2 * default_wait);
+
+      props = _get_atomupd_properties(bus);
+      g_assert_cmpuint(props->simulate_update_status, ==,
+                       AU_UPDATE_STATUS_SUCCESSFUL);
+
+      status_prop = _get_atomupd_property(bus, "SimulateUpdateStatus");
+      g_assert_cmpuint(g_variant_get_uint32(status_prop), ==,
+                       AU_UPDATE_STATUS_SUCCESSFUL);
+
+      result_prop = _get_atomupd_property(bus, "SimulateUpdateResult");
+      g_variant_lookup(result_prop, "update_info", "@a{sv}", &update_info);
+      g_assert_nonnull(update_info);
+
+      {
+         const gchar *buildid = NULL;
+         const gchar *version = NULL;
+         const gchar *branch = NULL;
+         const gchar *variant = NULL;
+
+         g_variant_lookup(update_info, "buildid", "&s", &buildid);
+         g_variant_lookup(update_info, "version", "&s", &version);
+         g_variant_lookup(update_info, "branch", "&s", &branch);
+         g_variant_lookup(update_info, "variant", "&s", &variant);
+         g_assert_cmpstr(buildid, ==, "20220227.3");
+         g_assert_cmpstr(version, ==, "snapshot");
+         g_assert_cmpstr(branch, ==, "stable");
+         g_assert_cmpstr(variant, ==, "steamdeck");
+      }
+
+      {
+         g_auto(GStrv) etc_files = NULL;
+         const gchar *expected[] = { "/etc/foo.conf", "/etc/bar.conf", NULL };
+
+         g_assert_true(
+            g_variant_lookup(result_prop, "unpreserved_etc_files", "^as", &etc_files));
+         g_assert_cmpstrv(etc_files, expected);
+      }
+   }
+
+   /* holo-sync-var failure should result in FAILED status with a non-empty message */
+   {
+      g_autoptr(AtomupdProperties) props = NULL;
+
+      g_file_set_contents(mode_file_path, "fail", -1, NULL);
+      g_assert_null(_send_simulate_update(bus, "20220227.3"));
+      g_usleep(2 * default_wait);
+
+      props = _get_atomupd_properties(bus);
+      g_assert_cmpuint(props->simulate_update_status, ==, AU_UPDATE_STATUS_FAILED);
+      g_assert_cmpstr(props->simulate_failure_message, !=, "");
+   }
+
+   /* A successful SimulateUpdate should clear SimulateFailureMessage */
+   {
+      g_autoptr(AtomupdProperties) props = NULL;
+
+      g_file_set_contents(mode_file_path, "no-etc", -1, NULL);
+      g_assert_null(_send_simulate_update(bus, "20220227.3"));
+      g_usleep(2 * default_wait);
+
+      props = _get_atomupd_properties(bus);
+      g_assert_cmpuint(props->simulate_update_status, ==, AU_UPDATE_STATUS_SUCCESSFUL);
+      g_assert_cmpstr(props->simulate_failure_message, ==, "");
+   }
+
+   /* Calling SimulateUpdate while one is already IN_PROGRESS should be rejected */
+   {
+      g_autoptr(GVariant) second_reply = NULL;
+      g_autofree gchar *second_reply_str = NULL;
+      g_autoptr(AtomupdProperties) props = NULL;
+
+      /* When first SimulateUpdate is in progress, call second one */
+      g_file_set_contents(mode_file_path, "progress", -1, NULL);
+      g_assert_null(_send_simulate_update(bus, "20220227.3"));
+      second_reply = _send_simulate_update(bus, "20220227.3");
+
+      g_variant_get(second_reply, "(s)", &second_reply_str);
+      g_assert_cmpstr(second_reply_str, !=, "");
+
+      g_usleep(2 * G_USEC_PER_SEC);
+   }
+
+   au_tests_stop_process(daemon_proc);
+}
+
+static void
 test_remote_info_hash(Fixture *f, gconstpointer context)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
@@ -3021,6 +3214,7 @@ main(int argc, char **argv)
    test_add("/daemon/builds_list_with_auth", test_builds_list_with_auth);
    test_add("/daemon/query_updates_variant_hash", test_query_updates_variant_hash);
    test_add("/daemon/remote_info_hash", test_remote_info_hash);
+   test_add("/daemon/simulate_update", test_simulate_update);
 
    ret = g_test_run();
    return ret;
