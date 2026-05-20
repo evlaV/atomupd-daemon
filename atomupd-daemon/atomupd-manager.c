@@ -505,32 +505,30 @@ _au_wait_for_ntp(void)
    return TRUE;
 }
 
-static int
-check_updates(GOptionContext *context,
-              GDBusConnection *bus,
-              G_GNUC_UNUSED const gchar *argument)
+static gboolean
+send_check_for_updates_command(GDBusConnection *bus, GVariant **reply_out, GError **error)
 {
-   g_autoptr(GVariantIter) available = NULL;
-   g_autoptr(GVariantIter) available_later = NULL;
-   g_autoptr(GError) error = NULL;
-   g_autoptr(GVariant) reply = NULL;
    g_auto(GVariantBuilder) builder;
    g_autoptr(sd_journal) journal = NULL;
+   g_autoptr(GError) local_error = NULL;
    gboolean edited_debug_value = FALSE;
    gboolean ret;
+
+   g_return_val_if_fail(reply_out != NULL && *reply_out == NULL, FALSE);
+   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
 
    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
 
    if (opt_verbose) {
-      journal = open_atomupd_daemon_journal(&error);
+      journal = open_atomupd_daemon_journal(&local_error);
       if (journal == NULL) {
-         g_print("%s", error->message);
-         return EXIT_FAILURE;
+         g_propagate_error(error, g_steal_pointer(&local_error));
+         return FALSE;
       }
 
-      if (!ensure_daemon_debug_enabled(bus, &edited_debug_value, &error)) {
-         g_print("%s", error->message);
-         return EXIT_FAILURE;
+      if (!ensure_daemon_debug_enabled(bus, &edited_debug_value, &local_error)) {
+         g_propagate_error(error, g_steal_pointer(&local_error));
+         return FALSE;
       }
    }
 
@@ -538,19 +536,19 @@ check_updates(GOptionContext *context,
       g_variant_builder_add(&builder, "{sv}", "penultimate", g_variant_new_boolean(TRUE));
 
    ret = _send_atomupd_message(bus, "CheckForUpdates", g_variant_new("(a{sv})", &builder),
-                               &reply, &error);
+                               reply_out, &local_error);
 
    if (opt_verbose)
       print_journal_messages(journal);
 
    if (!ret) {
-      g_autofree gchar *remote_error = g_dbus_error_get_remote_error(error);
+      g_autofree gchar *remote_error = g_dbus_error_get_remote_error(local_error);
       gboolean retry = g_strcmp0(remote_error, AU_ATOMUPD1_ERROR_MAYBE_RETRY) == 0;
 
       if (retry && _au_wait_for_ntp()) {
          g_info("Retrying one more time after NTP synchronization...");
-         g_clear_error(&error);
-         g_clear_pointer(&reply, g_variant_unref);
+         g_clear_error(&local_error);
+         g_clear_pointer(reply_out, g_variant_unref);
 
          g_variant_builder_clear(&builder);
          g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
@@ -560,7 +558,8 @@ check_updates(GOptionContext *context,
                                   g_variant_new_boolean(TRUE));
 
          ret = _send_atomupd_message(bus, "CheckForUpdates",
-                                     g_variant_new("(a{sv})", &builder), &reply, &error);
+                                     g_variant_new("(a{sv})", &builder), reply_out,
+                                     &local_error);
 
          if (opt_verbose) {
             /* Pick up eventual rotated journal file */
@@ -572,16 +571,34 @@ check_updates(GOptionContext *context,
 
    if (edited_debug_value) {
       /* Reset the debug flag to its original value */
-      g_autoptr(GError) local_error = NULL;
+      g_autoptr(GError) debug_error = NULL;
       if (!_send_message(bus, "/org/gtk/Debugging", "org.gtk.Debugging",
                          "SetDebugEnabled", g_variant_new("(b)", FALSE), NULL,
-                         &local_error)) {
+                         &debug_error)) {
          g_warning("Failed to restore the debug value of atomupd-daemon: %s",
-                   local_error->message);
+                   debug_error->message);
       }
    }
 
    if (!ret) {
+      g_propagate_error(error, g_steal_pointer(&local_error));
+      return FALSE;
+   }
+
+   return TRUE;
+}
+
+static int
+check_updates(GOptionContext *context,
+              GDBusConnection *bus,
+              G_GNUC_UNUSED const gchar *argument)
+{
+   g_autoptr(GVariantIter) available = NULL;
+   g_autoptr(GVariantIter) available_later = NULL;
+   g_autoptr(GError) error = NULL;
+   g_autoptr(GVariant) reply = NULL;
+
+   if (!send_check_for_updates_command(bus, &reply, &error)) {
       g_print("An error occurred while checking for updates: %s\n", error->message);
       return EXIT_FAILURE;
    }
