@@ -1133,6 +1133,131 @@ test_simulate_update(Fixture *f, gconstpointer context)
    au_tests_stop_process(daemon_proc);
 }
 
+static void
+test_update_no_id(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   /* update with no ID, no update available */
+   {
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      g_autofree gchar *update_file_path = NULL;
+      g_autofree gchar *output = NULL;
+
+      update_file_path = g_build_filename(f->srcdir, "data", "update_empty.json", NULL);
+      f->test_envp =
+         g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                                  f->test_envp, FALSE);
+
+      output = _au_execute_manager("update", NULL, FALSE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "No update available to install"));
+
+      au_tests_stop_process(daemon_proc);
+   }
+
+   /* update with no ID, update available */
+   {
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      g_autofree gchar *update_file_path = NULL;
+      g_autofree gchar *output = NULL;
+      g_autofree gchar *update_status = NULL;
+
+      update_file_path =
+         g_build_filename(f->srcdir, "data", "update_mock_success.json", NULL);
+      f->test_envp =
+         g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                                  f->test_envp, FALSE);
+
+      output = _au_execute_manager("update", NULL, FALSE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "Updating to " MOCK_SUCCESS));
+      g_assert_nonnull(strstr(output, "Update completed"));
+
+      update_status =
+         _au_execute_manager("get-update-status", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(update_status, ==, "successful\n");
+
+      au_tests_stop_process(daemon_proc);
+   }
+
+   /* update with no ID and --penultimate-update */
+   {
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      g_autofree gchar *update_file_path = NULL;
+      g_autofree gchar *update_file_path_penultimate = NULL;
+      g_autofree gchar *output = NULL;
+      g_autofree gchar *update_status = NULL;
+
+      update_file_path = g_build_filename(f->srcdir, "data", "update_empty.json", NULL);
+      f->test_envp =
+         g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
+
+      update_file_path_penultimate =
+         g_build_filename(f->srcdir, "data", "update_mock_success.json", NULL);
+      f->test_envp = g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON_PENULTIMATE",
+                                      update_file_path_penultimate, TRUE);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                                  f->test_envp, FALSE);
+
+      output = _au_execute_manager("update", "--penultimate-update", FALSE, f->test_envp,
+                                   &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "Updating to " MOCK_SUCCESS));
+      g_assert_nonnull(strstr(output, "Update completed"));
+
+      update_status =
+         _au_execute_manager("get-update-status", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(update_status, ==, "successful\n");
+
+      au_tests_stop_process(daemon_proc);
+   }
+
+   /* update reuses cached results from a previous check */
+   {
+      g_autoptr(GSubprocess) daemon_proc = NULL;
+      g_autofree gchar *update_file_path = NULL;
+      g_autofree gchar *check_output = NULL;
+      g_autofree gchar *output = NULL;
+      g_autofree gchar *update_status = NULL;
+
+      update_file_path =
+         g_build_filename(f->srcdir, "data", "update_mock_success.json", NULL);
+      f->test_envp =
+         g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
+
+      daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                                  f->test_envp, FALSE);
+
+      /* Run a check first to populate cached results */
+      check_output = _au_execute_manager("check", NULL, FALSE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(check_output, MOCK_SUCCESS));
+
+      /* Now run update without ID — should use cached results */
+      output = _au_execute_manager("update", NULL, FALSE, f->test_envp, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(strstr(output, "Updating to " MOCK_SUCCESS));
+      g_assert_nonnull(strstr(output, "Update completed"));
+
+      update_status =
+         _au_execute_manager("get-update-status", NULL, FALSE, f->test_envp, NULL);
+      g_assert_cmpstr(update_status, ==, "successful\n");
+
+      au_tests_stop_process(daemon_proc);
+   }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1151,6 +1276,7 @@ main(int argc, char **argv)
    test_add("/manager/list_builds", test_list_builds);
    test_add("/manager/ntp_retry", test_ntp_retry);
    test_add("/manager/simulate_update", test_simulate_update);
+   test_add("/manager/update_no_id", test_update_no_id);
 
    ret = g_test_run();
    return ret;

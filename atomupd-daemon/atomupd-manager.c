@@ -721,17 +721,6 @@ cleanup:
    return main_loop_result;
 }
 
-static int
-update_command(GOptionContext *context, GDBusConnection *bus, const gchar *update_id)
-{
-   if (update_id == NULL) {
-      g_print("It is not possible to apply an update without its ID\n\n");
-      return print_usage(context);
-   }
-
-   return launch_update(bus, update_id, NULL, NULL);
-}
-
 static GVariant *
 get_atomupd_property(GDBusConnection *bus, const gchar *property, GError **error)
 {
@@ -747,6 +736,61 @@ get_atomupd_property(GDBusConnection *bus, const gchar *property, GError **error
    g_variant_get(reply, "(v)", &variant_reply);
 
    return g_steal_pointer(&variant_reply);
+}
+
+static int
+update_command(G_GNUC_UNUSED GOptionContext *context, GDBusConnection *bus, const gchar *update_id)
+{
+   g_autoptr(GVariant) updates_available = NULL;
+   g_autoptr(GVariantIter) iter = NULL;
+   g_autoptr(GError) error = NULL;
+   GVariantIter *values_iter = NULL;
+   const gchar *buildid = NULL;
+
+   if (update_id != NULL)
+      return launch_update(bus, update_id, NULL, NULL);
+
+   /* Reuse results from a previous check if already available */
+   updates_available = get_atomupd_property(bus, "UpdatesAvailable", &error);
+   if (updates_available == NULL) {
+      g_print("An error occurred while getting available updates: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   if (g_variant_n_children(updates_available) == 0) {
+      g_autoptr(GVariant) check_reply = NULL;
+
+      g_print("No cached UpdatesAvailable property, calling CheckForUpdates\n");
+      if (!send_check_for_updates_command(bus, &check_reply, &error)) {
+         g_print("An error occurred while checking for updates: %s\n", error->message);
+         return EXIT_FAILURE;
+      }
+
+      g_clear_pointer(&updates_available, g_variant_unref);
+      updates_available = get_atomupd_property(bus, "UpdatesAvailable", &error);
+      if (updates_available == NULL) {
+         g_print("An error occurred while getting available updates: %s\n", error->message);
+         return EXIT_FAILURE;
+      }
+
+      if (g_variant_n_children(updates_available) == 0) {
+         g_print("No update available to install\n");
+         return EXIT_SUCCESS;
+      }
+   } else {
+      g_print("Using UpdatesAvailable property cached from previous CheckForUpdates\n");
+   }
+
+   iter = g_variant_iter_new(updates_available);
+   if (!g_variant_iter_next(iter, "{&sa{sv}}", &buildid, &values_iter)) {
+      g_print("Failed to read available updates\n");
+      return EXIT_FAILURE;
+   }
+   g_variant_iter_free(values_iter);
+
+   g_print("Updating to %s\n", buildid);
+
+   return launch_update(bus, buildid, NULL, NULL);
 }
 
 static gchar *
@@ -1394,8 +1438,8 @@ static const LaunchCommands launch_commands[] = {
 
    {
       .command = "update",
-      .argument = "ID",
-      .description = "Apply the update build ID",
+      .argument = "[ID]",
+      .description = "Apply the update build ID, or the latest available update if no ID is given",
       .command_function = update_command,
    },
 
