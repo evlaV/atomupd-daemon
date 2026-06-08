@@ -296,6 +296,7 @@ on_signal(gpointer user_data)
     * running in background */
    _send_atomupd_message(bus, "CancelUpdate", NULL, NULL, NULL);
 
+   main_loop_result = EXIT_FAILURE;
    g_main_loop_quit(main_loop);
    return G_SOURCE_REMOVE;
 }
@@ -305,6 +306,7 @@ on_simulate_signal(G_GNUC_UNUSED gpointer user_data)
 {
    g_debug("Caught signal. Stopping simulate-update.");
 
+   main_loop_result = EXIT_FAILURE;
    g_main_loop_quit(main_loop);
    return G_SOURCE_REMOVE;
 }

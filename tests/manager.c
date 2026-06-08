@@ -1258,6 +1258,81 @@ test_update_no_id(Fixture *f, gconstpointer context)
    }
 }
 
+static GSubprocess *
+_au_spawn_manager_update_async(gchar **envp, GError **error)
+{
+   g_autoptr(GSubprocessLauncher) launcher = NULL;
+   const gchar *manager_argv[] = {
+      "atomupd-manager", "--session", "update", MOCK_INFINITE, NULL,
+   };
+
+   launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE);
+   g_subprocess_launcher_set_environ(launcher, envp);
+   return g_subprocess_launcher_spawnv(launcher, manager_argv, error);
+}
+
+static void
+test_cancel_update_status(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+   g_autofree gchar *update_file_path = NULL;
+   int multiplier = 1;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   update_file_path = g_build_filename(f->srcdir, "data", "update_one_minor.json", NULL);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                               f->test_envp, FALSE);
+
+   /* Valgrind is really slow, so we wait longer before cancelling */
+   if (g_getenv("AU_TEST_VALGRIND") != NULL)
+      multiplier = 6;
+
+   /* SIGINT on atomupd-manager */
+   {
+      g_autoptr(GSubprocess) manager_proc = NULL;
+
+      manager_proc = _au_spawn_manager_update_async(f->test_envp, &error);
+      g_assert_no_error(error);
+
+      /* Give it time to start the mock update */
+      g_usleep(G_USEC_PER_SEC * multiplier);
+      /* While the update is in progress we can send SIGINT */
+      g_subprocess_send_signal(manager_proc, SIGINT);
+
+      g_subprocess_wait_check(manager_proc, NULL, &error);
+      /* atomupd-manager should exit with 1 (EXIT_FAILURE), not 0 */
+      g_assert_error(error, G_SPAWN_EXIT_ERROR, 1);
+      g_clear_error(&error);
+   }
+
+   /* SIGTERM on atomupd-manager */
+   {
+      g_autoptr(GSubprocess) manager_proc = NULL;
+
+      manager_proc = _au_spawn_manager_update_async(f->test_envp, &error);
+      g_assert_no_error(error);
+
+      /* Give it time to start the mock update */
+      g_usleep(G_USEC_PER_SEC * multiplier);
+      /* While the update is in progress we can send SIGTERM */
+      g_subprocess_send_signal(manager_proc, SIGTERM);
+
+      g_subprocess_wait_check(manager_proc, NULL, &error);
+      g_assert_error(error, G_SPAWN_EXIT_ERROR, 1);
+      g_clear_error(&error);
+   }
+
+   au_tests_stop_process(daemon_proc);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1277,6 +1352,7 @@ main(int argc, char **argv)
    test_add("/manager/ntp_retry", test_ntp_retry);
    test_add("/manager/simulate_update", test_simulate_update);
    test_add("/manager/update_no_id", test_update_no_id);
+   test_add("/manager/cancel_update_status", test_cancel_update_status);
 
    ret = g_test_run();
    return ret;
