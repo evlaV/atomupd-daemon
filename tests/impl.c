@@ -2960,6 +2960,20 @@ test_query_updates_variant_hash(Fixture *f, gconstpointer context)
 }
 
 static void
+_wait_for_simulate_complete(GDBusConnection *bus)
+{
+   /* Poll instead of using a fixed sleep, since valgrind can delay the
+    * completion callback. */
+   for (gint i = 0; i < 40; i++) {
+      g_autoptr(GVariant) status_prop = _get_atomupd_property(bus, "SimulateUpdateStatus");
+      if (g_variant_get_uint32(status_prop) != AU_UPDATE_STATUS_IN_PROGRESS)
+         return;
+      g_usleep(default_wait / 4);
+   }
+   g_warning("SimulateUpdate did not leave IN_PROGRESS status within the timeout");
+}
+
+static void
 test_simulate_update(Fixture *f, gconstpointer context)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
@@ -3004,7 +3018,7 @@ test_simulate_update(Fixture *f, gconstpointer context)
 
       g_file_set_contents(mode_file_path, "no-etc", -1, NULL);
       g_assert_null(_send_simulate_update(bus, "20220227.3"));
-      g_usleep(2 * default_wait);
+      _wait_for_simulate_complete(bus);
 
       props = _get_atomupd_properties(bus);
       g_assert_cmpuint(props->simulate_update_status, ==,
@@ -3029,7 +3043,7 @@ test_simulate_update(Fixture *f, gconstpointer context)
 
       g_file_set_contents(mode_file_path, "pass", -1, NULL);
       g_assert_null(_send_simulate_update(bus, "20220227.3"));
-      g_usleep(2 * default_wait);
+      _wait_for_simulate_complete(bus);
 
       props = _get_atomupd_properties(bus);
       g_assert_cmpuint(props->simulate_update_status, ==,
@@ -3075,7 +3089,7 @@ test_simulate_update(Fixture *f, gconstpointer context)
 
       g_file_set_contents(mode_file_path, "fail", -1, NULL);
       g_assert_null(_send_simulate_update(bus, "20220227.3"));
-      g_usleep(2 * default_wait);
+      _wait_for_simulate_complete(bus);
 
       props = _get_atomupd_properties(bus);
       g_assert_cmpuint(props->simulate_update_status, ==, AU_UPDATE_STATUS_FAILED);
@@ -3088,7 +3102,7 @@ test_simulate_update(Fixture *f, gconstpointer context)
 
       g_file_set_contents(mode_file_path, "no-etc", -1, NULL);
       g_assert_null(_send_simulate_update(bus, "20220227.3"));
-      g_usleep(2 * default_wait);
+      _wait_for_simulate_complete(bus);
 
       props = _get_atomupd_properties(bus);
       g_assert_cmpuint(props->simulate_update_status, ==, AU_UPDATE_STATUS_SUCCESSFUL);
@@ -3109,7 +3123,7 @@ test_simulate_update(Fixture *f, gconstpointer context)
       g_variant_get(second_reply, "(s)", &second_reply_str);
       g_assert_cmpstr(second_reply_str, !=, "");
 
-      g_usleep(2 * G_USEC_PER_SEC);
+      _wait_for_simulate_complete(bus);
    }
 
    au_tests_stop_process(daemon_proc);
