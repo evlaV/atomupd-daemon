@@ -1333,6 +1333,44 @@ test_cancel_update_status(Fixture *f, gconstpointer context)
    au_tests_stop_process(daemon_proc);
 }
 
+static void
+test_status(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+   g_autofree gchar *update_file_path = NULL;
+   g_autofree gchar *output = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   update_file_path = g_build_filename(f->srcdir, "data", "update_one_minor.json", NULL);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_MOCK_READONLY_STATUS", "enabled", TRUE);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_MOCK_PARTLABEL", "A", TRUE);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                               f->test_envp, FALSE);
+
+   output = _au_execute_manager("status", NULL, FALSE, f->test_envp, &error);
+   g_assert_no_error(error);
+   g_assert_nonnull(strstr(output, "Current Version: snapshot\n"));
+   g_assert_nonnull(strstr(output, "Current Build ID: 20220205.2\n"));
+   g_assert_nonnull(strstr(output, "Selected Branch: stable\n"));
+   g_assert_nonnull(strstr(output, "Selected Variant: steamdeck\n"));
+   g_assert_nonnull(strstr(output, "Read-only: enabled\n"));
+   g_assert_nonnull(strstr(output, "Current partition: A\n"));
+   g_assert_nonnull(strstr(output, "Updates available:\n"));
+   g_assert_nonnull(strstr(output, "20220227.3"));
+
+   au_tests_stop_process(daemon_proc);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1353,6 +1391,7 @@ main(int argc, char **argv)
    test_add("/manager/simulate_update", test_simulate_update);
    test_add("/manager/update_no_id", test_update_no_id);
    test_add("/manager/cancel_update_status", test_cancel_update_status);
+   test_add("/manager/status", test_status);
 
    ret = g_test_run();
    return ret;

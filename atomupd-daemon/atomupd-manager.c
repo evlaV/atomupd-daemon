@@ -1349,6 +1349,91 @@ cleanup:
    return main_loop_result;
 }
 
+static gchar *
+run_command(const gchar * const *argv)
+{
+   g_autofree gchar *stdout_str = NULL;
+
+   if (!g_spawn_sync(NULL, (gchar **)argv, NULL,
+                     G_SPAWN_SEARCH_PATH | G_SPAWN_STDERR_TO_DEV_NULL,
+                     NULL, NULL, &stdout_str, NULL, NULL, NULL))
+      return NULL;
+
+   return g_strstrip(g_steal_pointer(&stdout_str));
+}
+
+static int
+print_status(G_GNUC_UNUSED GOptionContext *context,
+             GDBusConnection *bus,
+             G_GNUC_UNUSED const gchar *argument)
+{
+   g_autoptr(GVariant) current_version = NULL;
+   g_autoptr(GVariant) build_id = NULL;
+   g_autoptr(GVariant) branch = NULL;
+   g_autoptr(GVariant) variant = NULL;
+   g_autoptr(GVariant) reply = NULL;
+   g_autoptr(GVariantIter) available = NULL;
+   g_autoptr(GError) error = NULL;
+
+   current_version = get_atomupd_property(bus, "CurrentVersion", &error);
+   if (current_version == NULL) {
+      g_print("An error occurred while getting the current version: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   build_id = get_atomupd_property(bus, "CurrentBuildID", &error);
+   if (build_id == NULL) {
+      g_print("An error occurred while getting the current build ID: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   branch = get_atomupd_property(bus, "Branch", &error);
+   if (branch == NULL) {
+      g_print("An error occurred while getting the branch: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   variant = get_atomupd_property(bus, "Variant", &error);
+   if (variant == NULL) {
+      g_print("An error occurred while getting the variant: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   if (!send_check_for_updates_command(bus, &reply, &error)) {
+      g_print("An error occurred while checking for updates: %s\n", error->message);
+      return EXIT_FAILURE;
+   }
+
+   g_variant_get(reply, "(a{?*}a{?*})", &available, NULL);
+
+   g_print("Current Version: %s\n", g_variant_get_string(current_version, NULL));
+   g_print("Current Build ID: %s\n", g_variant_get_string(build_id, NULL));
+   g_print("Selected Branch: %s\n", g_variant_get_string(branch, NULL));
+   g_print("Selected Variant: %s\n", g_variant_get_string(variant, NULL));
+
+   {
+      const gchar *readonly_argv[] = { "holo-readonly", "status", NULL };
+      g_autofree gchar *readonly_status = run_command(readonly_argv);
+      g_print("Read-only: %s\n", readonly_status != NULL ? readonly_status : "unknown");
+   }
+
+   {
+      const gchar *findmnt_argv[] = { "findmnt", "-no", "partlabel", "/", NULL };
+      g_autofree gchar *partition = run_command(findmnt_argv);
+      const gchar *partition_suffix = partition;
+      if (partition != NULL && g_str_has_prefix(partition, "rootfs-"))
+         partition_suffix = partition + strlen("rootfs-");
+      g_print("Current partition: %s\n", partition_suffix != NULL ? partition_suffix : "unknown");
+   }
+
+   if (g_variant_iter_n_children(available) > 0) {
+      g_print("Updates available:\n");
+      print_update_info(available);
+   }
+
+   return EXIT_SUCCESS;
+}
+
 static int
 create_dev_conf(G_GNUC_UNUSED GOptionContext *context,
                 GDBusConnection *bus,
@@ -1516,6 +1601,12 @@ static const LaunchCommands launch_commands[] = {
       .description = "Simulate the update identified by build ID and show which /etc files "
                      "would not be preserved after an update",
       .command_function = simulate_update,
+   },
+
+   {
+      .command = "status",
+      .description = "Display current OS status",
+      .command_function = print_status,
    },
 };
 

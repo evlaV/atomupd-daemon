@@ -86,6 +86,22 @@ custom_target(
   install_dir: tests_dir,
 )
 
+executable(
+  'holo-readonly',
+  'mock-holo-readonly.c',
+  dependencies : [glib],
+  install: true,
+  install_dir: tests_dir
+)
+
+executable(
+  'findmnt',
+  'mock-findmnt.c',
+  dependencies : [glib],
+  install: true,
+  install_dir: tests_dir
+)
+
 foreach test_name : ['au-atomupd1-impl', 'impl', 'manager']
   exe = executable(
     'test-' + test_name,
