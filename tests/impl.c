@@ -57,6 +57,8 @@
       return;                                                                            \
    }
 
+#define PROPERTY_WAIT_TIMEOUT_SECONDS 30
+
 static gulong default_wait = 0.5 * G_USEC_PER_SEC;
 
 static GVariant *
@@ -93,6 +95,82 @@ typedef struct {
    GStrv known_branches;
    GStrv known_dev_branches;
 } AtomupdProperties;
+
+typedef struct {
+   GMainLoop   *loop;
+   const gchar *property;
+   guint32      target;
+} PropertyWaitData;
+
+static void
+on_properties_changed_cb(GDBusConnection *connection,
+                          const gchar *sender_name,
+                          const gchar *object_path,
+                          const gchar *interface_name,
+                          const gchar *signal_name,
+                          GVariant *parameters,
+                          gpointer user_data)
+{
+   PropertyWaitData *d = user_data;
+   g_autoptr(GVariant) value = NULL;
+   g_autoptr(GVariant) changed_props = g_variant_get_child_value(parameters, 1);
+
+   value = g_variant_lookup_value(changed_props, d->property,
+                                  G_VARIANT_TYPE_UINT32);
+   if (value == NULL || g_variant_get_uint32(value) != d->target)
+      return;
+
+   g_main_loop_quit(d->loop);
+}
+
+static gboolean
+on_property_wait_timeout_cb(gpointer user_data)
+{
+   PropertyWaitData *d = user_data;
+   g_error("Timed out after %d seconds waiting for property '%s' "
+           "to reach value %u",
+           PROPERTY_WAIT_TIMEOUT_SECONDS, d->property, d->target);
+   return G_SOURCE_REMOVE;
+}
+
+/* Subscribe to PropertiesChanged for @data->property on the atomupd service. */
+static guint
+_subscribe_property_change(GDBusConnection *bus, PropertyWaitData *data)
+{
+   return g_dbus_connection_signal_subscribe(
+      bus,
+      AU_ATOMUPD1_BUS_NAME,
+      "org.freedesktop.DBus.Properties",
+      "PropertiesChanged",
+      AU_ATOMUPD1_PATH,
+      AU_ATOMUPD1_INTERFACE,
+      G_DBUS_SIGNAL_FLAGS_NONE,
+      on_properties_changed_cb,
+      data,
+      NULL);
+}
+
+/* Run the main loop until @data->property is observed equal to
+ * @data->target via PropertiesChanged, or PROPERTY_WAIT_TIMEOUT_SECONDS
+ * elapses and we abort with g_error */
+static void
+_wait_for_property_change(GDBusConnection *bus, guint sub_id,
+                           PropertyWaitData *data)
+{
+   guint timeout_id;
+
+   data->loop = g_main_loop_new(NULL, FALSE);
+   timeout_id = g_timeout_add_seconds(PROPERTY_WAIT_TIMEOUT_SECONDS,
+                                       on_property_wait_timeout_cb, data);
+
+   g_main_loop_run(data->loop);
+
+   g_dbus_connection_signal_unsubscribe(bus, sub_id);
+   g_main_loop_unref(data->loop);
+   data->loop = NULL;
+
+   g_source_remove(timeout_id);
+}
 
 static void
 atomupd_properties_free(AtomupdProperties *atomupd_properties)
@@ -1156,9 +1234,7 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
    g_autoptr(GSubprocess) rauc_proc = NULL;
-   AuUpdateStatus status;
    g_autofree gchar *update_file_path = NULL;
-   g_autoptr(GVariant) reply = NULL;
    g_autoptr(GDBusConnection) bus = NULL;
    g_autoptr(AtomupdProperties) atomupd_properties = NULL;
    g_autoptr(GDateTime) time_now = NULL;
@@ -1196,18 +1272,13 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    _check_updates_property(bus, "UpdatesAvailable", mock_infinite_update);
 
    g_debug("Starting an update that is expected to complete in 1.5 seconds");
-   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_SUCCESS);
-
-   /* The update is expected to complete in 1.5 seconds. Wait for 2x as much because
-    * there might be a slight delay before the mock process actually receives this
-    * D-Bus message and starts the update. There is no need to wait longer with
-    * Valgrind because we are just sending a D-Bus message to a process that is
-    * already up and running. */
-   g_usleep(3 * G_USEC_PER_SEC);
-
-   reply = _get_atomupd_property(bus, "UpdateStatus");
-   g_variant_get(reply, "u", &status);
-   g_assert_cmpuint(status, ==, AU_UPDATE_STATUS_SUCCESSFUL);
+   {
+      PropertyWaitData wait = { .property = "UpdateStatus",
+                                .target   = AU_UPDATE_STATUS_SUCCESSFUL };
+      guint sub_id = _subscribe_property_change(bus, &wait);
+      _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_SUCCESS);
+      _wait_for_property_change(bus, sub_id, &wait);
+   }
 
    /* With MOCK_INFINITE we simulate an update that is in progress.
     * To make it more predictable, it will always print a progress of
@@ -1215,6 +1286,10 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
    g_debug("Starting infinite update");
    _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_INFINITE);
 
+   /* Wait for the mock client to print its first progress line ("16.08% 06m35s")
+    * and for the daemon to parse it. UpdateStatus reaches IN_PROGRESS before
+    * that parsing happens, so subscribing on UpdateStatus would race the
+    * progress-percentage. */
    g_usleep(2 * default_wait);
    time_now = g_date_time_new_now_utc();
    atomupd_properties = _get_atomupd_properties(bus);
@@ -1236,9 +1311,14 @@ test_start_pause_stop_update(Fixture *f, gconstpointer context)
       kill(g_ascii_strtoll(g_subprocess_get_identifier(rauc_proc), NULL, 10), 0), ==, 0);
    g_clear_pointer(&atomupd_properties, atomupd_properties_free);
 
-   _send_atomupd_message_with_null_reply(bus, "ResumeUpdate", NULL, NULL);
-   _send_atomupd_message_with_null_reply(bus, "CancelUpdate", NULL, NULL);
-   g_usleep(2 * default_wait);
+   {
+      PropertyWaitData wait = { .property = "UpdateStatus",
+                                .target   = AU_UPDATE_STATUS_CANCELLED };
+      guint sub_id = _subscribe_property_change(bus, &wait);
+      _send_atomupd_message_with_null_reply(bus, "ResumeUpdate", NULL, NULL);
+      _send_atomupd_message_with_null_reply(bus, "CancelUpdate", NULL, NULL);
+      _wait_for_property_change(bus, sub_id, &wait);
+   }
    atomupd_properties = _get_atomupd_properties(bus);
    /* When receiving SIGTERM the mock steamos-atomupd-client will print
     * "17.50% 05m50s" and then quit */
@@ -1277,9 +1357,13 @@ test_progress_default(Fixture *f, gconstpointer context)
    _call_check_for_updates(bus, NULL, NULL);
 
    g_debug("Starting an update that is expected to complete in 1.5 seconds");
-   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_SUCCESS);
-   /* Wait for 2x as much to ensure it really finished */
-   g_usleep(3 * G_USEC_PER_SEC);
+   {
+      PropertyWaitData wait = { .property = "UpdateStatus",
+                                .target   = AU_UPDATE_STATUS_SUCCESSFUL };
+      guint sub_id = _subscribe_property_change(bus, &wait);
+      _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_SUCCESS);
+      _wait_for_property_change(bus, sub_id, &wait);
+   }
 
    reply = _get_atomupd_property(bus, "ProgressPercentage");
    g_variant_get(reply, "d", &progress);
@@ -1289,8 +1373,13 @@ test_progress_default(Fixture *f, gconstpointer context)
    /* With MOCK_STUCK we simulate an update that is stuck and never prints progress
     * updates. */
    g_debug("Starting stuck update");
-   _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_STUCK);
-   g_usleep(default_wait);
+   {
+      PropertyWaitData wait = { .property = "UpdateStatus",
+                                .target   = AU_UPDATE_STATUS_IN_PROGRESS };
+      guint sub_id = _subscribe_property_change(bus, &wait);
+      _send_atomupd_message_with_null_reply(bus, "StartUpdate", "(s)", MOCK_STUCK);
+      _wait_for_property_change(bus, sub_id, &wait);
+   }
 
    reply = _get_atomupd_property(bus, "ProgressPercentage");
    g_variant_get(reply, "d", &progress);
@@ -1311,9 +1400,11 @@ test_progress_default(Fixture *f, gconstpointer context)
                             g_variant_new_string("https://example.com/update.raucb"));
       params = g_variant_builder_end(&builder);
 
+      PropertyWaitData wait = { .property = "UpdateStatus",
+                                .target   = AU_UPDATE_STATUS_SUCCESSFUL };
+      guint sub_id = _subscribe_property_change(bus, &wait);
       _send_atomupd_message_with_null_reply(bus, "StartCustomUpdate", "(@a{sv})", params);
-      /* Wait for 2x as much to ensure it really finished */
-      g_usleep(2 * G_USEC_PER_SEC);
+      _wait_for_property_change(bus, sub_id, &wait);
 
       reply = _get_atomupd_property(bus, "ProgressPercentage");
       g_variant_get(reply, "d", &progress);
@@ -1331,9 +1422,11 @@ test_progress_default(Fixture *f, gconstpointer context)
                             g_variant_new_string("steamdeck/update.raucb"));
       params = g_variant_builder_end(&builder);
 
+      PropertyWaitData wait = { .property = "UpdateStatus",
+                                .target   = AU_UPDATE_STATUS_SUCCESSFUL };
+      guint sub_id = _subscribe_property_change(bus, &wait);
       _send_atomupd_message_with_null_reply(bus, "StartCustomUpdate", "(@a{sv})", params);
-      /* Wait for 2x as much to ensure it really finished */
-      g_usleep(2 * G_USEC_PER_SEC);
+      _wait_for_property_change(bus, sub_id, &wait);
 
       reply = _get_atomupd_property(bus, "ProgressPercentage");
       g_variant_get(reply, "d", &progress);
@@ -1373,8 +1466,13 @@ test_multiple_method_calls(Fixture *f, gconstpointer context)
    _check_message_reply(bus, "PauseUpdate", NULL, NULL,
                         "There isn't an update in progress that can be paused");
    /* It is expected to be possible to cancel a paused update */
-   _send_atomupd_message_with_null_reply(bus, "CancelUpdate", NULL, NULL);
-   g_usleep(2 * default_wait);
+   {
+      PropertyWaitData wait = { .property = "UpdateStatus",
+                                .target   = AU_UPDATE_STATUS_CANCELLED };
+      guint sub_id = _subscribe_property_change(bus, &wait);
+      _send_atomupd_message_with_null_reply(bus, "CancelUpdate", NULL, NULL);
+      _wait_for_property_change(bus, sub_id, &wait);
+   }
    atomupd_properties = _get_atomupd_properties(bus);
    g_assert_cmpuint(atomupd_properties->status, ==, AU_UPDATE_STATUS_CANCELLED);
    g_assert_true(g_subprocess_get_if_exited(rauc_proc));
@@ -2960,20 +3058,6 @@ test_query_updates_variant_hash(Fixture *f, gconstpointer context)
 }
 
 static void
-_wait_for_simulate_complete(GDBusConnection *bus)
-{
-   /* Poll instead of using a fixed sleep, since valgrind can delay the
-    * completion callback. */
-   for (gint i = 0; i < 40; i++) {
-      g_autoptr(GVariant) status_prop = _get_atomupd_property(bus, "SimulateUpdateStatus");
-      if (g_variant_get_uint32(status_prop) != AU_UPDATE_STATUS_IN_PROGRESS)
-         return;
-      g_usleep(default_wait / 4);
-   }
-   g_warning("SimulateUpdate did not leave IN_PROGRESS status within the timeout");
-}
-
-static void
 test_simulate_update(Fixture *f, gconstpointer context)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
@@ -3017,8 +3101,13 @@ test_simulate_update(Fixture *f, gconstpointer context)
       const gchar *expected[] = { NULL };
 
       g_file_set_contents(mode_file_path, "no-etc", -1, NULL);
-      g_assert_null(_send_simulate_update(bus, "20220227.3"));
-      _wait_for_simulate_complete(bus);
+      {
+         PropertyWaitData wait = { .property = "SimulateUpdateStatus",
+                                   .target   = AU_UPDATE_STATUS_SUCCESSFUL };
+         guint sub_id = _subscribe_property_change(bus, &wait);
+         g_assert_null(_send_simulate_update(bus, "20220227.3"));
+         _wait_for_property_change(bus, sub_id, &wait);
+      }
 
       props = _get_atomupd_properties(bus);
       g_assert_cmpuint(props->simulate_update_status, ==,
@@ -3042,8 +3131,13 @@ test_simulate_update(Fixture *f, gconstpointer context)
       g_autoptr(GVariant) update_info = NULL;
 
       g_file_set_contents(mode_file_path, "pass", -1, NULL);
-      g_assert_null(_send_simulate_update(bus, "20220227.3"));
-      _wait_for_simulate_complete(bus);
+      {
+         PropertyWaitData wait = { .property = "SimulateUpdateStatus",
+                                   .target   = AU_UPDATE_STATUS_SUCCESSFUL };
+         guint sub_id = _subscribe_property_change(bus, &wait);
+         g_assert_null(_send_simulate_update(bus, "20220227.3"));
+         _wait_for_property_change(bus, sub_id, &wait);
+      }
 
       props = _get_atomupd_properties(bus);
       g_assert_cmpuint(props->simulate_update_status, ==,
@@ -3088,8 +3182,13 @@ test_simulate_update(Fixture *f, gconstpointer context)
       g_autoptr(AtomupdProperties) props = NULL;
 
       g_file_set_contents(mode_file_path, "fail", -1, NULL);
-      g_assert_null(_send_simulate_update(bus, "20220227.3"));
-      _wait_for_simulate_complete(bus);
+      {
+         PropertyWaitData wait = { .property = "SimulateUpdateStatus",
+                                   .target   = AU_UPDATE_STATUS_FAILED };
+         guint sub_id = _subscribe_property_change(bus, &wait);
+         g_assert_null(_send_simulate_update(bus, "20220227.3"));
+         _wait_for_property_change(bus, sub_id, &wait);
+      }
 
       props = _get_atomupd_properties(bus);
       g_assert_cmpuint(props->simulate_update_status, ==, AU_UPDATE_STATUS_FAILED);
@@ -3101,8 +3200,13 @@ test_simulate_update(Fixture *f, gconstpointer context)
       g_autoptr(AtomupdProperties) props = NULL;
 
       g_file_set_contents(mode_file_path, "no-etc", -1, NULL);
-      g_assert_null(_send_simulate_update(bus, "20220227.3"));
-      _wait_for_simulate_complete(bus);
+      {
+         PropertyWaitData wait = { .property = "SimulateUpdateStatus",
+                                   .target   = AU_UPDATE_STATUS_SUCCESSFUL };
+         guint sub_id = _subscribe_property_change(bus, &wait);
+         g_assert_null(_send_simulate_update(bus, "20220227.3"));
+         _wait_for_property_change(bus, sub_id, &wait);
+      }
 
       props = _get_atomupd_properties(bus);
       g_assert_cmpuint(props->simulate_update_status, ==, AU_UPDATE_STATUS_SUCCESSFUL);
@@ -3117,13 +3221,18 @@ test_simulate_update(Fixture *f, gconstpointer context)
 
       /* When first SimulateUpdate is in progress, call second one */
       g_file_set_contents(mode_file_path, "progress", -1, NULL);
-      g_assert_null(_send_simulate_update(bus, "20220227.3"));
-      second_reply = _send_simulate_update(bus, "20220227.3");
+      {
+         PropertyWaitData wait = { .property = "SimulateUpdateStatus",
+                                   .target   = AU_UPDATE_STATUS_SUCCESSFUL };
+         guint sub_id = _subscribe_property_change(bus, &wait);
+         g_assert_null(_send_simulate_update(bus, "20220227.3"));
+         second_reply = _send_simulate_update(bus, "20220227.3");
 
-      g_variant_get(second_reply, "(s)", &second_reply_str);
-      g_assert_cmpstr(second_reply_str, !=, "");
+         g_variant_get(second_reply, "(s)", &second_reply_str);
+         g_assert_cmpstr(second_reply_str, !=, "");
 
-      _wait_for_simulate_complete(bus);
+         _wait_for_property_change(bus, sub_id, &wait);
+      }
    }
 
    au_tests_stop_process(daemon_proc);
