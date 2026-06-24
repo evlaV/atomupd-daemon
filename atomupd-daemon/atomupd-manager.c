@@ -56,6 +56,12 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(sd_journal, sd_journal_close)
  * give up and return an error. */
 #define NTP_SYNC_TIMEOUT_SECONDS 40
 
+typedef enum {
+   CUSTOM_UPDATE_SELECTOR_BUILDID,
+   CUSTOM_UPDATE_SELECTOR_EXACT_VERSION,
+   CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX,
+} CustomUpdateSelectorMode;
+
 static const gchar *AU_CONFIG = "client.conf";
 static const gchar *AU_DEV_CONFIG = "client-dev.conf";
 
@@ -839,6 +845,24 @@ print_image_info(const gchar *buildid, const gchar *version, const gchar *branch
    printf("ID: %s - version: %s - branch: %s\n", buildid, version, branch);
 }
 
+static CustomUpdateSelectorMode
+parse_custom_update_selector(const gchar *argument, gchar **parsed_request)
+{
+   if (_is_buildid_valid(argument, NULL, NULL, NULL)) {
+      *parsed_request = g_strdup(argument);
+      return CUSTOM_UPDATE_SELECTOR_BUILDID;
+   }
+
+   if (g_str_has_suffix(argument, ".x")) {
+      /* Remove the 'x' suffix */
+      *parsed_request = g_strndup(argument, strlen(argument) - 1);
+      return CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX;
+   }
+
+   *parsed_request = g_strdup(argument);
+   return CUSTOM_UPDATE_SELECTOR_EXACT_VERSION;
+}
+
 static int
 custom_update_command(GOptionContext *context,
                       GDBusConnection *bus,
@@ -866,25 +890,13 @@ custom_update_command(GOptionContext *context,
       JsonNode *json_node = NULL;   /* borrowed */
       JsonArray *json_array = NULL; /* borrowed */
       guint json_length;
-      const gchar *requested_buildid = NULL;
       const gchar *selected_buildid = NULL;
       const gchar *selected_branch = NULL;
       const gchar *selected_version = NULL;
-      g_autofree gchar *requested_version = NULL;
-      gboolean version_wildcard = FALSE;
+      g_autofree gchar *parsed_request = NULL;
+      CustomUpdateSelectorMode selector_mode;
 
-      if (_is_buildid_valid(argument, NULL, NULL, NULL)) {
-         requested_buildid = argument;
-      } else {
-         if (g_str_has_suffix(argument, ".x")) {
-            version_wildcard = TRUE;
-            /* Remove the 'x' suffix */
-            requested_version = g_strndup(argument, strlen(argument) - 1);
-
-         } else {
-            requested_version = g_strdup(argument);
-         }
-      }
+      selector_mode = parse_custom_update_selector(argument, &parsed_request);
 
       builds_list_path = get_builds_list_path(bus, NULL, NULL, &error);
       if (builds_list_path == NULL) {
@@ -909,15 +921,15 @@ custom_update_command(GOptionContext *context,
          const gchar *branch = json_object_get_string_member(obj, "branch");
          const gchar *version = json_object_get_string_member(obj, "version");
 
-         if (requested_buildid != NULL) {
+         if (selector_mode == CUSTOM_UPDATE_SELECTOR_BUILDID) {
             /* Buildids are unique */
-            if (g_strcmp0(buildid, requested_buildid) == 0) {
+            if (g_strcmp0(buildid, parsed_request) == 0) {
                print_image_info(buildid, version, branch);
                update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
                break;
             }
-         } else if (version_wildcard) {
-            if (g_str_has_prefix(version, requested_version)) {
+         } else if (selector_mode == CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX) {
+            if (g_str_has_prefix(version, parsed_request)) {
                g_auto(GStrv) parts = NULL;
                guint parts_number;
                gint64 inc = 0;
@@ -958,7 +970,8 @@ custom_update_command(GOptionContext *context,
                   selected_version = version;
                }
             }
-         } else if (g_strcmp0(version, requested_version) == 0) {
+         } else if (selector_mode == CUSTOM_UPDATE_SELECTOR_EXACT_VERSION
+                    && g_strcmp0(version, parsed_request) == 0) {
             /* Apply the eventual branch filter */
             if (opt_branch != NULL && !g_str_equal(opt_branch, branch))
                continue;
@@ -973,7 +986,8 @@ custom_update_command(GOptionContext *context,
 
       /* When using a version wildcard we only know the selected image at the end of the
        * loop */
-      if (version_wildcard && selected_buildid != NULL)
+      if (selector_mode == CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX
+          && selected_buildid != NULL)
          print_image_info(selected_buildid, selected_version, selected_branch);
 
       if (multiple_matches) {
