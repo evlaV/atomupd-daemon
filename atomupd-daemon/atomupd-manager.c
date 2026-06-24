@@ -845,12 +845,38 @@ print_image_info(const gchar *buildid, const gchar *version, const gchar *branch
    printf("ID: %s - version: %s - branch: %s\n", buildid, version, branch);
 }
 
+/* TRUE if version is exactly n_parts dot-separated, non-empty, numeric
+ * components - e.g. n_parts=2 matches "3.8", n_parts=3 matches "3.8.0". */
+static gboolean
+_is_numeric_version(const gchar *version, guint n_parts)
+{
+   g_auto(GStrv) parts = g_strsplit(version, ".", -1);
+
+   if (g_strv_length(parts) != n_parts)
+      return FALSE;
+
+   for (gsize i = 0; parts[i] != NULL; i++)
+      if (parts[i][0] == '\0' || strspn(parts[i], "0123456789") != strlen(parts[i]))
+         return FALSE;
+
+   return TRUE;
+}
+
 static CustomUpdateSelectorMode
 parse_custom_update_selector(const gchar *argument, gchar **parsed_request)
 {
+   g_autofree gchar *wildcard = NULL;
+
    if (_is_buildid_valid(argument, NULL, NULL, NULL)) {
       *parsed_request = g_strdup(argument);
       return CUSTOM_UPDATE_SELECTOR_BUILDID;
+   }
+
+   /* A bare numeric version like "3" or "3.8" is shorthand for the
+    * "3.x" / "3.8.x" wildcard, so let the same logic handle both. */
+   if (_is_numeric_version(argument, 1) || _is_numeric_version(argument, 2)) {
+      wildcard = g_strconcat(argument, ".x", NULL);
+      argument = wildcard;
    }
 
    if (g_str_has_suffix(argument, ".x")) {
@@ -871,7 +897,6 @@ custom_update_command(GOptionContext *context,
    g_autoptr(GUri) uri = NULL;
    g_autofree gchar *update_url = NULL;
    g_autofree gchar *update_path = NULL;
-   gint64 current_inc = -1;
    gboolean multiple_matches = FALSE;
    g_autoptr(GError) error = NULL;
 
@@ -890,9 +915,6 @@ custom_update_command(GOptionContext *context,
       JsonNode *json_node = NULL;   /* borrowed */
       JsonArray *json_array = NULL; /* borrowed */
       guint json_length;
-      const gchar *selected_buildid = NULL;
-      const gchar *selected_branch = NULL;
-      const gchar *selected_version = NULL;
       g_autofree gchar *parsed_request = NULL;
       CustomUpdateSelectorMode selector_mode;
 
@@ -915,7 +937,9 @@ custom_update_command(GOptionContext *context,
       json_array = json_node_get_array(json_node);
       json_length = json_array_get_length(json_array);
 
-      for (gsize i = 0; i < json_length; i++) {
+      /* The server (steamos-atomupd) writes builds.json oldest-first by
+       * (version, buildid), so loop from newest. */
+      for (gssize i = (gssize) json_length - 1; i >= 0; i--) {
          JsonObject *obj = json_array_get_object_element(json_array, i);
          const gchar *buildid = json_object_get_string_member(obj, "buildid");
          const gchar *branch = json_object_get_string_member(obj, "branch");
@@ -930,45 +954,21 @@ custom_update_command(GOptionContext *context,
             }
          } else if (selector_mode == CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX) {
             if (g_str_has_prefix(version, parsed_request)) {
-               g_auto(GStrv) parts = NULL;
-               guint parts_number;
-               gint64 inc = 0;
-               char *endptr;
-
                /* Apply the eventual branch filter */
                if (opt_branch != NULL && !g_str_equal(opt_branch, branch))
                   continue;
 
-               parts = g_strsplit(version, ".", 4);
-               parts_number = g_strv_length(parts);
-               if (parts_number < 3) {
-                  g_debug("%s of %s doesn't have a micro version, skipping...", version,
-                          buildid);
-                  continue;
-               }
-               if (parts_number > 3) {
-                  g_debug("We don't support versions with more than 3 parts, skipping %s "
-                          "of %s",
-                          version, buildid);
+               /* Skip a malformed version, so it can't be selected by the prefix match. */
+               if (!_is_numeric_version(version, 3)) {
+                  g_debug("Skipping malformed version %s of %s", version, buildid);
                   continue;
                }
 
-               inc = g_ascii_strtoll(parts[2], &endptr, 10);
-               if (inc < 0 || inc > G_MAXINT || endptr == parts[2] || *endptr != '\0') {
-                  g_debug("Encountered an unexpected version %s for %s", version,
-                          buildid);
-                  continue;
-               }
-
-               if (inc > current_inc) {
-                  current_inc = inc;
-                  g_clear_pointer(&update_path, g_free);
-                  update_path =
-                     g_strdup(json_object_get_string_member(obj, "update_path"));
-                  selected_buildid = buildid;
-                  selected_branch = branch;
-                  selected_version = version;
-               }
+               /* First match wins. With the loop from newest this is the
+                * newest build of the highest matching version. */
+               print_image_info(buildid, version, branch);
+               update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
+               break;
             }
          } else if (selector_mode == CUSTOM_UPDATE_SELECTOR_EXACT_VERSION
                     && g_strcmp0(version, parsed_request) == 0) {
@@ -983,12 +983,6 @@ custom_update_command(GOptionContext *context,
                multiple_matches = TRUE;
          }
       }
-
-      /* When using a version wildcard we only know the selected image at the end of the
-       * loop */
-      if (selector_mode == CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX
-          && selected_buildid != NULL)
-         print_image_info(selected_buildid, selected_version, selected_branch);
 
       if (multiple_matches) {
          g_print("\nAll the results listed above are matching the request.\n");

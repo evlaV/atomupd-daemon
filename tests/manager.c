@@ -400,6 +400,34 @@ static const CustomUpdateTest custom_update_test[] = {
       .title = "Without an argument should result in the usage helper being printed",
       .expected_error_code = 64,
    },
+
+   /* The wildcard cases below depend on builds.json being sorted oldest-first
+    * by (version, buildid), the order the server writes. Keep new fixture rows
+    * in that order or these cases will break. */
+   {
+      .title = "Wildcard picks the newest buildid when several builds share the "
+               "highest micro version",
+      .request = "3.8.x",
+      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable\n",
+   },
+
+   {
+      .title = "Short version 3.8 behaves like the 3.8.x wildcard",
+      .request = "3.8",
+      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable\n",
+   },
+
+   {
+      .title = "Major-only wildcard 3.x picks the highest minor version",
+      .request = "3.x",
+      .output_prefix = "ID: 20251112.1 - version: 3.9.0 - branch: stable\n",
+   },
+
+   {
+      .title = "Bare major 3 behaves like the 3.x wildcard",
+      .request = "3",
+      .output_prefix = "ID: 20251112.1 - version: 3.9.0 - branch: stable\n",
+   },
 };
 
 static void
@@ -766,18 +794,26 @@ typedef struct {
 static const ListBuildsTest list_builds_test[] = {
    {
       .output = "Available steamdeck builds:\n"
-                "ID: 20240115.2 - version: 3.7.3 - branch: stable\n"
-                "ID: 20240115.1 - version: 3.7.2 - branch: stable\n"
+                "ID: 20240104.1 - version: 3.6.5 - branch: stable\n"
                 "ID: 20240107.1 - version: 3.6.5 - branch: rc\n"
-                "ID: 20240104.1 - version: 3.6.5 - branch: stable\n",
+                "ID: 20240115.1 - version: 3.7.2 - branch: stable\n"
+                "ID: 20240115.2 - version: 3.7.3 - branch: stable\n"
+                "ID: 20250212.1 - version: 3.8.0 - branch: stable\n"
+                "ID: 20250212.2 - version: 3.8.0 - branch: stable\n"
+                "ID: 20250212.3 - version: 3.8.0 - branch: stable\n"
+                "ID: 20251112.1 - version: 3.9.0 - branch: stable\n",
    },
 
    {
       .branch = "stable",
       .output = "Available steamdeck builds:\n"
-                "ID: 20240115.2 - version: 3.7.3 - branch: stable\n"
+                "ID: 20240104.1 - version: 3.6.5 - branch: stable\n"
                 "ID: 20240115.1 - version: 3.7.2 - branch: stable\n"
-                "ID: 20240104.1 - version: 3.6.5 - branch: stable\n",
+                "ID: 20240115.2 - version: 3.7.3 - branch: stable\n"
+                "ID: 20250212.1 - version: 3.8.0 - branch: stable\n"
+                "ID: 20250212.2 - version: 3.8.0 - branch: stable\n"
+                "ID: 20250212.3 - version: 3.8.0 - branch: stable\n"
+                "ID: 20251112.1 - version: 3.9.0 - branch: stable\n",
    },
 
    {
