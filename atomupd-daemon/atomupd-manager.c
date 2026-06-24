@@ -862,6 +862,44 @@ _is_numeric_version(const gchar *version, guint n_parts)
    return TRUE;
 }
 
+/* Split an optional "branch/version" argument */
+static int
+split_inline_branch(GOptionContext *context,
+                    const gchar *argument,
+                    const gchar **selector,
+                    gchar **requested_branch)
+{
+   const gchar *slash = strchr(argument, '/');
+
+   *selector = argument;
+   *requested_branch = NULL;
+
+   if (slash == NULL) {
+      *requested_branch = g_strdup(opt_branch);
+      return EXIT_SUCCESS;
+   }
+
+   if (slash == argument) {
+      g_print("A branch name is required before '/'\n\n");
+      return print_usage(context);
+   }
+   if (slash[1] == '\0') {
+      g_print("A selector is required after '/'\n\n");
+      return print_usage(context);
+   }
+
+   *requested_branch = g_strndup(argument, slash - argument);
+   *selector = slash + 1;
+
+   if (opt_branch != NULL && !g_str_equal(opt_branch, *requested_branch)) {
+      g_print("The inline branch '%s' does not match --branch '%s'\n\n",
+              *requested_branch, opt_branch);
+      return print_usage(context);
+   }
+
+   return EXIT_SUCCESS;
+}
+
 static CustomUpdateSelectorMode
 parse_custom_update_selector(const gchar *argument, gchar **parsed_request)
 {
@@ -885,8 +923,16 @@ parse_custom_update_selector(const gchar *argument, gchar **parsed_request)
       return CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX;
    }
 
-   *parsed_request = g_strdup(argument);
-   return CUSTOM_UPDATE_SELECTOR_EXACT_VERSION;
+   if (strchr(argument, '.') != NULL) {
+      *parsed_request = g_strdup(argument);
+      return CUSTOM_UPDATE_SELECTOR_EXACT_VERSION;
+   }
+
+   /* A bare token with no '.' is a branch name: select the newest build in that
+    * branch via an empty version prefix, which prefixes every version. The
+    * caller takes the branch name from the selector. */
+   *parsed_request = g_strdup("");
+   return CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX;
 }
 
 static int
@@ -915,10 +961,36 @@ custom_update_command(GOptionContext *context,
       JsonNode *json_node = NULL;   /* borrowed */
       JsonArray *json_array = NULL; /* borrowed */
       guint json_length;
+      const gchar *selector = NULL;
       g_autofree gchar *parsed_request = NULL;
+      g_autofree gchar *requested_branch = NULL;
       CustomUpdateSelectorMode selector_mode;
+      gboolean branch_has_builds = FALSE;
+      int split_result;
 
-      selector_mode = parse_custom_update_selector(argument, &parsed_request);
+      split_result = split_inline_branch(context, argument, &selector, &requested_branch);
+      if (split_result != EXIT_SUCCESS)
+         return split_result;
+
+      selector_mode = parse_custom_update_selector(selector, &parsed_request);
+
+      if (selector_mode == CUSTOM_UPDATE_SELECTOR_BUILDID && requested_branch != NULL) {
+         g_print("A build ID cannot be combined with a branch\n\n");
+         return print_usage(context);
+      }
+
+      /* A bare branch name parsed to an empty version prefix; the selector is
+       * the branch, so select the newest build in it. */
+      if (selector_mode == CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX
+          && parsed_request[0] == '\0') {
+         if (requested_branch == NULL)
+            requested_branch = g_strdup(selector);
+         else if (!g_str_equal(requested_branch, selector)) {
+            g_print("The branch '%s' does not match --branch '%s'\n\n", selector,
+                    requested_branch);
+            return print_usage(context);
+         }
+      }
 
       builds_list_path = get_builds_list_path(bus, NULL, NULL, &error);
       if (builds_list_path == NULL) {
@@ -945,6 +1017,9 @@ custom_update_command(GOptionContext *context,
          const gchar *branch = json_object_get_string_member(obj, "branch");
          const gchar *version = json_object_get_string_member(obj, "version");
 
+         if (requested_branch != NULL && g_str_equal(requested_branch, branch))
+            branch_has_builds = TRUE;
+
          if (selector_mode == CUSTOM_UPDATE_SELECTOR_BUILDID) {
             /* Buildids are unique */
             if (g_strcmp0(buildid, parsed_request) == 0) {
@@ -955,7 +1030,7 @@ custom_update_command(GOptionContext *context,
          } else if (selector_mode == CUSTOM_UPDATE_SELECTOR_VERSION_PREFIX) {
             if (g_str_has_prefix(version, parsed_request)) {
                /* Apply the eventual branch filter */
-               if (opt_branch != NULL && !g_str_equal(opt_branch, branch))
+               if (requested_branch != NULL && !g_str_equal(requested_branch, branch))
                   continue;
 
                /* Skip a malformed version, so it can't be selected by the prefix match. */
@@ -970,17 +1045,18 @@ custom_update_command(GOptionContext *context,
                update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
                break;
             }
-         } else if (selector_mode == CUSTOM_UPDATE_SELECTOR_EXACT_VERSION
-                    && g_strcmp0(version, parsed_request) == 0) {
-            /* Apply the eventual branch filter */
-            if (opt_branch != NULL && !g_str_equal(opt_branch, branch))
-               continue;
+         } else if (selector_mode == CUSTOM_UPDATE_SELECTOR_EXACT_VERSION) {
+            if (g_strcmp0(version, parsed_request) == 0) {
+               /* Apply the eventual branch filter */
+               if (requested_branch != NULL && !g_str_equal(requested_branch, branch))
+                  continue;
 
-            print_image_info(buildid, version, branch);
-            if (update_path == NULL)
-               update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
-            else
-               multiple_matches = TRUE;
+               print_image_info(buildid, version, branch);
+               if (update_path == NULL)
+                  update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
+               else
+                  multiple_matches = TRUE;
+            }
          }
       }
 
@@ -988,6 +1064,11 @@ custom_update_command(GOptionContext *context,
          g_print("\nAll the results listed above are matching the request.\n");
          g_print("Please run again atomupd-manager by specifying the exact build ID "
                  "you'd like to install\n");
+         return EXIT_FAILURE;
+      }
+
+      if (update_path == NULL && requested_branch != NULL && !branch_has_builds) {
+         g_print("There are no images for the requested branch '%s'\n", requested_branch);
          return EXIT_FAILURE;
       }
    }

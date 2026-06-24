@@ -383,8 +383,7 @@ static const CustomUpdateTest custom_update_test[] = {
       .title = "Requesting a specific version with a branch filter that doesn't match",
       .request = "3.6.5",
       .branch = "main",
-      .output_prefix = "An error occurred when trying to get the requested OS build\n"
-                       "Ensure that the requested image is valid and retry\n",
+      .output_prefix = "There are no images for the requested branch 'main'\n",
       .expected_error_code = 1,
    },
 
@@ -427,6 +426,84 @@ static const CustomUpdateTest custom_update_test[] = {
       .title = "Bare major 3 behaves like the 3.x wildcard",
       .request = "3",
       .output_prefix = "ID: 20251112.1 - version: 3.9.0 - branch: stable\n",
+   },
+
+   {
+      .title = "Inline branch selector picks the newest matching build",
+      .request = "stable/3.8.x",
+      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable\n",
+   },
+
+   {
+      .title = "Bare branch name picks the newest build in that branch",
+      .request = "rc",
+      .output_prefix = "ID: 20240107.1 - version: 3.6.5 - branch: rc\n",
+   },
+
+   {
+      .title = "Bare branch name with no builds reports the specific error",
+      .request = "beta",
+      .output_prefix = "There are no images for the requested branch 'beta'\n",
+      .expected_error_code = 1,
+   },
+
+   {
+      .title = "Leading slash with no branch name is rejected",
+      .request = "/3.8.x",
+      .output_prefix = "A branch name is required before '/'\n",
+      .expected_error_code = 64,
+   },
+
+   {
+      .title = "Trailing slash with no selector is rejected",
+      .request = "stable/",
+      .output_prefix = "A selector is required after '/'\n",
+      .expected_error_code = 64,
+   },
+
+   {
+      .title = "Buildid combined with --branch is rejected",
+      .request = "20240115.1",
+      .branch = "stable",
+      .output_prefix = "A build ID cannot be combined with a branch\n",
+      .expected_error_code = 64,
+   },
+
+   {
+      .title = "Inline branch combined with buildid is rejected",
+      .request = "stable/20240115.1",
+      .output_prefix = "A build ID cannot be combined with a branch\n",
+      .expected_error_code = 64,
+   },
+
+   {
+      .title = "Inline branch matching --branch is accepted",
+      .request = "stable/3.8.x",
+      .branch = "stable",
+      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable\n",
+   },
+
+   {
+      .title = "Inline branch conflicting with --branch is rejected",
+      .request = "stable/3.8.x",
+      .branch = "rc",
+      .output_prefix = "The inline branch 'stable' does not match --branch 'rc'\n",
+      .expected_error_code = 64,
+   },
+
+   {
+      .title = "Bare branch matching --branch is accepted",
+      .request = "rc",
+      .branch = "rc",
+      .output_prefix = "ID: 20240107.1 - version: 3.6.5 - branch: rc\n",
+   },
+
+   {
+      .title = "Bare branch conflicting with --branch is rejected",
+      .request = "rc",
+      .branch = "stable",
+      .output_prefix = "The branch 'rc' does not match --branch 'stable'\n",
+      .expected_error_code = 64,
    },
 };
 
