@@ -346,26 +346,26 @@ static const CustomUpdateTest custom_update_test[] = {
    {
       .title = "Requesting a specific buildid",
       .request = "20240115.1",
-      .output_prefix = "ID: 20240115.1 - version: 3.7.2 - branch: stable\n",
+      .output_prefix = "ID: 20240115.1 - version: 3.7.2 - branch: stable - variant: steamdeck\n",
    },
 
    {
       .title = "Requesting a specific version",
       .request = "3.7.3",
-      .output_prefix = "ID: 20240115.2 - version: 3.7.3 - branch: stable\n",
+      .output_prefix = "ID: 20240115.2 - version: 3.7.3 - branch: stable - variant: steamdeck\n",
    },
 
    {
       .title = "Requesting the latest 3.7 build",
       .request = "3.7.x",
-      .output_prefix = "ID: 20240115.2 - version: 3.7.3 - branch: stable\n",
+      .output_prefix = "ID: 20240115.2 - version: 3.7.3 - branch: stable - variant: steamdeck\n",
    },
 
    {
       .title = "Requesting a specific version that is not unique",
       .request = "3.6.5",
-      .output_prefix = "ID: 20240107.1 - version: 3.6.5 - branch: rc\n"
-                       "ID: 20240104.1 - version: 3.6.5 - branch: stable\n"
+      .output_prefix = "ID: 20240107.1 - version: 3.6.5 - branch: rc - variant: steamdeck\n"
+                       "ID: 20240104.1 - version: 3.6.5 - branch: stable - variant: steamdeck\n"
                        "\nAll the results listed above are matching the request.\n"
                        "Please run again atomupd-manager by specifying the exact build ID "
                        "you'd like to install\n",
@@ -376,7 +376,7 @@ static const CustomUpdateTest custom_update_test[] = {
       .title = "Requesting a specific version with branch filter",
       .request = "3.6.5",
       .branch = "stable",
-      .output_prefix = "ID: 20240104.1 - version: 3.6.5 - branch: stable\n",
+      .output_prefix = "ID: 20240104.1 - version: 3.6.5 - branch: stable - variant: steamdeck\n",
    },
 
    {
@@ -407,37 +407,37 @@ static const CustomUpdateTest custom_update_test[] = {
       .title = "Wildcard picks the newest buildid when several builds share the "
                "highest micro version",
       .request = "3.8.x",
-      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable\n",
+      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable - variant: steamdeck\n",
    },
 
    {
       .title = "Short version 3.8 behaves like the 3.8.x wildcard",
       .request = "3.8",
-      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable\n",
+      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable - variant: steamdeck\n",
    },
 
    {
       .title = "Major-only wildcard 3.x picks the highest minor version",
       .request = "3.x",
-      .output_prefix = "ID: 20251112.1 - version: 3.9.0 - branch: stable\n",
+      .output_prefix = "ID: 20251112.1 - version: 3.9.0 - branch: stable - variant: steamdeck\n",
    },
 
    {
       .title = "Bare major 3 behaves like the 3.x wildcard",
       .request = "3",
-      .output_prefix = "ID: 20251112.1 - version: 3.9.0 - branch: stable\n",
+      .output_prefix = "ID: 20251112.1 - version: 3.9.0 - branch: stable - variant: steamdeck\n",
    },
 
    {
       .title = "Inline branch selector picks the newest matching build",
       .request = "stable/3.8.x",
-      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable\n",
+      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable - variant: steamdeck\n",
    },
 
    {
       .title = "Bare branch name picks the newest build in that branch",
       .request = "rc",
-      .output_prefix = "ID: 20240107.1 - version: 3.6.5 - branch: rc\n",
+      .output_prefix = "ID: 20240107.1 - version: 3.6.5 - branch: rc - variant: steamdeck\n",
    },
 
    {
@@ -480,7 +480,7 @@ static const CustomUpdateTest custom_update_test[] = {
       .title = "Inline branch matching --branch is accepted",
       .request = "stable/3.8.x",
       .branch = "stable",
-      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable\n",
+      .output_prefix = "ID: 20250212.3 - version: 3.8.0 - branch: stable - variant: steamdeck\n",
    },
 
    {
@@ -495,7 +495,7 @@ static const CustomUpdateTest custom_update_test[] = {
       .title = "Bare branch matching --branch is accepted",
       .request = "rc",
       .branch = "rc",
-      .output_prefix = "ID: 20240107.1 - version: 3.6.5 - branch: rc\n",
+      .output_prefix = "ID: 20240107.1 - version: 3.6.5 - branch: rc - variant: steamdeck\n",
    },
 
    {

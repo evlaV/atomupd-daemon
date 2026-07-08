@@ -840,9 +840,13 @@ get_builds_list_path(GDBusConnection *bus,
 }
 
 static void
-print_image_info(const gchar *buildid, const gchar *version, const gchar *branch)
+print_image_info(const gchar *buildid,
+                 const gchar *version,
+                 const gchar *branch,
+                 const gchar *variant)
 {
-   printf("ID: %s - version: %s - branch: %s\n", buildid, version, branch);
+   printf("ID: %s - version: %s - branch: %s - variant: %s\n", buildid, version, branch,
+          variant);
 }
 
 /* TRUE if version is exactly n_parts dot-separated, non-empty, numeric
@@ -964,6 +968,7 @@ custom_update_command(GOptionContext *context,
       const gchar *selector = NULL;
       g_autofree gchar *parsed_request = NULL;
       g_autofree gchar *requested_branch = NULL;
+      g_autofree gchar *variant = NULL;
       CustomUpdateSelectorMode selector_mode;
       gboolean branch_has_builds = FALSE;
       int split_result;
@@ -992,7 +997,7 @@ custom_update_command(GOptionContext *context,
          }
       }
 
-      builds_list_path = get_builds_list_path(bus, NULL, NULL, &error);
+      builds_list_path = get_builds_list_path(bus, NULL, &variant, &error);
       if (builds_list_path == NULL) {
          g_print("An error occurred while getting the list of builds: %s\n",
                  error->message);
@@ -1023,7 +1028,7 @@ custom_update_command(GOptionContext *context,
          if (selector_mode == CUSTOM_UPDATE_SELECTOR_BUILDID) {
             /* Buildids are unique */
             if (g_strcmp0(buildid, parsed_request) == 0) {
-               print_image_info(buildid, version, branch);
+               print_image_info(buildid, version, branch, variant);
                update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
                break;
             }
@@ -1041,7 +1046,7 @@ custom_update_command(GOptionContext *context,
 
                /* First match wins. With the loop from newest this is the
                 * newest build of the highest matching version. */
-               print_image_info(buildid, version, branch);
+               print_image_info(buildid, version, branch, variant);
                update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
                break;
             }
@@ -1051,7 +1056,7 @@ custom_update_command(GOptionContext *context,
                if (requested_branch != NULL && !g_str_equal(requested_branch, branch))
                   continue;
 
-               print_image_info(buildid, version, branch);
+               print_image_info(buildid, version, branch, variant);
                if (update_path == NULL)
                   update_path = g_strdup(json_object_get_string_member(obj, "update_path"));
                else
