@@ -12,7 +12,7 @@ _atomupd_manager() {
     local create_dev_conf_opts="--additional-variant --username --password --skip-reload"
     local check_opts="--penultimate-update"
     local list_builds_opts="--branch --variant"
-    local custom_update_opts="--branch"
+    local custom_update_opts="--branch --variant"
 
     # Complete the first command argument
     if [[ ${COMP_CWORD} -eq 1 ]]; then

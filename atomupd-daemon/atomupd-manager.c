@@ -119,6 +119,10 @@ static GOptionEntry create_list_builds_options[] = {
 static GOptionEntry create_custom_update_options[] = {
    { "branch", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_branch,
      "Select only the updates that are in this branch", NULL },
+   { "variant", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_variant,
+     "Select the updates from this specific variant. If omitted, updates for the "
+     "currently tracked variant will be selected",
+     NULL },
    { NULL }
 };
 
@@ -997,7 +1001,7 @@ custom_update_command(GOptionContext *context,
          }
       }
 
-      builds_list_path = get_builds_list_path(bus, NULL, &variant, &error);
+      builds_list_path = get_builds_list_path(bus, opt_variant, &variant, &error);
       if (builds_list_path == NULL) {
          g_print("An error occurred while getting the list of builds: %s\n",
                  error->message);
@@ -1826,13 +1830,9 @@ main(int argc, char *argv[])
          return print_usage(context);
    }
 
-   if (!g_str_equal(argv[1], "list-builds")) {
-      /* This option is only relevant for the list-builds command */
-      if (opt_variant != NULL)
-         return print_usage(context);
-
-      /* This option is also relevant for custom-update */
-      if (!g_str_equal(argv[1], "custom-update") && opt_branch != NULL)
+   if (!g_str_equal(argv[1], "list-builds") && !g_str_equal(argv[1], "custom-update")) {
+      /* These options are only relevant for list-builds and custom-update */
+      if (opt_variant != NULL || opt_branch != NULL)
          return print_usage(context);
    }
 

@@ -332,6 +332,7 @@ typedef struct {
    const gchar *title;
    const gchar *request;
    const gchar *branch;
+   const gchar *variant;
    const gchar *output_prefix;
    gint expected_error_code;
 } CustomUpdateTest;
@@ -505,6 +506,51 @@ static const CustomUpdateTest custom_update_test[] = {
       .output_prefix = "The branch 'rc' does not match --branch 'stable'\n",
       .expected_error_code = 64,
    },
+
+   {
+      .title = "Requesting a version from a different variant",
+      .request = "3.9",
+      .variant = "steamtest",
+      .output_prefix = "ID: 20260109.9999 - version: 3.9.0 - branch: stable - variant: steamtest\n",
+   },
+
+   {
+      .title = "Requesting a buildid from a different variant",
+      .request = "20260109.9999",
+      .variant = "steamtest",
+      .output_prefix = "ID: 20260109.9999 - version: 3.9.0 - branch: stable - variant: steamtest\n",
+   },
+
+   {
+      .title = "Combining --variant with --branch",
+      .request = "3.9",
+      .branch = "stable",
+      .variant = "steamtest",
+      .output_prefix = "ID: 20260109.9999 - version: 3.9.0 - branch: stable - variant: steamtest\n",
+   },
+
+   {
+      .title = "Combining --variant with an inline branch selector",
+      .request = "stable/3.9.x",
+      .variant = "steamtest",
+      .output_prefix = "ID: 20260109.9999 - version: 3.9.0 - branch: stable - variant: steamtest\n",
+   },
+
+   {
+      .title = "Bare branch name picks the newest build of a different variant",
+      .request = "stable",
+      .variant = "steamtest",
+      .output_prefix = "ID: 20260109.9999 - version: 3.9.0 - branch: stable - variant: steamtest\n",
+   },
+
+   {
+      .title = "Requesting a version that only exists in the tracked variant",
+      .request = "3.7.x",
+      .variant = "steamtest",
+      .output_prefix = "An error occurred when trying to get the requested OS build\n"
+                       "Ensure that the requested image is valid and retry\n",
+      .expected_error_code = 1,
+   },
 };
 
 static void
@@ -548,6 +594,11 @@ test_custom_update(Fixture *f, gconstpointer context)
       if (test.branch != NULL) {
          g_ptr_array_add(argv, (gchar *)"--branch");
          g_ptr_array_add(argv, (gchar *)test.branch);
+      }
+
+      if (test.variant != NULL) {
+         g_ptr_array_add(argv, (gchar *)"--variant");
+         g_ptr_array_add(argv, (gchar *)test.variant);
       }
 
       g_ptr_array_add(argv, NULL);
