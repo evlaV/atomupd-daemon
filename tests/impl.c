@@ -1628,6 +1628,7 @@ typedef struct {
    gboolean unreadable_legacy_conf_file;
    PrefsEntries initial_file; /* Initial values in the preferences file */
    gboolean preferences_file_missing;
+   gboolean preferences_expected_missing; /* The preferences file is not expected */
    PrefsEntries initial_expected;
    const gchar *switch_to_variant; /* Change variant with the SwitchToVariant method */
    const gchar *switch_to_branch;  /* Change branch with the SwitchToBranch method */
@@ -1642,12 +1643,9 @@ typedef struct {
 static const PreferencesTest preferences_test[] = {
    {
       .preferences_file_missing = TRUE,
+      .preferences_expected_missing = TRUE,
       .initial_expected = {
          /* Default values from the f->manifest_path */
-         .variant = "steamdeck",
-         .branch = "stable",
-      },
-      .switch_expected = {
          .variant = "steamdeck",
          .branch = "stable",
       },
@@ -1655,27 +1653,21 @@ static const PreferencesTest preferences_test[] = {
 
    {
       .preferences_file_missing = TRUE,
+      .preferences_expected_missing = TRUE,
       .custom_manifest = "manifest_steamtest.json",
       .initial_expected = {
          /* Default values from manifest_steamtest.json */
          .variant = "steamtest",
          .branch = "beta",
       },
-      .switch_expected = {
-         .variant = "steamtest",
-         .branch = "beta",
-      },
    },
 
    {
       .preferences_file_missing = TRUE,
+      .preferences_expected_missing = TRUE,
       .custom_manifest = "manifest_steamtest_missing_branch.json",
       .initial_expected = {
          /* Expecting stable as the hardcoded fallback value */
-         .variant = "steamtest",
-         .branch = "stable",
-      },
-      .switch_expected = {
          .variant = "steamtest",
          .branch = "stable",
       },
@@ -1808,12 +1800,9 @@ static const PreferencesTest preferences_test[] = {
       /* Malformed conf file */
       .legacy_conf_file_content = "steamdeck-beta\nsteamdeck-main",
       .preferences_file_missing = TRUE,
+      .preferences_expected_missing = TRUE,
       /* It should fallback to the manifest */
       .initial_expected = {
-         .variant = "steamdeck",
-         .branch = "stable",
-      },
-      .switch_expected = {
          .variant = "steamdeck",
          .branch = "stable",
       },
@@ -1863,10 +1852,7 @@ static const PreferencesTest preferences_test[] = {
          .variant = "steamdeck",
          .branch = "stable",
       },
-      .switch_expected = {
-         .variant = "steamdeck",
-         .branch = "stable",
-      },
+      /* The file is left empty, the manifest defaults are not written back */
    },
 
    {
@@ -1875,13 +1861,14 @@ static const PreferencesTest preferences_test[] = {
          .variant = "vanilla",
       },
       .initial_expected = {
-         /* Default values from the f->manifest_path */
-         .variant = "steamdeck",
+         /* The chosen variant is kept, the branch comes from the
+          * f->manifest_path defaults */
+         .variant = "vanilla",
          .branch = "stable",
       },
       .switch_expected = {
-         .variant = "steamdeck",
-         .branch = "stable",
+         /* The file is left untouched, only the chosen variant is present */
+         .variant = "vanilla",
       },
    },
 
@@ -1891,13 +1878,14 @@ static const PreferencesTest preferences_test[] = {
          .branch = "main",
       },
       .initial_expected = {
-         /* Default values from the f->manifest_path */
+         /* The chosen branch is kept, the variant comes from the
+          * f->manifest_path defaults */
          .variant = "steamdeck",
-         .branch = "stable",
+         .branch = "main",
       },
       .switch_expected = {
-         .variant = "steamdeck",
-         .branch = "stable",
+         /* The file is left untouched, only the chosen branch is present */
+         .branch = "main",
       },
    },
 };
@@ -1921,7 +1909,8 @@ test_preferences(Fixture *f, gconstpointer context)
       g_autofree gchar *parsed_variant = NULL;
       g_autofree gchar *parsed_branch = NULL;
       g_autofree gchar *parsed_http_proxy_address = NULL;
-      int parsed_http_proxy_port;
+      /* Reset for each test, in case the preferences file is missing */
+      int parsed_http_proxy_port = 0;
       g_autofree gchar *manifest_path = NULL;
       g_autofree gchar *preferences_content = NULL;
       g_autoptr(GKeyFile) parsed_preferences = NULL;
@@ -2004,8 +1993,13 @@ test_preferences(Fixture *f, gconstpointer context)
                                     : test.initial_expected.http_proxy_address,
                                  test.initial_expected.http_proxy_port);
 
-      /* The daemon should always create the preferences file */
-      g_assert_true(g_file_test(preferences_path, G_FILE_TEST_EXISTS));
+      /* The daemon still does create the preferences file when starting up,
+       * for example when it migrates the legacy steamos-branch file to the
+       * new preferences.conf */
+      if (test.preferences_expected_missing)
+         g_assert_false(g_file_test(preferences_path, G_FILE_TEST_EXISTS));
+      else
+         g_assert_true(g_file_test(preferences_path, G_FILE_TEST_EXISTS));
 
       /* We expect the daemon to migrate to the new preferences file, unless it is unable
        * to delete the legacy file */
@@ -2028,25 +2022,25 @@ test_preferences(Fixture *f, gconstpointer context)
       if (test.disable_http_proxy)
          _send_atomupd_message_with_null_reply(bus, "DisableHttpProxy", NULL, NULL);
 
-      g_file_get_contents(preferences_path, &preferences_content, NULL, &error);
-      g_assert_no_error(error);
-      g_debug("Preferences Content (%s):\n%s", preferences_path, preferences_content);
+      if (g_file_test(preferences_path, G_FILE_TEST_EXISTS)) {
+         g_file_get_contents(preferences_path, &preferences_content, NULL, &error);
+         g_assert_no_error(error);
+         g_debug("Preferences Content (%s):\n%s", preferences_path, preferences_content);
 
-      parsed_preferences = g_key_file_new();
-      g_key_file_load_from_file(parsed_preferences, preferences_path, G_KEY_FILE_NONE,
-                                &error);
-      g_assert_no_error(error);
-      parsed_variant =
-         g_key_file_get_string(parsed_preferences, "Choices", "Variant", &error);
-      g_assert_no_error(error);
-      parsed_branch =
-         g_key_file_get_string(parsed_preferences, "Choices", "Branch", &error);
-      g_assert_no_error(error);
+         parsed_preferences = g_key_file_new();
+         g_key_file_load_from_file(parsed_preferences, preferences_path, G_KEY_FILE_NONE,
+                                   &error);
+         g_assert_no_error(error);
+         parsed_variant =
+            g_key_file_get_string(parsed_preferences, "Choices", "Variant", NULL);
+         parsed_branch =
+            g_key_file_get_string(parsed_preferences, "Choices", "Branch", NULL);
 
-      parsed_http_proxy_address =
-         g_key_file_get_string(parsed_preferences, "Proxy", "Address", NULL);
-      parsed_http_proxy_port =
-         g_key_file_get_integer(parsed_preferences, "Proxy", "Port", NULL);
+         parsed_http_proxy_address =
+            g_key_file_get_string(parsed_preferences, "Proxy", "Address", NULL);
+         parsed_http_proxy_port =
+            g_key_file_get_integer(parsed_preferences, "Proxy", "Port", NULL);
+      }
 
       g_assert_cmpstr(parsed_variant, ==, test.switch_expected.variant);
       g_assert_cmpstr(parsed_branch, ==, test.switch_expected.branch);
@@ -2461,8 +2455,11 @@ test_query_updates_4xx(Fixture *f, gconstpointer context)
       _check_string_property(bus, "Variant", test.initial_prefs.variant);
       _check_string_property(bus, "Branch", test.initial_prefs.branch);
 
-      /* The daemon should always create the preferences file */
-      g_assert_true(g_file_test(preferences_path, G_FILE_TEST_EXISTS));
+      /* The daemon still creates the preferences file when starting up */
+      if (test.preferences_file_missing)
+         g_assert_false(g_file_test(preferences_path, G_FILE_TEST_EXISTS));
+      else
+         g_assert_true(g_file_test(preferences_path, G_FILE_TEST_EXISTS));
 
       if (test.failed_message != NULL)
          expected_reply = g_strdup(test.failed_message);

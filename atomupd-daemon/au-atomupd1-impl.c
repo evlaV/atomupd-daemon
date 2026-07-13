@@ -512,8 +512,10 @@ _au_load_legacy_preferences(const gchar *branch_file_path,
 /*
  * _au_load_preferences_file:
  * @user_prefs_path: (not nullable): Path to the preferences file
- * @variant_out: (out): Used to return the tracked variant
- * @branch_out: (out): Used to return the tracked branch
+ * @variant_out: (out): Used to return the tracked variant, or %NULL if a
+ *  variant was never selected
+ * @branch_out: (out): Used to return the tracked branch, or %NULL if a
+ *  branch was never selected
  * @error: Used to raise an error on failure
  *
  * Parses the user preference file and retrieves the variant and branch that are
@@ -556,17 +558,15 @@ _au_load_user_preferences_file(const gchar *user_prefs_path,
       return FALSE;
    }
 
-   variant = g_key_file_get_string(user_prefs, "Choices", "Variant", error);
-   if (variant == NULL) {
-      g_warning("Failed to parse the chosen Variant from '%s'", user_prefs_path);
-      return FALSE;
-   }
+   /* Missing keys are not an error. It means they were never selected and
+    * the image manifest defaults will be used */
+   variant = g_key_file_get_string(user_prefs, "Choices", "Variant", NULL);
+   if (variant == NULL)
+      g_debug("'%s' doesn't have a selected Variant", user_prefs_path);
 
-   branch = g_key_file_get_string(user_prefs, "Choices", "Branch", error);
-   if (branch == NULL) {
-      g_warning("Failed to parse the chosen Branch from '%s'", user_prefs_path);
-      return FALSE;
-   }
+   branch = g_key_file_get_string(user_prefs, "Choices", "Branch", NULL);
+   if (branch == NULL)
+      g_debug("'%s' doesn't have a selected Branch", user_prefs_path);
 
    proxy_address = g_key_file_get_string(user_prefs, "Proxy", "Address", NULL);
    if (proxy_address == NULL) {
@@ -587,61 +587,6 @@ _au_load_user_preferences_file(const gchar *user_prefs_path,
    *variant_out = g_steal_pointer(&variant);
    *branch_out = g_steal_pointer(&branch);
    *http_proxy_out = g_steal_pointer(&http_proxy);
-   return TRUE;
-}
-
-static gchar *
-_au_get_default_variant(const gchar *manifest, GError **error);
-
-static gchar *
-_au_get_default_branch(const gchar *manifest);
-
-/*
- * _au_load_preferences_from_manifest:
- * @manifest_path: (not nullable): Path to the image manifest file
- * @variant_out: (out): Used to return the tracked variant
- * @branch_out: (out): Used to return the tracked branch
- * @error: Used to raise an error on failure
- *
- * Retrieve the default variant and branch by parsing the image JSON manifest file.
- *
- * Returns: %TRUE if the values are correctly retrieved
- */
-static gboolean
-_au_load_preferences_from_manifest(const gchar *manifest_path,
-                                   gchar **variant_out,
-                                   gchar **branch_out,
-                                   GError **error)
-{
-   g_autofree gchar *variant = NULL;
-   g_autofree gchar *branch = NULL;
-   g_autoptr(GError) local_error = NULL;
-
-   g_return_val_if_fail(manifest_path != NULL, FALSE);
-   g_return_val_if_fail(variant_out != NULL && *variant_out == NULL, FALSE);
-   g_return_val_if_fail(branch_out != NULL && *branch_out == NULL, FALSE);
-   g_return_val_if_fail(error == NULL || *error == NULL, FALSE);
-
-   g_debug("Parsing the image manifest '%s' to grab the variant and branch",
-           manifest_path);
-
-   variant = _au_get_default_variant(manifest_path, error);
-   if (variant == NULL) {
-      g_warning("Failed to parse the default variant from the image manifest");
-      return FALSE;
-   }
-
-   branch = _au_get_default_branch(manifest_path);
-
-   if (!_au_update_user_preferences(variant, branch, NULL, &local_error)) {
-      /* If we can't save the preferences file, e.g. because /etc is full, we
-       * try to continue anyway */
-      g_warning("Failed to save the preferences: %s", local_error->message);
-      g_clear_error(&local_error);
-   }
-
-   *variant_out = g_steal_pointer(&variant);
-   *branch_out = g_steal_pointer(&branch);
    return TRUE;
 }
 
@@ -2808,13 +2753,18 @@ _au_parse_preferences(AuAtomupd1Impl *atomupd, GError **error)
       g_clear_error(&local_error);
    }
 
-   /* As our last resort we try to parse the image manifest file */
+   /* As our last resort we take the missing values from the image manifest
+    * file, without writing them back to the preferences file */
    if (!variant) {
-      if (!_au_load_preferences_from_manifest(atomupd->manifest_path, &variant, &branch,
-                                              error)) {
+      variant = _au_get_default_variant(atomupd->manifest_path, error);
+      if (variant == NULL) {
+         g_warning("Failed to parse the default variant from the image manifest");
          return FALSE;
       }
    }
+
+   if (!branch)
+      branch = _au_get_default_branch(atomupd->manifest_path);
 
    if (http_proxy == NULL)
       http_proxy = g_variant_ref_sink(g_variant_new("(si)", "", 0));
