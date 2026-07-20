@@ -427,6 +427,16 @@ test_redact_url(Fixture *f, gconstpointer context)
    }
 }
 
+static void
+test_compute_secret_hash(Fixture *f, gconstpointer context)
+{
+   g_autofree gchar *hash = NULL;
+
+   hash = _au_compute_secret_hash("foo", "hunter2");
+
+   g_assert_cmpstr(hash, ==, HASH_HUNTER2);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -438,6 +448,7 @@ main(int argc, char **argv)
    test_add("/atomupd1/include_secret_hash_data", test_include_secret_hash_data);
    test_add("/atomupd1/buildid_check", test_buildid_check);
    test_add("/atomupd1/redact_url", test_redact_url);
+   test_add("/atomupd1/compute_secret_hash", test_compute_secret_hash);
 
    return g_test_run();
 }
