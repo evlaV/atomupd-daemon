@@ -608,6 +608,29 @@ _au_clear_available_updates(AuAtomupd1 *object)
 }
 
 /*
+ * _au_compute_secret_hash:
+ * @username: (not nullable): Username
+ * @password: (not nullable): Password
+ *
+ * Generates the secret hash used on the server for the given @username
+ * and @password.
+ *
+ * Returns: (transfer full): The hash for the username and password.
+ */
+gchar *
+_au_compute_secret_hash(const gchar *username, const gchar *password)
+{
+   g_autofree gchar *secret = NULL;
+
+   g_return_val_if_fail(username != NULL, NULL);
+   g_return_val_if_fail(password != NULL, NULL);
+
+   /* This must follow the same format used on the server side */
+   secret = g_strdup_printf("%s:%s", username, password);
+   return g_compute_checksum_for_string(G_CHECKSUM_SHA256, secret, -1);
+}
+
+/*
  * _au_get_secret_hash_from_config:
  * @client_config: (not nullable): Object that holds the configuration key file
  *
@@ -622,7 +645,6 @@ _au_get_secret_hash_from_config(GKeyFile *client_config)
 {
    g_autofree gchar *username = NULL;
    g_autofree gchar *password = NULL;
-   g_autofree gchar *secret = NULL;
    g_autoptr(GError) local_error = NULL;
 
    g_return_val_if_fail(client_config != NULL, NULL);
@@ -639,9 +661,7 @@ _au_get_secret_hash_from_config(GKeyFile *client_config)
       return NULL;
    }
 
-   /* This must follow the same format used on the server side */
-   secret = g_strdup_printf("%s:%s", username, password);
-   return g_compute_checksum_for_string(G_CHECKSUM_SHA256, secret, -1);
+   return _au_compute_secret_hash(username, password);
 }
 
 /*

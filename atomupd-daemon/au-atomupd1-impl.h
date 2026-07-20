@@ -44,6 +44,8 @@ AuAtomupd1 *au_atomupd1_impl_new(const gchar *config_directory,
                                  GDBusConnection *bus,
                                  GError **error);
 
+gchar * _au_compute_secret_hash(const gchar *username, const gchar *password);
+
 gchar * _au_get_secret_hash_from_config(GKeyFile *client_config);
 
 gchar * _au_include_secret_hash_data(const gchar *secret_hash,
