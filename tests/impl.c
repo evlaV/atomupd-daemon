@@ -3087,10 +3087,10 @@ test_query_updates_eol_variant_hash(Fixture *f, gconstpointer context)
 
    g_file_get_contents(f->updates_json, &updates_json, NULL, &error);
    g_assert_no_error(error);
-   /* The initially requested variant was `steamdeck`. Given that the server returned
-    * an updated path for `steamdeck-replacement`, we fail to append the secret hash
-    * to it */
-   g_assert_nonnull(strstr(updates_json, "dev/steamdeck-replacement/20260807.2000"));
+   /* Append the secret hash to the newly proposed `steamdeck-replacement` variant */
+   g_assert_nonnull(strstr(
+      updates_json, "dev/steamdeck-replacement_66cd33a8f743a96c03cd87cd823b561963f6"
+                    "fca93703dc19d3d5595086557a53_DO_NOT_SHARE_URL/20260807.2000"));
    au_tests_stop_process(daemon_proc);
 
    if (!rm_rf(tmp_config_dir))
