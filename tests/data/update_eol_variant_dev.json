@@ -1,0 +1,23 @@
+{
+  "minor": {
+    "candidates": [
+      {
+        "chunks_store_path": "dev/steamdeck-replacement/chunks.castr",
+        "image": {
+          "arch": "amd64",
+          "branch": "stable",
+          "buildid": "20260807.2000",
+          "default_update_branch": "stable",
+          "estimated_size": 0,
+          "product": "steamos",
+          "release": "holo",
+          "variant": "steamdeck-replacement",
+          "version": "3.9.1"
+        },
+        "update_path": "dev/steamdeck-replacement/20260807.2000/deckard-stable-20260807.2000-3.9.1.raucb"
+      }
+    ],
+    "release": "holo",
+    "replacement_eol_variant": "steamdeck-replacement"
+  }
+}
