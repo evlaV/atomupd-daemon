@@ -3055,6 +3055,49 @@ test_query_updates_variant_hash(Fixture *f, gconstpointer context)
 }
 
 static void
+test_query_updates_eol_variant_hash(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *tmp_config_dir = NULL;
+   g_autofree gchar *config_path = NULL;
+   g_autofree gchar *update_file_path = NULL;
+   g_autofree gchar *updates_json = NULL;
+   g_autoptr(GError) error = NULL;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   tmp_config_dir = g_dir_make_tmp("atomupd-daemon-auth-XXXXXX", &error);
+   g_assert_no_error(error);
+   config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+   _copy_config_file(f, "client_auth.conf", config_path);
+
+   update_file_path =
+      g_build_filename(f->srcdir, "data", "update_eol_variant_dev.json", NULL);
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_UPDATE_JSON", update_file_path, TRUE);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+   _call_check_for_updates(bus, NULL, NULL);
+
+   _check_string_property(bus, "Variant", "steamdeck-replacement");
+
+   g_file_get_contents(f->updates_json, &updates_json, NULL, &error);
+   g_assert_no_error(error);
+   /* Append the secret hash to the newly proposed `steamdeck-replacement` variant */
+   g_assert_nonnull(strstr(
+      updates_json, "dev/steamdeck-replacement_66cd33a8f743a96c03cd87cd823b561963f6"
+                    "fca93703dc19d3d5595086557a53_DO_NOT_SHARE_URL/20260807.2000"));
+   au_tests_stop_process(daemon_proc);
+
+   if (!rm_rf(tmp_config_dir))
+      g_debug("Unable to remove temp directory: %s", tmp_config_dir);
+}
+
+static void
 test_simulate_update(Fixture *f, gconstpointer context)
 {
    g_autoptr(GSubprocess) daemon_proc = NULL;
@@ -3333,6 +3376,8 @@ main(int argc, char **argv)
    test_add("/daemon/builds_list", test_builds_list);
    test_add("/daemon/builds_list_with_auth", test_builds_list_with_auth);
    test_add("/daemon/query_updates_variant_hash", test_query_updates_variant_hash);
+   test_add("/daemon/query_updates_eol_variant_hash",
+            test_query_updates_eol_variant_hash);
    test_add("/daemon/remote_info_hash", test_remote_info_hash);
    test_add("/daemon/simulate_update", test_simulate_update);
 

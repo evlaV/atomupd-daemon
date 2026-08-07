@@ -1409,10 +1409,6 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
       }
    }
 
-   /* If we have a secret hash from our config, and the server is proposing an image under
-    * the "dev" directory, we append the secret hash to the variant part as well. */
-   output_with_hash = _au_include_secret_hash_data(self->secret_hash, au_atomupd1_get_variant((AuAtomupd1 *)self), output);
-
    current_status = au_atomupd1_get_update_status(data->req->object);
    if (current_status == AU_UPDATE_STATUS_SUCCESSFUL)
       updated_build_id = au_atomupd1_get_update_build_id(data->req->object);
@@ -1422,14 +1418,6 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
          "An error occurred while parsing the helper output JSON: %s", error->message);
-      return;
-   }
-
-   if (!g_file_replace_contents(self->updates_json_file, output_with_hash, strlen(output_with_hash),
-                                NULL, FALSE, G_FILE_CREATE_NONE, NULL, NULL, &error)) {
-      g_dbus_method_invocation_return_error(
-         g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-         "An error occurred while storing the helper output JSON: %s", error->message);
       return;
    }
 
@@ -1445,6 +1433,20 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
             replacement_eol_variant, error->message);
          return;
       }
+   }
+
+   /* If we have a secret hash from our config, and the server is proposing an image under
+    * the "dev" directory, we append the secret hash to the variant part as well. */
+   output_with_hash = _au_include_secret_hash_data(
+      self->secret_hash, au_atomupd1_get_variant((AuAtomupd1 *)self), output);
+
+   if (!g_file_replace_contents(self->updates_json_file, output_with_hash,
+                                strlen(output_with_hash), NULL, FALSE, G_FILE_CREATE_NONE,
+                                NULL, NULL, &error)) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+         "An error occurred while storing the helper output JSON: %s", error->message);
+      return;
    }
 
 success:
