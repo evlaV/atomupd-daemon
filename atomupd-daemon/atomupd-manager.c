@@ -123,6 +123,10 @@ static GOptionEntry create_custom_update_options[] = {
      "Select the updates from this specific variant. If omitted, updates for the "
      "currently tracked variant will be selected",
      NULL },
+   { "username", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_username,
+     "Username for the HTTP authentication", NULL },
+   { "password", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_password,
+     "Password for the HTTP authentication", NULL },
    { NULL }
 };
 
@@ -691,20 +695,24 @@ launch_update(GDBusConnection *bus,
       }
    }
 
-   if (update_url != NULL) {
+   if (update_url != NULL || update_path != NULL) {
       GVariantBuilder builder;
 
       method = "StartCustomUpdate";
       g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
-      g_variant_builder_add(&builder, "{sv}", "url", g_variant_new_string(update_url));
-      body = g_variant_new("(@a{sv})", g_variant_builder_end(&builder));
-   } else if (update_path != NULL) {
-      GVariantBuilder builder;
+      if (update_url != NULL)
+         g_variant_builder_add(&builder, "{sv}", "url", g_variant_new_string(update_url));
+      else
+         g_variant_builder_add(&builder, "{sv}", "update_path",
+                               g_variant_new_string(update_path));
 
-      method = "StartCustomUpdate";
-      g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
-      g_variant_builder_add(&builder, "{sv}", "update_path",
-                            g_variant_new_string(update_path));
+      if (opt_username != NULL)
+         g_variant_builder_add(&builder, "{sv}", "username",
+                               g_variant_new_string(opt_username));
+      if (opt_password != NULL)
+         g_variant_builder_add(&builder, "{sv}", "password",
+                               g_variant_new_string(opt_password));
+
       body = g_variant_new("(@a{sv})", g_variant_builder_end(&builder));
    } else {
       method = "StartUpdate";
@@ -1825,8 +1833,13 @@ main(int argc, char *argv[])
 
    if (!g_str_equal(argv[1], "create-dev-conf")) {
       /* These options are only relevant for the create-dev-conf command */
-      if (opt_additional_variants != NULL || opt_username != NULL ||
-          opt_password != NULL || opt_skip_reload)
+      if (opt_additional_variants != NULL || opt_skip_reload)
+         return print_usage(context);
+   }
+
+   if (!g_str_equal(argv[1], "create-dev-conf") && !g_str_equal(argv[1], "custom-update")) {
+      /* These options are only relevant for create-dev-conf and custom-update */
+      if (opt_username != NULL || opt_password != NULL)
          return print_usage(context);
    }
 

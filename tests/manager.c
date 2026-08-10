@@ -333,6 +333,8 @@ typedef struct {
    const gchar *request;
    const gchar *branch;
    const gchar *variant;
+   const gchar *username;
+   const gchar *password;
    const gchar *output_prefix;
    gint expected_error_code;
 } CustomUpdateTest;
@@ -551,6 +553,21 @@ static const CustomUpdateTest custom_update_test[] = {
                        "Ensure that the requested image is valid and retry\n",
       .expected_error_code = 1,
    },
+
+   {
+      .title = "Custom update from URL with --username and --password",
+      .request = "https://example.com/update.raucb",
+      .username = "foo",
+      .password = "hunter2",
+      .output_prefix = "Applying custom update from: https://example.com/update.raucb\n",
+   },
+
+   {
+      .title = "--username without --password is rejected",
+      .request = "https://example.com/update.raucb",
+      .username = "foo",
+      .expected_error_code = 64,
+   },
 };
 
 static void
@@ -599,6 +616,16 @@ test_custom_update(Fixture *f, gconstpointer context)
       if (test.variant != NULL) {
          g_ptr_array_add(argv, (gchar *)"--variant");
          g_ptr_array_add(argv, (gchar *)test.variant);
+      }
+
+      if (test.username != NULL) {
+         g_ptr_array_add(argv, (gchar *)"--username");
+         g_ptr_array_add(argv, (gchar *)test.username);
+      }
+
+      if (test.password != NULL) {
+         g_ptr_array_add(argv, (gchar *)"--password");
+         g_ptr_array_add(argv, (gchar *)test.password);
       }
 
       g_ptr_array_add(argv, NULL);

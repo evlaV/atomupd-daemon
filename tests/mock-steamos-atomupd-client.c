@@ -138,6 +138,13 @@ main(int argc, char **argv)
    if (opt_update_version == NULL && opt_update_from_url == NULL)
       return EXIT_FAILURE;
 
+   /* If requested, record the received --update-from-url so tests can inspect it */
+   if (opt_update_from_url != NULL) {
+      const gchar *record_url_file = g_getenv("G_TEST_RECORD_URL_FILE");
+      if (record_url_file != NULL)
+         g_file_set_contents(record_url_file, opt_update_from_url, -1, NULL);
+   }
+
    setbuf(stdout, NULL);
 
    if (g_strcmp0(opt_update_version, MOCK_SUCCESS) == 0) {
