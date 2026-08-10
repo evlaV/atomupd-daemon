@@ -40,7 +40,7 @@
 #include <json-glib/json-glib.h>
 
 /* The version of this interface, exposed in the "Version" property */
-guint ATOMUPD_VERSION = 8;
+guint ATOMUPD_VERSION = 9;
 
 const gchar *AU_CONFIG = "client.conf";
 const gchar *AU_DEV_CONFIG = "client-dev.conf";
@@ -608,6 +608,29 @@ _au_clear_available_updates(AuAtomupd1 *object)
 }
 
 /*
+ * _au_compute_secret_hash:
+ * @username: (not nullable): Username
+ * @password: (not nullable): Password
+ *
+ * Generates the secret hash used on the server for the given @username
+ * and @password.
+ *
+ * Returns: (transfer full): The hash for the username and password.
+ */
+gchar *
+_au_compute_secret_hash(const gchar *username, const gchar *password)
+{
+   g_autofree gchar *secret = NULL;
+
+   g_return_val_if_fail(username != NULL, NULL);
+   g_return_val_if_fail(password != NULL, NULL);
+
+   /* This must follow the same format used on the server side */
+   secret = g_strdup_printf("%s:%s", username, password);
+   return g_compute_checksum_for_string(G_CHECKSUM_SHA256, secret, -1);
+}
+
+/*
  * _au_get_secret_hash_from_config:
  * @client_config: (not nullable): Object that holds the configuration key file
  *
@@ -622,7 +645,6 @@ _au_get_secret_hash_from_config(GKeyFile *client_config)
 {
    g_autofree gchar *username = NULL;
    g_autofree gchar *password = NULL;
-   g_autofree gchar *secret = NULL;
    g_autoptr(GError) local_error = NULL;
 
    g_return_val_if_fail(client_config != NULL, NULL);
@@ -639,9 +661,7 @@ _au_get_secret_hash_from_config(GKeyFile *client_config)
       return NULL;
    }
 
-   /* This must follow the same format used on the server side */
-   secret = g_strdup_printf("%s:%s", username, password);
-   return g_compute_checksum_for_string(G_CHECKSUM_SHA256, secret, -1);
+   return _au_compute_secret_hash(username, password);
 }
 
 /*
@@ -2606,6 +2626,10 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
    AuUpdateStatus current_status;
    const gchar *url = NULL;
    const gchar *update_path = NULL;
+   const gchar *username = NULL;
+   const gchar *password = NULL;
+   const gchar *secret_hash = self->secret_hash;
+   g_autofree gchar *override_hash = NULL;
    g_autofree gchar *update_url = NULL;
    g_autofree gchar *update_url_with_hash = NULL;
 
@@ -2621,6 +2645,8 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
 
    g_variant_lookup(arg_options, "url", "&s", &url);
    g_variant_lookup(arg_options, "update_path", "&s", &update_path);
+   g_variant_lookup(arg_options, "username", "&s", &username);
+   g_variant_lookup(arg_options, "password", "&s", &password);
 
    if ((url == NULL && update_path == NULL) || (url != NULL && update_path != NULL)) {
       g_dbus_method_invocation_return_error(
@@ -2629,14 +2655,28 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
       return;
    }
 
+   if ((username == NULL) != (password == NULL)) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS,
+         "Both 'username' and 'password' must be provided together");
+      return;
+   }
+
+   if (username != NULL) {
+      override_hash = _au_compute_secret_hash(username, password);
+      secret_hash = override_hash;
+   }
+
    if (url == NULL)
       update_url = g_build_filename(self->images_url, update_path, NULL);
    else
       update_url = g_strdup(url);
 
-   /* If we have a secret hash from our config, and we are trying to install an image
-    * under the "dev" directory, we append to the variant part the secret hash as well. */
-   update_url_with_hash = _au_include_secret_hash_data(self->secret_hash, au_atomupd1_get_variant(object), update_url);
+   /* If we have a secret hash (either from our config, or from
+    * 'username'/'password' options), and we are trying to install
+    * an image under the "dev" directory, we append to the variant
+    * part the secret hash as well. */
+   update_url_with_hash = _au_include_secret_hash_data(secret_hash, au_atomupd1_get_variant(object), update_url);
 
    /* For a custom update, buildid and version are unknown */
    au_atomupd1_set_update_build_id(object, NULL);

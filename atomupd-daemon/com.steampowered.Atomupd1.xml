@@ -38,7 +38,7 @@
         Version:
 
         The version of this interface implemented by this object.
-        This file documents version 8 of the interface.
+        This file documents version 9 of the interface.
     -->
     <property name="Version" type="u" access="read"/>
 
@@ -412,6 +412,8 @@
           - 'update_path': specify the relative update path to a bundle. Atomupd will
             automatically prepend $ImagesUrl to create the full URL. This relative path
             can be found in the meta JSON files or the 'builds.json'
+          - 'username': optional HTTP auth username. Must be provided together with 'password'
+          - 'password': optional HTTP auth password. Must be provided together with 'username'
 
         Start to apply a custom update, following the provided @options.
     -->
