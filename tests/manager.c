@@ -1590,6 +1590,159 @@ test_status(Fixture *f, gconstpointer context)
    au_tests_stop_process(daemon_proc);
 }
 
+static void
+test_dev_config_auth_reload(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autoptr(GError) error = NULL;
+   g_autofree gchar *tmp_config_dir = NULL;
+   g_autofree gchar *url_record_path = NULL;
+   gint wait_status = 0;
+   int fd;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   tmp_config_dir = g_dir_make_tmp("atomupd-daemon-prop-XXXXXX", &error);
+   g_assert_no_error(error);
+
+   f->test_envp = g_environ_setenv(f->test_envp, "AU_CONFIG_DIR", tmp_config_dir, TRUE);
+
+   {
+      g_autofree gchar *config_path = NULL;
+      g_autofree gchar *source_config_path = NULL;
+      g_autoptr(GFile) source_file = NULL;
+      g_autoptr(GFile) dest_file = NULL;
+
+      config_path = g_build_filename(tmp_config_dir, "client.conf", NULL);
+      source_config_path = g_build_filename(f->srcdir, "data", "client.conf", NULL);
+      source_file = g_file_new_for_path(source_config_path);
+      dest_file = g_file_new_for_path(config_path);
+      g_file_copy(source_file, dest_file, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL,
+                  &error);
+      g_assert_no_error(error);
+   }
+
+   fd = g_file_open_tmp("atomupd-custom-update-url-XXXXXX", &url_record_path, &error);
+   g_assert_no_error(error);
+   g_assert_cmpint(fd, !=, -1);
+   close(fd);
+   g_unlink(url_record_path);
+
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_RECORD_URL_FILE", url_record_path, TRUE);
+
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, tmp_config_dir,
+                                               f->test_envp, FALSE);
+
+   g_assert_false(g_file_test(url_record_path, G_FILE_TEST_EXISTS));
+
+   /* Persist credentials with --username and --password, with a live reload
+    * so the daemon picks them up immediately */
+   const gchar *spawn_argv[] = {
+      "atomupd-manager", "--session", "create-dev-conf",
+      "--username",      "foo",       "--password",
+      "hunter2",         NULL,
+   };
+
+   g_spawn_sync(NULL, /* working directory */
+                (gchar **)spawn_argv, f->test_envp, G_SPAWN_SEARCH_PATH,
+                NULL, /* child setup */
+                NULL, /* user data */
+                NULL, /* stdout */
+                NULL, /* stderr */
+                &wait_status, &error);
+   g_assert_no_error(error);
+   g_spawn_check_wait_status(wait_status, &error);
+   g_assert_no_error(error);
+
+   /* A custom update with no credentials of its own should still pick up the
+    * persisted secret hash */
+   const gchar *custom_update_argv[] = {
+      "atomupd-manager",
+      "--session",
+      "custom-update",
+      "https://example.com/dev/steamdeck/update.raucb",
+      NULL,
+   };
+
+   g_spawn_sync(NULL, /* working directory */
+                (gchar **)custom_update_argv, f->test_envp, G_SPAWN_SEARCH_PATH,
+                NULL, /* child setup */
+                NULL, /* user data */
+                NULL, /* stdout */
+                NULL, /* stderr */
+                &wait_status, &error);
+   g_assert_no_error(error);
+   g_spawn_check_wait_status(wait_status, &error);
+   g_assert_no_error(error);
+
+   {
+      g_autofree gchar *recorded_url = NULL;
+
+      g_assert_true(g_file_test(url_record_path, G_FILE_TEST_EXISTS));
+      g_file_get_contents(url_record_path, &recorded_url, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(
+         recorded_url, ==,
+         "https://example.com/dev/"
+         "steamdeck_66cd33a8f743a96c03cd87cd823b561963f6fca93703dc19d3d5595086557a53_DO_"
+         "NOT_SHARE_URL/update.raucb");
+   }
+
+   g_unlink(url_record_path);
+
+   /* Persist the same credentials with the --auth shorthand instead, and
+    * confirm the reload picks them up the same way */
+   const gchar *spawn_auth_argv[] = {
+      "atomupd-manager", "--session", "create-dev-conf", "--auth", "foo:hunter2", NULL,
+   };
+
+   g_spawn_sync(NULL, /* working directory */
+                (gchar **)spawn_auth_argv, f->test_envp, G_SPAWN_SEARCH_PATH,
+                NULL, /* child setup */
+                NULL, /* user data */
+                NULL, /* stdout */
+                NULL, /* stderr */
+                &wait_status, &error);
+   g_assert_no_error(error);
+   g_spawn_check_wait_status(wait_status, &error);
+   g_assert_no_error(error);
+
+   g_spawn_sync(NULL, /* working directory */
+                (gchar **)custom_update_argv, f->test_envp, G_SPAWN_SEARCH_PATH,
+                NULL, /* child setup */
+                NULL, /* user data */
+                NULL, /* stdout */
+                NULL, /* stderr */
+                &wait_status, &error);
+   g_assert_no_error(error);
+   g_spawn_check_wait_status(wait_status, &error);
+   g_assert_no_error(error);
+
+   {
+      g_autofree gchar *recorded_url = NULL;
+
+      g_assert_true(g_file_test(url_record_path, G_FILE_TEST_EXISTS));
+      g_file_get_contents(url_record_path, &recorded_url, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(
+         recorded_url, ==,
+         "https://example.com/dev/"
+         "steamdeck_66cd33a8f743a96c03cd87cd823b561963f6fca93703dc19d3d5595086557a53_DO_"
+         "NOT_SHARE_URL/update.raucb");
+   }
+
+   au_tests_stop_process(daemon_proc);
+
+   g_unlink(url_record_path);
+
+   if (!rm_rf(tmp_config_dir))
+      g_debug("Unable to remove temp directory: %s", tmp_config_dir);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1611,6 +1764,7 @@ main(int argc, char **argv)
    test_add("/manager/update_no_id", test_update_no_id);
    test_add("/manager/cancel_update_status", test_cancel_update_status);
    test_add("/manager/status", test_status);
+   test_add("/manager/dev_config_auth_reload", test_dev_config_auth_reload);
 
    ret = g_test_run();
    return ret;
