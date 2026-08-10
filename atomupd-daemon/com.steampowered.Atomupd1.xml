@@ -417,6 +417,8 @@
             relative path can be found in the meta JSON files or the 'builds.json'.
             If this option is not provided, it will be used the RAUC's default store
             location.
+          - 'username': optional HTTP auth username. Must be provided together with 'password'
+          - 'password': optional HTTP auth password. Must be provided together with 'username'
 
         Start to apply a custom update, following the provided @options.
     -->

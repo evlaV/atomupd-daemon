@@ -3341,6 +3341,116 @@ test_remote_info_hash(Fixture *f, gconstpointer context)
       g_debug("Unable to remove temp directory: %s", tmp_config_dir);
 }
 
+static void
+test_custom_update_auth(Fixture *f, gconstpointer context)
+{
+   g_autoptr(GSubprocess) daemon_proc = NULL;
+   g_autoptr(GDBusConnection) bus = NULL;
+   g_autofree gchar *url_record_path = NULL;
+   g_autofree gchar *recorded_url = NULL;
+   g_autoptr(GError) error = NULL;
+   int fd;
+
+   bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+
+   _skip_if_daemon_is_running(bus, NULL);
+
+   fd = g_file_open_tmp("atomupd-custom-update-url-XXXXXX", &url_record_path, &error);
+   g_assert_no_error(error);
+   g_assert_cmpint(fd, !=, -1);
+   close(fd);
+   g_unlink(url_record_path);
+
+   f->test_envp =
+      g_environ_setenv(f->test_envp, "G_TEST_RECORD_URL_FILE", url_record_path, TRUE);
+
+   /* No saved username/password here, so the hash below can only come
+    * from this request */
+   daemon_proc = au_tests_start_daemon_service(bus, f->manifest_path, f->conf_dir,
+                                               f->test_envp, FALSE);
+
+   g_debug("Starting a custom update with per-request username/password");
+   {
+      GVariantBuilder builder;
+      GVariant *params; /* floating */
+
+      g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+      g_variant_builder_add(
+         &builder, "{sv}", "url",
+         g_variant_new_string("https://example.com/dev/steamdeck/update.raucb"));
+      g_variant_builder_add(&builder, "{sv}", "username", g_variant_new_string("foo"));
+      g_variant_builder_add(&builder, "{sv}", "password",
+                            g_variant_new_string("hunter2"));
+      params = g_variant_builder_end(&builder);
+
+      PropertyWaitData wait = { .property = "UpdateStatus",
+                                .target   = AU_UPDATE_STATUS_SUCCESSFUL };
+      guint sub_id = _subscribe_property_change(bus, &wait);
+      _send_atomupd_message_with_null_reply(bus, "StartCustomUpdate", "(@a{sv})", params);
+      _wait_for_property_change(bus, sub_id, &wait);
+
+      g_assert_true(g_file_test(url_record_path, G_FILE_TEST_EXISTS));
+      g_file_get_contents(url_record_path, &recorded_url, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(
+         recorded_url, ==,
+         "https://example.com/dev/"
+         "steamdeck_66cd33a8f743a96c03cd87cd823b561963f6fca93703dc19d3d5595086557a53_DO_"
+         "NOT_SHARE_URL/update.raucb");
+
+      g_unlink(url_record_path);
+      g_clear_pointer(&recorded_url, g_free);
+   }
+
+   g_debug("A subsequent request without credentials must not reuse the previous ones");
+   {
+      GVariantBuilder builder;
+      GVariant *params; /* floating */
+
+      g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+      g_variant_builder_add(
+         &builder, "{sv}", "url",
+         g_variant_new_string("https://example.com/dev/steamdeck/update.raucb"));
+      params = g_variant_builder_end(&builder);
+
+      PropertyWaitData wait = { .property = "UpdateStatus",
+                                .target   = AU_UPDATE_STATUS_SUCCESSFUL };
+      guint sub_id = _subscribe_property_change(bus, &wait);
+      _send_atomupd_message_with_null_reply(bus, "StartCustomUpdate", "(@a{sv})", params);
+      _wait_for_property_change(bus, sub_id, &wait);
+
+      g_assert_true(g_file_test(url_record_path, G_FILE_TEST_EXISTS));
+      g_file_get_contents(url_record_path, &recorded_url, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(recorded_url, ==, "https://example.com/dev/steamdeck/update.raucb");
+   }
+
+   g_debug("Username without a password is rejected");
+   {
+      GVariantBuilder builder;
+      GVariant *params; /* floating */
+      g_autoptr(GVariant) reply = NULL;
+      g_autofree gchar *reply_str = NULL;
+
+      g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+      g_variant_builder_add(
+         &builder, "{sv}", "url",
+         g_variant_new_string("https://example.com/dev/steamdeck/update.raucb"));
+      g_variant_builder_add(&builder, "{sv}", "username", g_variant_new_string("foo"));
+      params = g_variant_builder_end(&builder);
+
+      reply = _send_atomupd_message(bus, "StartCustomUpdate", "(@a{sv})", params);
+      g_variant_get(reply, "(s)", &reply_str);
+
+      g_assert_cmpstr(reply_str, ==,
+                      "Both 'username' and 'password' must be provided together");
+   }
+
+   au_tests_stop_process(daemon_proc);
+
+   g_unlink(url_record_path);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -3380,6 +3490,7 @@ main(int argc, char **argv)
             test_query_updates_eol_variant_hash);
    test_add("/daemon/remote_info_hash", test_remote_info_hash);
    test_add("/daemon/simulate_update", test_simulate_update);
+   test_add("/daemon/custom_update_auth", test_custom_update_auth);
 
    ret = g_test_run();
    return ret;
