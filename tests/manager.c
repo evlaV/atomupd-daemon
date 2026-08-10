@@ -335,6 +335,7 @@ typedef struct {
    const gchar *variant;
    const gchar *username;
    const gchar *password;
+   const gchar *auth;
    const gchar *output_prefix;
    gint expected_error_code;
 } CustomUpdateTest;
@@ -568,6 +569,28 @@ static const CustomUpdateTest custom_update_test[] = {
       .username = "foo",
       .expected_error_code = 64,
    },
+
+   {
+      .title = "Custom update from URL with --auth shorthand",
+      .request = "https://example.com/update.raucb",
+      .auth = "foo:hunter2",
+      .output_prefix = "Applying custom update from: https://example.com/update.raucb\n",
+   },
+
+   {
+      .title = "--auth without a colon is rejected",
+      .request = "https://example.com/update.raucb",
+      .auth = "foo",
+      .expected_error_code = 64,
+   },
+
+   {
+      .title = "--auth combined with --username is rejected",
+      .request = "https://example.com/update.raucb",
+      .username = "foo",
+      .auth = "foo:hunter2",
+      .expected_error_code = 64,
+   },
 };
 
 static void
@@ -626,6 +649,11 @@ test_custom_update(Fixture *f, gconstpointer context)
       if (test.password != NULL) {
          g_ptr_array_add(argv, (gchar *)"--password");
          g_ptr_array_add(argv, (gchar *)test.password);
+      }
+
+      if (test.auth != NULL) {
+         g_ptr_array_add(argv, (gchar *)"--auth");
+         g_ptr_array_add(argv, (gchar *)test.auth);
       }
 
       g_ptr_array_add(argv, NULL);
