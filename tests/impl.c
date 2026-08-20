@@ -1397,7 +1397,7 @@ test_progress_default(Fixture *f, gconstpointer context)
 
       g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
       g_variant_builder_add(&builder, "{sv}", "url",
-                            g_variant_new_string("https://example.com/update.raucb"));
+                            g_variant_new_string("https://example.com/20260501.9000/update.raucb"));
       params = g_variant_builder_end(&builder);
 
       PropertyWaitData wait = { .property = "UpdateStatus",

@@ -1,3 +1,3 @@
 [
-    {"version": "3.10.0", "buildid": "20260325.500", "branch": "stable", "update_path": "steamos/holo/3.10.0/amd64/steamos-holo-20260325.500-3.10.0-amd64-steamdeck.raucb"}
+    {"version": "3.10.0", "buildid": "20260325.500", "branch": "stable", "update_path": "steamdeck/20260325.500/steamdeck-20260325.500-3.10.0.raucb", "chunks_store_path": "steamdeck/chunks.castr"}
 ]

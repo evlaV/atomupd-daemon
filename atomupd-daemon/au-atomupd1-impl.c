@@ -2603,11 +2603,15 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
    AuAtomupd1Impl *self = (AuAtomupd1Impl *)object;
    g_autoptr(GPtrArray) argv = NULL;
    g_autoptr(GError) error = NULL;
+   g_autoptr(GUri) url_parsed = NULL;
    AuUpdateStatus current_status;
    const gchar *url = NULL;
    const gchar *update_path = NULL;
+   const gchar *chunks_store_path = NULL;
    g_autofree gchar *update_url = NULL;
    g_autofree gchar *update_url_with_hash = NULL;
+   g_autofree gchar *chunks_store_url = NULL;
+   g_autofree gchar *chunks_store_url_with_hash = NULL;
 
    current_status = au_atomupd1_get_update_status(object);
    if (current_status == AU_UPDATE_STATUS_IN_PROGRESS ||
@@ -2621,6 +2625,7 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
 
    g_variant_lookup(arg_options, "url", "&s", &url);
    g_variant_lookup(arg_options, "update_path", "&s", &update_path);
+   g_variant_lookup(arg_options, "chunks_store_path", "&s", &chunks_store_path);
 
    if ((url == NULL && update_path == NULL) || (url != NULL && update_path != NULL)) {
       g_dbus_method_invocation_return_error(
@@ -2634,9 +2639,27 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
    else
       update_url = g_strdup(url);
 
+   url_parsed = g_uri_parse(update_url, G_URI_FLAGS_NONE, NULL);
+   if (url_parsed == NULL) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS,
+         "The update URL doesn't seem to be of a valid format");
+      return;
+   }
+
+   if (chunks_store_path)
+      chunks_store_url = g_build_filename(self->images_url, chunks_store_path, NULL);
+   else
+      g_debug("We don't have a specific chunks store location, using the default RAUC "
+              "behavior");
+
    /* If we have a secret hash from our config, and we are trying to install an image
     * under the "dev" directory, we append to the variant part the secret hash as well. */
    update_url_with_hash = _au_include_secret_hash_data(self->secret_hash, au_atomupd1_get_variant(object), update_url);
+   if (chunks_store_url != NULL) {
+      chunks_store_url_with_hash = _au_include_secret_hash_data(
+         self->secret_hash, au_atomupd1_get_variant(object), chunks_store_url);
+   }
 
    /* For a custom update, buildid and version are unknown */
    au_atomupd1_set_update_build_id(object, NULL);
@@ -2648,6 +2671,11 @@ au_start_custom_update_authorized_cb(AuAtomupd1 *object,
    g_ptr_array_add(argv, g_strdup(self->config_path));
    g_ptr_array_add(argv, g_strdup("--update-from-url"));
    g_ptr_array_add(argv, g_steal_pointer(&update_url_with_hash));
+
+   if (chunks_store_url_with_hash != NULL) {
+      g_ptr_array_add(argv, g_strdup("--chunks-store-url"));
+      g_ptr_array_add(argv, g_steal_pointer(&chunks_store_url_with_hash));
+   }
 
    if (g_debug_controller_get_debug_enabled(self->debug_controller))
       g_ptr_array_add(argv, g_strdup("--debug"));

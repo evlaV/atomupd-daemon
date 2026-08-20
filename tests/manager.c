@@ -335,13 +335,22 @@ typedef struct {
    const gchar *variant;
    const gchar *output_prefix;
    gint expected_error_code;
+   gboolean store_chunks_missing;
 } CustomUpdateTest;
 
 static const CustomUpdateTest custom_update_test[] = {
    {
       .title = "Custom update from URL that is expected to complete in 1.5 seconds",
-      .request = "https://example.com/os.raucb",
-      .output_prefix = "Applying custom update from: https://example.com/os.raucb\n",
+      .request = "https://example.com/20260501.9000/os.raucb",
+      .output_prefix = "Applying custom update from: https://example.com/20260501.9000/os.raucb\n",
+      .store_chunks_missing = TRUE,
+   },
+
+   {
+      .title = "Custom update from local URL",
+      .request = "http://192.168.10.10/os.raucb",
+      .output_prefix = "Applying custom update from: http://192.168.10.10/os.raucb\n",
+      .store_chunks_missing = TRUE,
    },
 
    {
@@ -374,10 +383,13 @@ static const CustomUpdateTest custom_update_test[] = {
    },
 
    {
+      /* 20240104.1 simulates an old builds.json that still doesn't provide the expected
+       * chunks_store_path value. In this case we'll just use RAUC's default search path */
       .title = "Requesting a specific version with branch filter",
       .request = "3.6.5",
       .branch = "stable",
       .output_prefix = "ID: 20240104.1 - version: 3.6.5 - branch: stable - variant: steamdeck\n",
+      .store_chunks_missing = TRUE,
    },
 
    {
@@ -586,8 +598,6 @@ test_custom_update(Fixture *f, gconstpointer context)
       g_ptr_array_add(argv, (gchar *)"--session");
       g_ptr_array_add(argv, (gchar *)"custom-update");
 
-
-
       if (test.request != NULL)
          g_ptr_array_add(argv, (gchar *)test.request);
 
@@ -618,6 +628,13 @@ test_custom_update(Fixture *f, gconstpointer context)
          g_assert_no_error(error);
          g_assert_true(g_str_has_suffix(output, "Update completed\n"));
          g_assert_true(g_str_has_prefix(output, test.output_prefix));
+
+         /* When calling steamos-atomupd-client with the --chunks-store-url option we expect
+          * to have this specific "55.55%" marker. */
+         if (test.store_chunks_missing)
+            g_assert_false(g_strrstr(output, "55.55%"));
+         else
+            g_assert_true(g_strrstr(output, "55.55%"));
 
          update_status =
          _au_execute_manager("get-update-status", NULL, FALSE, f->test_envp, NULL);

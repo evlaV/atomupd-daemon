@@ -41,6 +41,7 @@ static gchar *opt_config = NULL;
 static gchar *opt_manifest = NULL;
 static gchar *opt_update_file = NULL;
 static gchar *opt_update_from_url = NULL;
+static gchar *opt_chunks_store_url = NULL;
 static gchar *opt_update_version = NULL;
 static gchar *opt_variant = NULL;
 static gchar *opt_branch = NULL;
@@ -58,6 +59,8 @@ static GOptionEntry options[] = {
      NULL, "PATH" },
    { "update-from-url", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_update_from_url,
      NULL, "URL" },
+   { "chunks-store-url", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_chunks_store_url,
+NULL, "URL" },
    { "update-version", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_update_version,
      NULL, NULL },
    { "variant", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &opt_variant, NULL, NULL },
@@ -180,6 +183,22 @@ main(int argc, char **argv)
 
       return EXIT_SUCCESS;
    } else if (opt_update_from_url != NULL) {
+      if (opt_chunks_store_url != NULL) {
+         if (!g_str_has_prefix(opt_chunks_store_url, "http") || !g_str_has_suffix(opt_chunks_store_url, "/chunks.castr"))
+            return EXIT_FAILURE;
+
+         /* Simulates an update that successfully completes.
+          * Print a specific 55.55% value to make it easier for the automated tests to
+          * ensure we went through this code path */
+         printf("0.00%%\n");
+         g_usleep(delay);
+         printf("55.55%% 00m55s\n");
+         g_usleep(delay);
+         printf("100%%\n");
+
+         return EXIT_SUCCESS;
+      }
+
       /* Simulates an update that successfully completes */
       printf("0.00%%\n");
       g_usleep(delay);
