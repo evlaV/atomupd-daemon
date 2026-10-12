@@ -279,12 +279,9 @@ static const CheckUpdatesTest updates_test[] =
 
   {
     .update_json = "update_eol_variant.json",
-    /* steamdeck has been marked as EOL, we expect the client to automatically
-     * switch to the suggested steamdeck-replacement */
-    .tracked_variant = "steamdeck-replacement",
-    /* When switching to the new variant we expect that info to be stored in the
-     * preferences file as well */
-    .preferences_updated = TRUE,
+    /* steamdeck has been marked as EOL, we ignore the EOL message and keep the steamdeck variant. */
+    .tracked_variant = "steamdeck",
+    .preferences_updated = FALSE,
     .updates_available =
     {
       {
@@ -3083,7 +3080,8 @@ test_query_updates_eol_variant_hash(Fixture *f, gconstpointer context)
                                                f->test_envp, FALSE);
    _call_check_for_updates(bus, NULL, NULL);
 
-   _check_string_property(bus, "Variant", "steamdeck-replacement");
+   /* We ignore the EOL message and keep the steamdeck variant. */
+   _check_string_property(bus, "Variant", "steamdeck");
 
    g_file_get_contents(f->updates_json, &updates_json, NULL, &error);
    g_assert_no_error(error);

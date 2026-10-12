@@ -1303,6 +1303,7 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
    g_autoptr(GError) error = NULL;
    g_autofree gchar *output = NULL;
    g_autofree gchar *output_with_hash = NULL;
+   const gchar *proposed_variant = NULL;
    const gchar *updated_build_id = NULL;
    gsize out_length;
    AuUpdateStatus current_status;
@@ -1441,24 +1442,21 @@ on_query_completed(GPid pid, gint wait_status, gpointer user_data)
       return;
    }
 
-   if (replacement_eol_variant != NULL) {
-      g_debug("Switching from the EOL variant %s to its replacement %s",
-              au_atomupd1_get_variant(data->req->object), replacement_eol_variant);
+   /* Ignore the EOL message from the server and do not update the tracked variant.
+    * In post-install we now set the Variant from the destination manifest, so after
+    * a reboot we will track this new variant by default anyway. */
+   if (replacement_eol_variant != NULL)
+      g_debug("The tracked variant %s is EOL. Keeping it unchanged.",
+              au_atomupd1_get_variant(data->req->object));
 
-      if (!_au_switch_to_variant(data->req->object, replacement_eol_variant, FALSE,
-                                 &error)) {
-         g_dbus_method_invocation_return_error(
-            g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-            "An error occurred while switching to the new variant '%s': %s",
-            replacement_eol_variant, error->message);
-         return;
-      }
-   }
+   proposed_variant = replacement_eol_variant != NULL
+                         ? replacement_eol_variant
+                         : au_atomupd1_get_variant((AuAtomupd1 *)self);
 
    /* If we have a secret hash from our config, and the server is proposing an image under
     * the "dev" directory, we append the secret hash to the variant part as well. */
    output_with_hash = _au_include_secret_hash_data(
-      self->secret_hash, au_atomupd1_get_variant((AuAtomupd1 *)self), output);
+      self->secret_hash, proposed_variant, output);
 
    if (!g_file_replace_contents(self->updates_json_file, output_with_hash,
                                 strlen(output_with_hash), NULL, FALSE, G_FILE_CREATE_NONE,
@@ -3922,19 +3920,12 @@ au_atomupd1_impl_new(const gchar *config_directory,
                                                     available_later);
          }
 
-         if (replacement_eol_variant != NULL) {
-            g_debug("Switching from the EOL variant %s to its replacement %s",
-                    au_atomupd1_get_variant((AuAtomupd1 *)atomupd),
-                    replacement_eol_variant);
-
-            if (!_au_switch_to_variant((AuAtomupd1 *)atomupd, replacement_eol_variant,
-                                       FALSE, &local_error)) {
-               g_warning("An error occurred while switching to the new variant '%s': %s",
-                         replacement_eol_variant, local_error->message);
-               g_clear_error(&local_error);
-               _au_clear_available_updates((AuAtomupd1 *)atomupd);
-            }
-         }
+         /* Ignore the EOL message from the server and do not update the tracked variant.
+          * In post-install we now set the Variant from the destination manifest, so after
+          * a reboot we will track this new variant by default anyway. */
+         if (replacement_eol_variant != NULL)
+            g_debug("The tracked variant %s is EOL. Keeping it unchanged.",
+                    au_atomupd1_get_variant((AuAtomupd1 *)atomupd));
       }
    }
 
