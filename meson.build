@@ -23,7 +23,7 @@
 
 project(
   'atomupd-daemon', 'c',
-  version : '0.20260907.1',
+  version : '0.20261110.0',
   default_options: [
     'c_std=c99',
     'warning_level=2',
@@ -33,7 +33,7 @@ project(
 
 api_major = '0'
 abi_major = '0'
-abi_minor = '20260907.1'
+abi_minor = '20261110.0'
 
 version = meson.project_version()
 
