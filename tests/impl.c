@@ -2880,6 +2880,7 @@ test_builds_list(Fixture *f, gconstpointer context)
 
       reply = _call_get_builds(bus, "missing_variant");
       g_assert_true(g_str_has_prefix(reply, "Failed to download the builds list"));
+      g_assert_nonnull(strstr(reply, "(HTTP 404)"));
    }
 
    g_debug("Request the default variant");
