@@ -2811,7 +2811,7 @@ test_branch_dev_keys(Fixture *f, gconstpointer context)
 }
 
 static gchar *
-_call_get_builds(GDBusConnection *bus, const gchar *variant)
+_call_get_builds(GDBusConnection *bus, const gchar *variant, gboolean oobe)
 {
    g_autoptr(GVariant) reply = NULL;
    g_autofree gchar *reply_str = NULL;
@@ -2821,6 +2821,8 @@ _call_get_builds(GDBusConnection *bus, const gchar *variant)
    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
    if (variant != NULL)
       g_variant_builder_add(&builder, "{sv}", "variant", g_variant_new_string(variant));
+   if (oobe)
+      g_variant_builder_add(&builder, "{sv}", "oobe", g_variant_new_boolean(TRUE));
    params = g_variant_builder_end(&builder);
 
    reply = _send_atomupd_message(bus, "GetBuilds", "(@a{sv})", params);
@@ -2859,7 +2861,7 @@ test_builds_list(Fixture *f, gconstpointer context)
       g_autofree gchar *server_content = NULL;
       g_autofree gchar *server_file = NULL;
 
-      reply = _call_get_builds(bus, "steamtest");
+      reply = _call_get_builds(bus, "steamtest", FALSE);
 
       g_debug("Called get builds");
 
@@ -2878,7 +2880,7 @@ test_builds_list(Fixture *f, gconstpointer context)
    {
       g_autofree gchar *reply = NULL;
 
-      reply = _call_get_builds(bus, "missing_variant");
+      reply = _call_get_builds(bus, "missing_variant", FALSE);
       g_assert_true(g_str_has_prefix(reply, "Failed to download the builds list"));
       g_assert_nonnull(strstr(reply, "(HTTP 404)"));
    }
@@ -2890,7 +2892,7 @@ test_builds_list(Fixture *f, gconstpointer context)
       g_autofree gchar *server_content = NULL;
       g_autofree gchar *server_file = NULL;
 
-      reply = _call_get_builds(bus, NULL);
+      reply = _call_get_builds(bus, NULL, FALSE);
 
       g_assert_true(g_str_has_suffix(reply, "builds-steamdeck.json"));
 
@@ -2901,6 +2903,34 @@ test_builds_list(Fixture *f, gconstpointer context)
       g_file_get_contents(reply, &local_content, NULL, &error);
       g_assert_no_error(error);
       g_assert_cmpstr(local_content, ==, server_content);
+   }
+
+   g_debug("Request the OOBE builds list of the default variant");
+   {
+      g_autofree gchar *reply = NULL;
+      g_autofree gchar *local_content = NULL;
+      g_autofree gchar *server_content = NULL;
+      g_autofree gchar *server_file = NULL;
+
+      reply = _call_get_builds(bus, NULL, TRUE);
+
+      g_assert_true(g_str_has_suffix(reply, "builds_oobe-steamdeck.json"));
+
+      server_file = g_build_filename(local_server_meta_path_prefix, "steamdeck",
+                                     "builds_oobe.json", NULL);
+      g_file_get_contents(server_file, &server_content, NULL, &error);
+      g_assert_no_error(error);
+      g_file_get_contents(reply, &local_content, NULL, &error);
+      g_assert_no_error(error);
+      g_assert_cmpstr(local_content, ==, server_content);
+   }
+
+   g_debug("Request the OOBE builds list of a variant that doesn't have any");
+   {
+      g_autofree gchar *reply = NULL;
+
+      reply = _call_get_builds(bus, "steamtest", TRUE);
+      g_assert_cmpstr(reply, ==, "There are no OOBE builds for the variant 'steamtest'");
    }
 
    g_debug("Check that the existing JSON list doesn't get re-downloaded each time");
@@ -2916,7 +2946,7 @@ test_builds_list(Fixture *f, gconstpointer context)
       g_file_set_contents(existing_json, old_local_content, -1, &error);
       g_assert_no_error(error);
 
-      reply = _call_get_builds(bus, "steamdeck");
+      reply = _call_get_builds(bus, "steamdeck", FALSE);
 
       g_assert_cmpstr(reply, ==, existing_json);
 
@@ -2965,7 +2995,7 @@ test_builds_list_with_auth(Fixture *f, gconstpointer context)
       g_autofree gchar *server_content = NULL;
       g_autofree gchar *server_file = NULL;
 
-      reply = _call_get_builds(bus, "steamdeck");
+      reply = _call_get_builds(bus, "steamdeck", FALSE);
 
       server_file = g_build_filename(
          local_server_meta_path_prefix,
