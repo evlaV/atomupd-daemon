@@ -990,6 +990,7 @@ typedef struct {
    const gchar *variant;
    const gchar *branch;
    const gchar *output;
+   gboolean oobe;
    gboolean expect_error;
 } ListBuildsTest;
 
@@ -1046,6 +1047,27 @@ static const ListBuildsTest list_builds_test[] = {
       .variant = "missing",
       .expect_error = TRUE,
    },
+
+   {
+      .oobe = TRUE,
+      .output = "Available steamdeck OOBE builds:\n"
+                "ID: 20240110.1 - version: 3.7.2 - branch: stable\n"
+                "ID: 20250210.1 - version: 3.8.0 - branch: beta\n",
+   },
+
+   {
+      .oobe = TRUE,
+      .branch = "beta",
+      .output = "Available steamdeck OOBE builds:\n"
+                "ID: 20250210.1 - version: 3.8.0 - branch: beta\n",
+   },
+
+   {
+      /* steamtest doesn't have any OOBE builds */
+      .variant = "steamtest",
+      .oobe = TRUE,
+      .expect_error = TRUE,
+   },
 };
 
 static void
@@ -1089,6 +1111,9 @@ test_list_builds(Fixture *f, gconstpointer context)
          g_ptr_array_add(argv, (gchar *)"--branch");
          g_ptr_array_add(argv, (gchar *)test.branch);
       }
+
+      if (test.oobe)
+         g_ptr_array_add(argv, (gchar *)"--oobe");
 
       g_ptr_array_add(argv, NULL);
 

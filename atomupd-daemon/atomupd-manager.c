@@ -82,6 +82,7 @@ static gchar *opt_auth = NULL;
 
 static gchar *opt_branch = NULL;
 static gchar *opt_variant = NULL;
+static gboolean opt_oobe = FALSE;
 
 static GOptionEntry options[] = {
    { "session", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &opt_session,
@@ -116,6 +117,8 @@ static GOptionEntry create_list_builds_options[] = {
      "List builds for this specific variant. If omitted, builds for the currently "
      "tracked variant will be listed",
      NULL },
+   { "oobe", '\0', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &opt_oobe,
+     "List only the OOBE builds", NULL },
    { NULL }
 };
 
@@ -830,6 +833,7 @@ update_command(G_GNUC_UNUSED GOptionContext *context, GDBusConnection *bus, cons
 static gchar *
 get_builds_list_path(GDBusConnection *bus,
                      const gchar *requested_variant,
+                     gboolean oobe,
                      gchar **variant_out,
                      GError **error)
 {
@@ -853,6 +857,8 @@ get_builds_list_path(GDBusConnection *bus,
    }
 
    g_variant_builder_add(&builder, "{sv}", "variant", g_variant_new_string(variant));
+   if (oobe)
+      g_variant_builder_add(&builder, "{sv}", "oobe", g_variant_new_boolean(TRUE));
 
    if (!_send_atomupd_message(bus, "GetBuilds", g_variant_new("(a{sv})", &builder),
                               &reply, error))
@@ -1024,7 +1030,7 @@ custom_update_command(GOptionContext *context,
          }
       }
 
-      builds_list_path = get_builds_list_path(bus, opt_variant, &variant, &error);
+      builds_list_path = get_builds_list_path(bus, opt_variant, FALSE, &variant, &error);
       if (builds_list_path == NULL) {
          g_print("An error occurred while getting the list of builds: %s\n",
                  error->message);
@@ -1264,7 +1270,7 @@ list_builds(G_GNUC_UNUSED GOptionContext *context,
    JsonArray *json_array = NULL; /* borrowed */
    guint json_length;
 
-   builds_list_path = get_builds_list_path(bus, opt_variant, &variant, &error);
+   builds_list_path = get_builds_list_path(bus, opt_variant, opt_oobe, &variant, &error);
    if (builds_list_path == NULL) {
       g_print("An error occurred while getting the list of builds: %s\n", error->message);
       return EXIT_FAILURE;
@@ -1280,7 +1286,7 @@ list_builds(G_GNUC_UNUSED GOptionContext *context,
    json_array = json_node_get_array(json_node);
    json_length = json_array_get_length(json_array);
 
-   printf("Available %s builds:\n", variant);
+   printf("Available %s%s builds:\n", variant, opt_oobe ? " OOBE" : "");
 
    for (gsize i = 0; i < json_length; i++) {
       const gchar *branch;
@@ -1883,6 +1889,12 @@ main(int argc, char *argv[])
    if (!g_str_equal(argv[1], "list-builds") && !g_str_equal(argv[1], "custom-update")) {
       /* These options are only relevant for list-builds and custom-update */
       if (opt_variant != NULL || opt_branch != NULL)
+         return print_usage(context);
+   }
+
+   if (!g_str_equal(argv[1], "list-builds")) {
+      /* This option is only relevant for the list-builds command */
+      if (opt_oobe)
          return print_usage(context);
    }
 
