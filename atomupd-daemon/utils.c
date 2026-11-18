@@ -151,6 +151,8 @@ _au_download_thread_func(GTask *task,
 
    if (r != CURLE_OK) {
       g_autofree gchar *sanitized_url = NULL;
+      g_autofree gchar *http_status = NULL;
+      glong response_code = 0;
 
       g_unlink(tmp_file);
 
@@ -159,8 +161,14 @@ _au_download_thread_func(GTask *task,
       if (sanitized_url == NULL)
          return g_task_return_error(task, g_steal_pointer(&error));
 
-      g_set_error(&error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
-                  "The download from '%s' failed", sanitized_url);
+      curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+      if (response_code > 0)
+         http_status = g_strdup_printf(" (HTTP %ld)", response_code);
+
+      g_set_error(&error, G_IO_ERROR,
+                  response_code == 404 ? G_IO_ERROR_NOT_FOUND : G_IO_ERROR_CANCELLED,
+                  "The download from '%s' failed: %s%s", sanitized_url,
+                  curl_easy_strerror(r), http_status ? http_status : "");
       return g_task_return_error(task, g_steal_pointer(&error));
    }
 

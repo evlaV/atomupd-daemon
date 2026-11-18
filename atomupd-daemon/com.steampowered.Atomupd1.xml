@@ -38,7 +38,7 @@
         Version:
 
         The version of this interface implemented by this object.
-        This file documents version 9 of the interface.
+        This file documents version 10 of the interface.
     -->
     <property name="Version" type="u" access="read"/>
 
@@ -503,6 +503,7 @@
         GetBuilds:
         @options: Vardict with configuration options. Currently, the available options are:
           - 'variant': request builds for a specific variant.
+          - 'oobe' (b): if true, request the list of the OOBE builds instead.
         @path: Where the JSON builds list is stored
 
         Returns the path to a file containing the OS builds list as JSON.

@@ -40,12 +40,13 @@
 #include <json-glib/json-glib.h>
 
 /* The version of this interface, exposed in the "Version" property */
-guint ATOMUPD_VERSION = 9;
+guint ATOMUPD_VERSION = 10;
 
 const gchar *AU_CONFIG = "client.conf";
 const gchar *AU_DEV_CONFIG = "client-dev.conf";
 const gchar *AU_REMOTE_INFO = "remote-info.conf";
 const gchar *AU_BUILDS_LIST = "builds.json";
+const gchar *AU_BUILDS_OOBE_LIST = "builds_oobe.json";
 const gchar *AU_DEFAULT_MANIFEST = "/etc/steamos-atomupd/manifest.json";
 const gchar *AU_DEFAULT_UPDATE_JSON = "/run/atomupd-daemon/atomupd-updates.json";
 const gchar *AU_DEFAULT_TRUSTED_KEYS = "/etc/rauc/trusted_keys";
@@ -117,6 +118,8 @@ typedef struct {
 typedef struct {
    RequestData *req;
    gchar *builds_path;
+   gchar *variant;
+   gboolean oobe;
 } BuildsData;
 
 typedef struct {
@@ -188,6 +191,7 @@ _builds_data_free(BuildsData *self)
    _request_data_free(self->req);
 
    g_free(self->builds_path);
+   g_free(self->variant);
 
    g_slice_free(BuildsData, self);
 }
@@ -1784,6 +1788,7 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
             g_dbus_method_invocation_return_error(
                g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
                "The argument '%s' must have a boolean value", key);
+            return;
          }
          continue;
       }
@@ -3355,6 +3360,11 @@ _au_get_builds_done(GObject *source_object, GAsyncResult *result, gpointer user_
       g_debug("Builds list file successfully downloaded");
       au_atomupd1_complete_get_builds(
          data->req->object, g_steal_pointer(&data->req->invocation), data->builds_path);
+   } else if (data->oobe && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) {
+      g_dbus_method_invocation_return_error(
+         g_steal_pointer(&data->req->invocation), G_DBUS_ERROR,
+         G_DBUS_ERROR_FILE_NOT_FOUND, "There are no OOBE builds for the variant '%s'",
+         data->variant);
    } else {
       g_dbus_method_invocation_return_error(
          g_steal_pointer(&data->req->invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
@@ -3380,6 +3390,7 @@ au_get_builds_authorized_cb(AuAtomupd1 *object,
    GVariant *value = NULL;
    const gchar *variant = NULL;
    const gchar *au_run_path = NULL;
+   gboolean oobe = FALSE;
    GVariantIter iter;
    AuAtomupd1Impl *self = AU_ATOMUPD1_IMPL(object);
 
@@ -3397,6 +3408,19 @@ au_get_builds_authorized_cb(AuAtomupd1 *object,
             g_dbus_method_invocation_return_error(
                g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
                "The argument '%s' must have a string value", key);
+            return;
+         }
+         continue;
+      }
+
+      if (g_str_equal(key, "oobe")) {
+         if (g_variant_is_of_type(value, G_VARIANT_TYPE_BOOLEAN)) {
+            oobe = g_variant_get_boolean(value);
+         } else {
+            g_dbus_method_invocation_return_error(
+               g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+               "The argument '%s' must have a boolean value", key);
+            return;
          }
          continue;
       }
@@ -3426,7 +3450,8 @@ au_get_builds_authorized_cb(AuAtomupd1 *object,
    if (au_run_path == NULL)
       au_run_path = AU_RUN_PATH;
 
-   builds_filename = g_strdup_printf("builds-%s.json", variant);
+   builds_filename =
+      g_strdup_printf("%s-%s.json", oobe ? "builds_oobe" : "builds", variant);
    builds_path = g_build_filename(au_run_path, builds_filename, NULL);
 
    if (g_file_test(builds_path, G_FILE_TEST_EXISTS)) {
@@ -3435,15 +3460,17 @@ au_get_builds_authorized_cb(AuAtomupd1 *object,
       return;
    }
 
-   builds_url =
-      g_build_filename(self->meta_url, self->release, self->product, self->architecture,
-                       variant_url_part, AU_BUILDS_LIST, NULL);
+   builds_url = g_build_filename(self->meta_url, self->release, self->product,
+                                 self->architecture, variant_url_part,
+                                 oobe ? AU_BUILDS_OOBE_LIST : AU_BUILDS_LIST, NULL);
 
    http_proxy = _au_get_http_proxy_address_and_port(object);
 
    builds_data->req->invocation = g_steal_pointer(&invocation);
    builds_data->req->object = g_object_ref(object);
    builds_data->builds_path = g_strdup(builds_path);
+   builds_data->variant = g_strdup(variant);
+   builds_data->oobe = oobe;
 
    dl_data->target = g_strdup(builds_path);
    dl_data->url = g_steal_pointer(&builds_url);

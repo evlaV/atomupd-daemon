@@ -11,7 +11,7 @@ _atomupd_manager() {
     local common_opts="--session --verbose --version --help"
     local create_dev_conf_opts="--additional-variant --username --password --auth --skip-reload"
     local check_opts="--penultimate-update"
-    local list_builds_opts="--branch --variant"
+    local list_builds_opts="--branch --variant --oobe"
     local custom_update_opts="--branch --variant --username --password --auth"
 
     # Complete the first command argument
