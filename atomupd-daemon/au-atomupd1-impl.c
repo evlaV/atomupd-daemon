@@ -1784,6 +1784,7 @@ au_check_for_updates_authorized_cb(AuAtomupd1 *object,
             g_dbus_method_invocation_return_error(
                g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
                "The argument '%s' must have a boolean value", key);
+            return;
          }
          continue;
       }
@@ -3397,6 +3398,7 @@ au_get_builds_authorized_cb(AuAtomupd1 *object,
             g_dbus_method_invocation_return_error(
                g_steal_pointer(&invocation), G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
                "The argument '%s' must have a string value", key);
+            return;
          }
          continue;
       }
